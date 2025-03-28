@@ -53,7 +53,7 @@ Replace the generated `Push_To_GitHub.py` file contents with:
 
 ```python
 import adsk.core, adsk.fusion, traceback
-import os, shutil
+import os, shutil, re
 from git import Repo
 
 # Set Git executable path (modify if needed)
@@ -75,13 +75,22 @@ def run(context):
         if not os.path.exists(temp_dir):
             os.makedirs(temp_dir)
 
-        # Export Fusion file
-        filename = f"{design.rootComponent.name}.f3d"
+        # Remove version numbers (e.g., ' v69') from filenames
+        raw_name = design.rootComponent.name
+        clean_name = re.sub(r' v\d+$', '', raw_name)  # removes " v<number>" from end
+        filename = f"{clean_name}.f3d"
+
         export_path = os.path.join(temp_dir, filename)
 
+        # Export Fusion file
         export_mgr = design.exportManager
         options = export_mgr.createFusionArchiveExportOptions(export_path)
         export_mgr.execute(options)
+
+        # Verify export
+        if not os.path.exists(export_path):
+            ui.messageBox('Export failed.')
+            return
 
         # Copy and commit to Git
         shutil.copy2(export_path, git_repo_path)
