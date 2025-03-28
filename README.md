@@ -1,6 +1,6 @@
 # Fusion 360 to GitHub Integration Guide
 
-This guide will show you how to set up Autodesk Fusion 360 to automatically export `.f3d` design files and push them directly to GitHub.
+This guide will show you how to set up Autodesk Fusion to automatically export `.f3d` design files and push them directly to GitHub.
 
 ---
 
