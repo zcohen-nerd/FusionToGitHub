@@ -1,4 +1,20 @@
-# Fusion 360 to GitHub Integration Guide
+# Autodesk Fusion to GitHub
+
+This Fusion 360 script automatically exports your Autodesk Fusion designs and pushes them directly to a GitHub repository. Perfect for easy version control, automatic backups, and seamless collaboration.
+
+## To Do
+
+- Set more options for uploading to different repositories
+- Integrate Fusion Drawing/Electronics/manufacturing exports
+- Export different file formats to GitHub
+- Automatically generate and include commit messages or design notes
+- Create a user-friendly config file to simplify setup
+- Integrate with GitHub Actions for automated downstream processing or notifications
+- Optionally export and push project metadata
+
+  
+
+# Autodesk Fusion to GitHub Integration Guide
 
 This guide will show you how to set up Autodesk Fusion to automatically export `.f3d` design files and push them directly to GitHub.
 
@@ -38,7 +54,7 @@ pip install GitPython
 
 ## ✅ Step 4: Create Fusion 360 Script
 
-- Open Fusion 360
+- Open Autodesk Fusion
 - Click **Utilities → Scripts and Add-ins**
 - Click **Create**
   - Name: `Push_To_GitHub`
@@ -129,14 +145,14 @@ git push -u origin main
 
 ## ✅ Step 7: Add Script Button to Fusion Toolbar
 
-- In Fusion 360 → **Utilities → Scripts and Add-ins**
+- In Fusion → **Utilities → Scripts and Add-ins**
 - Select your script and click **Add to toolbar**
 
 ---
 
 ## ✅ Step 8: Using the Workflow
 
-1. Design in Fusion 360
+1. Design in Fusion
 2. Click your new **Push to GitHub** button
 3. Your design is now versioned and pushed to GitHub!
 
@@ -150,6 +166,6 @@ git push -u origin main
 
 ---
 
-You're now ready to easily manage your Fusion 360 designs via GitHub!
+You're now ready to easily manage your Fusion designs via GitHub!
 
 🎉 **Happy designing!** 🎉
