@@ -161,7 +161,9 @@ def run(context):
 **✅ Customize the git_repo_path and temp_dir for your machine.**
 
 **Configure your Git Identity Once**
+
 git config --global user.name "Your Name"
+
 git config --global user.email "you@example.com"
 
 ---
