@@ -11,7 +11,7 @@ This Fusion 360 script automatically exports your Autodesk Fusion designs and pu
 - Integrate with GitHub Actions for automated downstream processing or notifications
 - Optionally export and push project metadata
 - ✅ ~~Push to pull request instead of main~~ Done 03/31/25
-- ~~Automatically generate and include commit messages or design notes~~ Done 03/31/25
+- ✅ ~~Automatically generate and include commit messages or design notes~~ Done 03/31/25
   
 
 # Autodesk Fusion to GitHub Integration Guide
