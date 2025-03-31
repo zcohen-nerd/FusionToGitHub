@@ -4,12 +4,13 @@ This Fusion 360 script automatically exports your Autodesk Fusion designs and pu
 
 ## To Do
 
-- Set more options for uploading to different repositories
+
 - Integrate Fusion Drawing/Electronics/manufacturing exports
 - Export different file formats to GitHub
 - Create a user-friendly config file to simplify setup
 - Integrate with GitHub Actions for automated downstream processing or notifications
 - Optionally export and push project metadata
+- ✅ ~~Set more options for uploading to different repositories~~ Done 03/31/25
 - ✅ ~~Push to pull request instead of main~~ Done 03/31/25
 - ✅ ~~Automatically generate and include commit messages or design notes~~ Done 03/31/25
   
