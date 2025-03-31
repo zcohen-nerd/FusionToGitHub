@@ -158,10 +158,7 @@ def run(context):
     adsk.autoTerminate(True)
 ```
 
-**Edit paths (`git_repo_path`, `temp_dir`) to match your setup.**
-
-git_repo_path = os.path.expanduser(r"C:\path\to\your\local\repo")
-temp_dir = os.path.expanduser(r"C:\temp\FusionExport")
+**✅ Customize the git_repo_path and temp_dir for your machine.**
 
 **Configure your Git Identity Once**
 git config --global user.name "Your Name"
