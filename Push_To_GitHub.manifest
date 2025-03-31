@@ -5,7 +5,7 @@
 	"description":	{
 		"":	"Pushes the current F3D file to GitHub when a button is pressed."
 	},
-	"version":	"0.2",
+	"version":	"0.3",
 	"supportedOS":	"windows|mac",
 	"editEnabled":	true,
 	"iconFilename":	"ScriptIcon.svg"
