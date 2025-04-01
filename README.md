@@ -4,19 +4,33 @@ This Fusion 360 script automatically exports your Autodesk Fusion designs and pu
 
 ## To Do
 
-1.  **Error Handling:** Improve error handling, especially for Git operations and file operations.
-2.  **Git Executable Check:** Add a check to ensure Git is installed and the executable path is correctly set.
-3.  **Configuration:** Use a configuration file for storing repository settings.
-4.  **Logging:** Implement more comprehensive logging.
-5.  **File Versioning:** Implement a better file versioning system.
-6.  **Optionally export and push project metadata** Pick which metadata you want to include with the upload
-7.  **Export different file formats to GitHub:** Be able to upload STEP, STL, DWG, etc.
-8.  **Integrate Fusion Drawing/Electronics/Manufacturing exports** Be able to export drawings, electronics files, and manufacturing data.
-9.  **Pull Request Automation:** Add functionality to automate the creation of pull requests.
+- [ ] **Export Format Support**  
+  Allow user to export and push different formats (e.g., `.f3d`, `.step`, `.stl`) based on selected repo settings.
+
+- [ ] **Drawing / Electronics / Manufacturing Export**  
+  Enable exporting of related Fusion outputs such as drawings (`.dwg`), schematics, and toolpaths.
+
+- [ ] **Project Metadata Export**  
+  Generate and optionally push project metadata (`.json` or `.txt`) with each commit (e.g., date, part count).
+
+- [ ] **Pull Request Automation**  
+  Automatically open a GitHub pull request after pushing a new branch. Requires optional token support.
+
+- [ ] **File Versioning Improvements**  
+  Add changelog tracking or allow exporting older versions without overwriting current ones.
+
+- [ ] **Improved Logging**  
+  Store logs locally or in the repo for each push/pull/commit operation (for auditing/debugging).
+
+- [ ] **UI/UX Improvements**  
+  Convert export format input to a proper Fusion dropdown/multiselect; streamline input flow further.
 
 - ✅ ~~Set more options for uploading to different repositories~~ Done 03/31/25
 - ✅ ~~Push to pull request instead of main~~ Done 03/31/25
 - ✅ ~~Automatically generate and include commit messages or design notes~~ Done 03/31/25
+- ✅ ~~**Error Handling:** Improve error handling, especially for Git operations and file operations.~~ Done 4/1/25
+- ✅ ~~**Git Executable Check:** Add a check to ensure Git is installed and the executable path is correctly set.~~ Done 4/1/25
+- ✅ ~~**Configuration:** Use a configuration file for storing repository settings.~~ Done 4/1/25
   
 
 # Autodesk Fusion to GitHub Integration Guide
