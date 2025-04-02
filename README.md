@@ -4,9 +4,6 @@ This Fusion 360 script automatically exports your Autodesk Fusion designs and pu
 
 ## To Do
 
-- [ ] **Export Format Support**  
-  Allow user to export and push different formats (e.g., `.f3d`, `.step`, `.stl`) based on selected repo settings.
-
 - [ ] **Drawing / Electronics / Manufacturing Export**  
   Enable exporting of related Fusion outputs such as drawings (`.dwg`), schematics, and toolpaths.
 
@@ -31,6 +28,8 @@ This Fusion 360 script automatically exports your Autodesk Fusion designs and pu
 - ✅ ~~**Error Handling:** Improve error handling, especially for Git operations and file operations.~~ Done 4/1/25
 - ✅ ~~**Git Executable Check:** Add a check to ensure Git is installed and the executable path is correctly set.~~ Done 4/1/25
 - ✅ ~~**Configuration:** Use a configuration file for storing repository settings.~~ Done 4/1/25
+- ✅ ~~**export Format Support** Add export support for step, stl, dwg, dxf~~ Done 4/2/25
+- ✅ ~~**Add Comments** Comment the code for understanding~~ Done 4/2/25
   
 
 # Autodesk Fusion to GitHub Integration Guide
