@@ -3,24 +3,29 @@
 This Fusion 360 script automatically exports your Autodesk Fusion designs and pushes them directly to a GitHub repository. Perfect for easy version control, automatic backups, and seamless collaboration.
 
 ## To Do
-
-- [ ] **Drawing / Electronics / Manufacturing Export**  
-  Enable exporting of related Fusion outputs such as drawings (`.dwg`), schematics, and toolpaths.
-
-- [ ] **Project Metadata Export**  
-  Generate and optionally push project metadata (`.json` or `.txt`) with each commit (e.g., date, part count).
-
-- [ ] **Pull Request Automation**  
-  Automatically open a GitHub pull request after pushing a new branch. Requires optional token support.
-
-- [ ] **File Versioning Improvements**  
-  Add changelog tracking or allow exporting older versions without overwriting current ones.
-
-- [ ] **Improved Logging**  
-  Store logs locally or in the repo for each push/pull/commit operation (for auditing/debugging).
-
-- [ ] **UI/UX Improvements**  
-  Convert export format input to a proper Fusion dropdown/multiselect; streamline input flow further.
+**Core Functionality & Enhancements**
+* [ ] **Drawing / Electronics / Manufacturing Export**
+    * Enable exporting of related Fusion outputs such as drawings (.dwg, .pdf), schematics/PCB layouts (e.g., .sch, .brd), and CAM toolpaths (e.g., .nc).
+* [ ] **Project Metadata Export**
+    * Generate and optionally push project metadata (.json or .txt) with each commit (e.g., date, part count, custom notes).
+* [ ] **Pull Request Automation**
+    * Automatically open a GitHub pull request after pushing a new branch. Requires optional GitHub Personal Access Token (PAT) support with secure handling.
+* [ ] **File Versioning Improvements & Changelog**
+    * Implement automatic changelog tracking (e.g., appending commit messages to a `CHANGELOG.md`).
+    * Explore options for managing versions of exported files beyond standard Git history if needed.
+* [ ] **Improved Logging**
+    * Store detailed logs (actions, errors, outcomes) locally or optionally in the repo (e.g., in a dedicated `.logs` directory) for each push/pull/commit operation for auditing and debugging.
+* [ ] **UI/UX Improvements**
+    * Convert text-based export format input to a proper Fusion dropdown/multiselect UI element.
+    * Streamline the overall input flow and command dialogs.
+* [ ] **Parameter Export (JSON/CSV)**
+    * Export key user parameters (model parameters, user parameters) to a structured file (e.g., JSON, CSV) to be versioned alongside design files.
+* [ ] **Bill of Materials (BOM) Export**
+    * Integrate BOM generation from the active design and export it as a CSV or JSON file.
+* [ ] **Thumbnail/Image Export**
+    * Automatically capture a thumbnail image (e.g., PNG) of the current or a predefined view of the model and include it in the commit for visual reference in Git history.
+* [ ] **Advanced Export Settings per Format**
+    * Provide more granular control over export settings for specific file formats (e.g., STL mesh refinement beyond presets, binary/ASCII options; STEP AP203/AP214 selection).
 
 - ✅ ~~Set more options for uploading to different repositories~~ Done 03/31/25
 - ✅ ~~Push to pull request instead of main~~ Done 03/31/25
