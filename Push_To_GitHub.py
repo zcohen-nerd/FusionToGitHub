@@ -1,3 +1,6 @@
+"""This Add-In integrates Autodesk Fusion 360 with GitHub, allowing users to export
+designs and push them to specified GitHub repositories."""
+
 import adsk.core, adsk.fusion, adsk.cam, traceback
 import os, shutil, re, json
 from git import Repo, GitCommandError, InvalidGitRepositoryError
@@ -8,434 +11,570 @@ import subprocess
 # ------------------------------------------------------------------------------
 # GIT CONFIGURATION
 # ------------------------------------------------------------------------------
-# This environment variable tells GitPython where to find the 'git' executable.
-# Make sure Git is installed and this path is correct:
 os.environ['GIT_PYTHON_GIT_EXECUTABLE'] = r"C:\\Program Files\\Git\\cmd\\git.exe"
 
 # ------------------------------------------------------------------------------
 # SCRIPT-WIDE CONSTANTS
 # ------------------------------------------------------------------------------
-CONFIG_PATH = os.path.expanduser("~/.fusion_git_repos.json")  # Where repo settings are stored
-REPO_BASE_DIR = os.path.expanduser("~/FusionGitRepos")        # Local base folder for cloned repos
+CONFIG_PATH = os.path.expanduser("~/.fusion_git_repos.json")
+REPO_BASE_DIR = os.path.expanduser("~/FusionGitRepos")
+ADD_NEW_OPTION = "+ Add new GitHub repo..."
+# EDIT_EXISTING_OPTION is no longer used in repoSelector
 
-ADD_NEW_OPTION = "+ Add new GitHub repo..."                   # Dropdown UI option
-EDIT_EXISTING_OPTION = "⚙ Edit settings for existing repo..." # Dropdown UI option
+# ------------------------------------------------------------------------------
+# GLOBALS FOR ADD-IN LIFECYCLE MANAGEMENT
+# ------------------------------------------------------------------------------
+app = None
+ui = None
+try:
+    app = adsk.core.Application.get()
+    ui = app.userInterface
+except AttributeError:
+    pass
 
-handlers = []  # Keep references to event handlers to prevent garbage collection
+handlers = []
+push_cmd_def = None
+git_push_control = None
+
+CMD_ID = "PushToGitHub_Cmd_ZAC_V3" # Updated ID
+CMD_NAME = "Push to GitHub (ZAC)"
+CMD_TOOLTIP = "Exports/configures and pushes design to a GitHub repository."
+PANEL_ID = "SolidUtilitiesAddinsPanel"
+FALLBACK_PANEL_ID = "SolidScriptsAddinsPanel"
+CONTROL_ID = CMD_ID + "_Control"
 
 # ------------------------------------------------------------------------------
 # EVENT HANDLER: CREATES THE COMMAND UI
 # ------------------------------------------------------------------------------
 class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
-    """
-    Triggered when our custom Fusion command is created.
-    Sets up the UI for selecting a repo, commit message, etc.
-    """
     def notify(self, args: adsk.core.CommandCreatedEventArgs):
-        app = adsk.core.Application.get()
-        ui = app.userInterface
+        local_app_ref = app if app else adsk.core.Application.get()
+        local_ui_ref = ui if ui else local_app_ref.userInterface
+        
+        try:
+            config = load_config()
+            repo_names = list(config.keys())
+            dropdown_items = [ADD_NEW_OPTION] # Start with Add New
+            if repo_names:
+                dropdown_items.extend(sorted(repo_names)) # Add existing repos, sorted
 
-        # Load user config (local JSON)
-        config = load_config()
+            args.command.isAutoExecute = False
+            args.command.isAutoTerminate = True # Dialog closes after OK
+            inputs = args.command.commandInputs
 
-        # Create a list of existing repos, plus special options for add/edit
-        repo_names = list(config.keys()) + [ADD_NEW_OPTION, EDIT_EXISTING_OPTION]
+            # --- Visible Inputs ---
+            # 1. Action/Repo Selector
+            global repoSelectorInput # Make it accessible if needed by ExecuteHandler (though usually by ID)
+            repoSelectorInput = inputs.addDropDownCommandInput(
+                "repoSelector",
+                "Action / Select Repo",
+                adsk.core.DropDownStyles.TextListDropDownStyle
+            )
+            for name_val in dropdown_items:
+                repoSelectorInput.listItems.add(name_val, name_val == ADD_NEW_OPTION, "")
 
-        # Basic command UI properties
-        args.command.isAutoTerminate = True
-        inputs = args.command.commandInputs
+            # 2. New Repo Name (only used if "Add new..." is selected)
+            inputs.addStringValueInput("newRepoName", "New Repo Name (if adding)", "")
 
-        # ------------------------------------------------------------------------------
-        # CREATE DROPDOWN FOR REPO SELECTION
-        # ------------------------------------------------------------------------------
-        dropdown_input = inputs.addDropDownCommandInput(
-            "repoSelector",
-            "Select Repo",
-            adsk.core.DropDownStyles.TextListDropDownStyle
-        )
-        for name in repo_names:
-            # Mark the first item as default
-            dropdown_input.listItems.add(name, name == repo_names[0])
+            # 3. Git URL (only used if "Add new..." is selected)
+            inputs.addStringValueInput("gitUrl", "Git URL (if adding)", "https://github.com/user/repo.git")
+            
+            # 4. Export Formats (for config of new or existing selected repo)
+            inputs.addStringValueInput("exportFormatsConfig", "Export Formats (config)", "f3d,step,stl")
 
-        # ------------------------------------------------------------------------------
-        # COMMIT MESSAGE INPUT
-        # ------------------------------------------------------------------------------
-        commit_input = inputs.addStringValueInput(
-            "commitMsg",
-            "Commit Message",
-            "Updated design"
-        )
+            # 5. Default Commit Message Template (for config of new or existing selected repo)
+            inputs.addStringValueInput("defaultMessageConfig", "Default Commit Template (config)", "Design update: {filename}")
 
-        # ------------------------------------------------------------------------------
-        # EXECUTE HANDLER: RUNS WHEN USER HITS "OK"
-        # ------------------------------------------------------------------------------
-        class ExecuteHandler(adsk.core.CommandEventHandler):
-            def notify(self, execute_args):
-                selected_repo_name = dropdown_input.selectedItem.name
+            # 6. Branch Format Template (for config of new or existing selected repo)
+            inputs.addStringValueInput("branchFormatConfig", "Branch Format (config)", "fusion-export/{filename}-{timestamp}")
 
-                # 1) USER SELECTED: ADD NEW REPO
-                if selected_repo_name == ADD_NEW_OPTION:
-                    git_url = ui.inputBox("GitHub repo URL:", "New Repo")[0].strip()
-                    if not git_url.endswith(".git"):
-                        ui.messageBox("URL must end in .git")
-                        return
+            # 7. Commit Message (for the current push operation)
+            inputs.addStringValueInput("commitMsgPush", "Commit Message (for this push)", "Updated design")
 
-                    repo_name = os.path.splitext(os.path.basename(urlparse(git_url).path))[0]
-                    local_path = os.path.join(REPO_BASE_DIR, repo_name)
 
-                    # Clone the new repo from GitHub
-                    os.makedirs(REPO_BASE_DIR, exist_ok=True)
-                    subprocess.run(["git", "clone", git_url, local_path], check=True)
+            # --- Execute Handler ---
+            class ExecuteHandler(adsk.core.CommandEventHandler):
+                def notify(self, execute_args: adsk.core.CommandEventArgs):
+                    current_app_ref = app if app else adsk.core.Application.get()
+                    current_ui_ref = ui if ui else current_app_ref.userInterface
+                    try:
+                        cmd_inputs = execute_args.command.commandInputs # Get inputs from execute_args
+                        
+                        selected_action_item = cmd_inputs.itemById("repoSelector").selectedItem
+                        if not selected_action_item:
+                            current_ui_ref.messageBox("No action or repository selected.")
+                            return
+                        selected_action = selected_action_item.name
+                        
+                        current_config = load_config()
 
-                    # Prompt user for formats, default message, etc.
-                    config[repo_name] = {
-                        "url": git_url,
-                        "path": local_path,
-                        **prompt_repo_settings(ui)
-                    }
-                    save_config(config)
-                    selected_repo = config[repo_name]
+                        # Get values from all config fields - they are always visible
+                        # These will be used for "Add New" or to update an existing repo's config
+                        export_formats_val = [f.strip().lower() for f in cmd_inputs.itemById("exportFormatsConfig").value.split(",") if f.strip()] or ["f3d"]
+                        default_message_tpl_val = cmd_inputs.itemById("defaultMessageConfig").value.strip() or "Design update: {filename}"
+                        branch_format_tpl_val = cmd_inputs.itemById("branchFormatConfig").value.strip() or "fusion-export/{filename}-{timestamp}"
 
-                # 2) USER SELECTED: EDIT REPO SETTINGS
-                elif selected_repo_name == EDIT_EXISTING_OPTION:
-                    repo_names_only = list(config.keys())
-                    repo_to_edit = ui.inputBox(
-                        "Repo to edit:\n" + "\n".join(repo_names_only),
-                        "Edit Repo",
-                        repo_names_only[0]
-                    )[0]
-                    if repo_to_edit not in config:
-                        ui.messageBox("Repo not found.")
-                        return
+                        if selected_action == ADD_NEW_OPTION:
+                            repo_name_to_add = cmd_inputs.itemById("newRepoName").value.strip()
+                            git_url = cmd_inputs.itemById("gitUrl").value.strip()
 
-                    # Update existing settings
-                    config[repo_to_edit].update(prompt_repo_settings(ui, config[repo_to_edit]))
-                    save_config(config)
-                    selected_repo = config[repo_to_edit]
+                            if not repo_name_to_add:
+                                current_ui_ref.messageBox("New repository name cannot be empty.", CMD_NAME)
+                                return
+                            if not git_url or not git_url.endswith(".git"):
+                                current_ui_ref.messageBox("Invalid GitHub URL for new repo. It must end in .git", CMD_NAME)
+                                return
+                            if repo_name_to_add in current_config:
+                                current_ui_ref.messageBox(f"Repository '{repo_name_to_add}' already exists in configuration.", CMD_NAME)
+                                return
 
-                # 3) USER SELECTED AN EXISTING REPO
-                else:
-                    selected_repo = config[selected_repo_name]
+                            local_path = os.path.join(REPO_BASE_DIR, repo_name_to_add)
+                            if os.path.exists(local_path):
+                                confirm = current_ui_ref.messageBox(f"Local path '{local_path}' already exists.\nUse existing or cancel?", CMD_NAME, adsk.core.MessageBoxButtonTypes.YesNoButtonType)
+                                if confirm == adsk.core.DialogResults.DialogNo: return
+                            else:
+                                os.makedirs(REPO_BASE_DIR, exist_ok=True)
+                                current_ui_ref.messageBox(f"Cloning '{git_url}' into '{local_path}'...", CMD_NAME)
+                                process = subprocess.run(["git", "clone", git_url, local_path], capture_output=True, text=True, check=False, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                                if process.returncode != 0:
+                                    current_ui_ref.messageBox(f"Failed to clone repo:\n{process.stderr}", CMD_NAME)
+                                    return
+                                current_ui_ref.messageBox(f"Repository cloned successfully.", CMD_NAME)
+                            
+                            current_config[repo_name_to_add] = {
+                                "url": git_url, "path": local_path,
+                                "exportFormats": export_formats_val,
+                                "defaultMessage": default_message_tpl_val,
+                                "branchFormat": branch_format_tpl_val
+                            }
+                            save_config(current_config)
+                            current_ui_ref.messageBox(f"Repository '{repo_name_to_add}' added. Restart command to select it for push.", CMD_NAME)
+                            return # Done after adding
 
-                # Check that Git is installed
-                if not check_git_available(ui):
-                    return
+                        else: # An existing repository was selected (selected_action is the repo name)
+                            selected_repo_name = selected_action
+                            if selected_repo_name not in current_config:
+                                current_ui_ref.messageBox(f"Error: Selected repository '{selected_repo_name}' not found in config.", CMD_NAME)
+                                if app: app.log(f"Config error: Repo '{selected_repo_name}' not found.", adsk.core.LogLevels.ErrorLogLevel)
+                                return
+                            
+                            selected_repo_details = current_config[selected_repo_name]
 
-                # Ensure we have an active Fusion design
-                design = get_fusion_design()
-                if not design:
-                    ui.messageBox("No active Fusion design.")
-                    return
+                            # Implicitly update the selected repo's settings from the visible fields
+                            selected_repo_details["exportFormats"] = export_formats_val
+                            selected_repo_details["defaultMessage"] = default_message_tpl_val
+                            selected_repo_details["branchFormat"] = branch_format_tpl_val
+                            # We don't update URL or path for an existing repo via these main fields
+                            # newRepoName and gitUrl fields are ignored when an existing repo is selected.
 
-                # Clean the base filename
-                raw_name = design.rootComponent.name
-                clean_name = re.sub(r' v\d+$', '', raw_name)
-                base_name = clean_name
+                            current_config[selected_repo_name] = selected_repo_details
+                            save_config(current_config)
+                            if app: app.log(f"Settings for repository '{selected_repo_name}' updated from dialog fields.", adsk.core.LogLevels.InfoLogLevel)
 
-                # Setup local directories
-                git_repo_path = os.path.expanduser(selected_repo["path"])
-                temp_dir = os.path.join(git_repo_path, "temp")
-                os.makedirs(temp_dir, exist_ok=True)
+                            # Now, proceed with the PUSH operation using the (potentially updated) selected_repo_details
+                            if not check_git_available(current_ui_ref): return
+                            design = get_fusion_design()
+                            if not design:
+                                current_ui_ref.messageBox("No active Fusion design to export.", CMD_NAME)
+                                return
 
-                # Determine which formats to export
-                export_formats = selected_repo.get("exportFormats", ["f3d"])
-                # Perform the actual export
-                exported_files = export_fusion_design(design, temp_dir, base_name, export_formats, ui)
+                            raw_name = design.rootComponent.name
+                            clean_name = re.sub(r'\s+v\d+$', '', raw_name)
+                            base_name = clean_name.replace(" ", "_") # For filenames and placeholders
 
-                # Copy exported files to local repo
-                commit_message = commit_input.value.strip() or selected_repo.get("defaultMessage", "Updated design")
-                for file in exported_files:
-                    copy_to_git_repo(file, git_repo_path)
+                            git_repo_path = os.path.expanduser(selected_repo_details["path"])
+                            if not os.path.isdir(os.path.join(git_repo_path, ".git")):
+                                current_ui_ref.messageBox(f"Path '{git_repo_path}' for repo '{selected_repo_name}' is not a Git repository.", CMD_NAME)
+                                return
 
-                # Build list of file names
-                filenames = [os.path.basename(f) for f in exported_files]
+                            temp_dir = os.path.join(git_repo_path, "temp_fusion_export")
+                            os.makedirs(temp_dir, exist_ok=True)
 
-                # Actually do the Git commit/push
-                branch_name = handle_git_operations(
-                    git_repo_path,
-                    filenames,
-                    commit_message,
-                    selected_repo.get("branchFormat", "fusion-auto-{timestamp}"),
-                    ui
-                )
+                            # Use the (potentially updated) export formats from selected_repo_details
+                            formats_for_this_push = selected_repo_details.get("exportFormats", ["f3d"])
+                            exported_files_paths = export_fusion_design(design, temp_dir, base_name, formats_for_this_push, current_ui_ref)
 
-                # If successful, show success message
-                if branch_name:
-                    ui.messageBox(f"✅ Pushed to branch: {branch_name}\nCreate a pull request to merge.")
+                            if not exported_files_paths:
+                                current_ui_ref.messageBox("No files exported. Aborting Git operations.", CMD_NAME)
+                                if os.path.exists(temp_dir): shutil.rmtree(temp_dir)
+                                return
 
-                # Cleanup temporary export folder
-                shutil.rmtree(temp_dir)
+                            commit_msg_for_this_push = cmd_inputs.itemById("commitMsgPush").value.strip()
+                            filename_placeholder = base_name 
+                            if not commit_msg_for_this_push: # If user left commit message blank for this push
+                                commit_msg_for_this_push = selected_repo_details["defaultMessage"].replace("{filename}", filename_placeholder)
+                            else: # User provided a message, still replace placeholder if they used it
+                                commit_msg_for_this_push = commit_msg_for_this_push.replace("{filename}", filename_placeholder)
+                            
+                            final_file_paths_in_repo_relative = []
+                            for file_path in exported_files_paths:
+                                dest_path = os.path.join(git_repo_path, os.path.basename(file_path))
+                                shutil.copy2(file_path, dest_path)
+                                final_file_paths_in_repo_relative.append(os.path.basename(file_path))
 
-        # Create an instance of our execution handler
-        on_execute = ExecuteHandler()
-        args.command.execute.add(on_execute)
-        handlers.append(on_execute)
+                            # Use the (potentially updated) branch format from selected_repo_details
+                            branch_format_for_this_push = selected_repo_details.get("branchFormat", "fusion-export/{filename}-{timestamp}")
+                            
+                            branch_name_pushed = handle_git_operations(
+                                git_repo_path,
+                                final_file_paths_in_repo_relative,
+                                commit_msg_for_this_push,
+                                branch_format_for_this_push,
+                                current_ui_ref,
+                                base_name # For {filename} placeholder in branch name
+                            )
+
+                            if branch_name_pushed:
+                                current_ui_ref.messageBox(f"✅ Successfully exported and pushed to branch: {branch_name_pushed}\nCreate a pull request on GitHub to merge.", CMD_NAME)
+                            else:
+                                current_ui_ref.messageBox("Git operations completed with issues or were aborted.", CMD_NAME)
+                            
+                            if os.path.exists(temp_dir): shutil.rmtree(temp_dir)
+
+                    except Exception as e:
+                        error_message = 'ExecuteHandler failed: {}'.format(traceback.format_exc())
+                        if current_ui_ref: current_ui_ref.messageBox(error_message, CMD_NAME)
+                        if app: app.log(error_message, adsk.core.LogLevels.ErrorLogLevel)
+            
+            on_execute = ExecuteHandler()
+            args.command.execute.add(on_execute)
+            handlers.append(on_execute)
+
+        except Exception as e:
+            error_message = 'GitCommandCreatedEventHandler failed: {}'.format(traceback.format_exc())
+            final_ui_ref = local_ui_ref if local_ui_ref else ui
+            if final_ui_ref: final_ui_ref.messageBox(error_message, CMD_NAME)
+            if app: app.log(error_message, adsk.core.LogLevels.ErrorLogLevel)
 
 # ------------------------------------------------------------------------------
-# CHECK GIT INSTALLATION
+# HELPER FUNCTIONS (check_git_available, load_config, save_config, get_fusion_design, export_fusion_design, handle_git_operations)
+# These functions remain largely the same as the previous version that had app.log fixes.
+# The prompt_repo_settings function is no longer used by ExecuteHandler.
+# Ensure handle_git_operations correctly uses its parameters.
 # ------------------------------------------------------------------------------
-def check_git_available(ui):
-    """
-    Runs 'git --version' to ensure Git is in PATH and installed.
-    """
+
+def check_git_available(target_ui_ref):
+    global app
     try:
-        subprocess.run(["git", "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+        subprocess.run(["git", "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, creationflags=flags)
         return True
-    except Exception:
-        ui.messageBox("Git not found. Install it from https://git-scm.com/downloads", "Git Not Found")
+    except FileNotFoundError:
+        msg = f"Git executable not found. Ensure Git is installed and in PATH, or GIT_PYTHON_GIT_EXECUTABLE ('{os.environ.get('GIT_PYTHON_GIT_EXECUTABLE')}') is set."
+        target_ui_ref.messageBox(msg, "Git Not Found")
+        if app: app.log(msg, adsk.core.LogLevels.ErrorLogLevel)
+        return False
+    except Exception as e:
+        msg = f"Git version check failed: {str(e)}\nEnsure Git is installed correctly."
+        target_ui_ref.messageBox(msg, "Git Error")
+        if app: app.log(msg, adsk.core.LogLevels.ErrorLogLevel)
         return False
 
-# ------------------------------------------------------------------------------
-# LOAD AND SAVE CONFIG
-# ------------------------------------------------------------------------------
 def load_config():
-    """
-    Load repository settings from JSON at CONFIG_PATH.
-    If none found, create an empty JSON.
-    """
+    global app, ui 
     if not os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, 'w') as f:
-            json.dump({}, f)
-    with open(CONFIG_PATH, 'r') as f:
-        return json.load(f)
+        with open(CONFIG_PATH, 'w') as f: json.dump({}, f)
+        return {}
+    try:
+        with open(CONFIG_PATH, 'r') as f: return json.load(f)
+    except json.JSONDecodeError:
+        final_ui_ref = ui 
+        if not final_ui_ref and app: final_ui_ref = app.userInterface
 
-def save_config(config):
-    """
-    Write updated repo settings to JSON.
-    """
-    with open(CONFIG_PATH, 'w') as f:
-        json.dump(config, f, indent=2)
+        backup_path = CONFIG_PATH + ".bak_corrupted_" + datetime.now().strftime("%Y%m%d%H%M%S")
+        if os.path.exists(CONFIG_PATH): shutil.copyfile(CONFIG_PATH, backup_path) # Check if exists before copy
+        msg = f"Configuration file was corrupted. Backup made to '{backup_path}'. New config file created."
+        if final_ui_ref: final_ui_ref.messageBox(msg, "Config Error")
+        if app: app.log(msg, adsk.core.LogLevels.ErrorLogLevel)
+        with open(CONFIG_PATH, 'w') as f: json.dump({}, f)
+        return {}
 
-# ------------------------------------------------------------------------------
-# PROMPT USER FOR REPO SETTINGS
-# ------------------------------------------------------------------------------
-def prompt_repo_settings(ui, existing_config=None):
-    """
-    Ask user for which formats to export, default commit message, and branch naming.
-    """
-    export_formats_input = ui.inputBox(
-        "Export formats (e.g., f3d, step, stl, dwg, dxf):",
-        "Export Formats",
-        ",".join(existing_config.get("exportFormats", ["f3d"])) if existing_config else "f3d"
-    )[0].strip()
+def save_config(config_data):
+    global app, ui
+    try:
+        with open(CONFIG_PATH, 'w') as f: json.dump(config_data, f, indent=4)
+    except Exception as e:
+        msg = f"Failed to save configuration: {str(e)}"
+        final_ui_ref = ui
+        if not final_ui_ref and app: final_ui_ref = app.userInterface
+        if final_ui_ref: final_ui_ref.messageBox(msg, "Config Error")
+        if app: app.log(msg, adsk.core.LogLevels.ErrorLogLevel)
 
-    default_message = ui.inputBox(
-        "Default commit message:",
-        "Commit Message",
-        existing_config.get("defaultMessage", "Updated design") if existing_config else "Updated design"
-    )[0].strip()
-
-    branch_format = ui.inputBox(
-        "Branch naming format (use {timestamp}):",
-        "Branch Format",
-        existing_config.get("branchFormat", "fusion-auto-{timestamp}") if existing_config else "fusion-auto-{timestamp}"
-    )[0].strip()
-
-    return {
-        "exportFormats": [f.strip().lower() for f in export_formats_input.split(",")],
-        "defaultMessage": default_message,
-        "branchFormat": branch_format
-    }
-
-# ------------------------------------------------------------------------------
-# GET CURRENT DESIGN
-# ------------------------------------------------------------------------------
 def get_fusion_design():
-    """
-    Retrieves the currently open Design workspace in Fusion (or None if none).
-    """
-    app = adsk.core.Application.get()
-    design = app.activeProduct
-    if isinstance(design, adsk.fusion.Design):
-        return design
-    return None
+    global app
+    try:
+        if not app: return None 
+        product = app.activeProduct
+        return product if product and product.objectType == adsk.fusion.Design.classType() else None
+    except: return None
 
-# ------------------------------------------------------------------------------
-# EXPORT FUSION DESIGN
-# ------------------------------------------------------------------------------
-def export_fusion_design(design, export_dir, base_name, formats=["f3d"], ui=None):
-    """
-    Export the current design to multiple formats: f3d, step, stl, dwg, dxf
-    (depending on version). Returns a list of file paths created.
-    """
+def export_fusion_design(design: adsk.fusion.Design, export_dir: str, base_name: str, formats_to_export: list, target_ui_ref):
+    global app
     export_mgr = design.exportManager
-    exported_files = []
+    exported_file_paths = []
+    root_comp = design.rootComponent
 
-    # Helper: gather all visible, solid bodies (for STL)
-    def get_all_bodies(component):
-        bodies = []
-        for body in component.bRepBodies:
-            if body.isSolid and body.isVisible:
-                bodies.append(body)
-        for occ in component.occurrences:
-            bodies += get_all_bodies(occ.component)
-        return bodies
-
-    for fmt in formats:
-        fmt = fmt.lower()
-        export_file = os.path.join(export_dir, f"{base_name}.{fmt}")
-
-        if ui:
-            ui.messageBox(f"Attempting to export {fmt.upper()} to: {export_file}")
+    for fmt in formats_to_export:
+        fmt_lower = fmt.lower()
+        export_file_name = f"{base_name}.{fmt_lower}"
+        full_export_path = os.path.join(export_dir, export_file_name)
+        options = None; export_executed_successfully = False
 
         try:
-            # Decide which export options
-            if fmt == "f3d":
-                options = export_mgr.createFusionArchiveExportOptions(export_file)
-            elif fmt == "step":
-                options = export_mgr.createSTEPExportOptions(export_file)
-                options.isComponentSelection = False
-            elif fmt == "stl":
-                bodies = get_all_bodies(design.rootComponent)
-                if not bodies:
-                    if ui:
-                        ui.messageBox("No visible solid bodies found for STL export.")
-                    continue
-                options = export_mgr.createSTLExportOptions(bodies[0], export_file)
+            if fmt_lower == "f3d": options = export_mgr.createFusionArchiveExportOptions(full_export_path, root_comp)
+            elif fmt_lower in ["step", "stp"]: options = export_mgr.createSTEPExportOptions(full_export_path, root_comp)
+            elif fmt_lower in ["iges", "igs"]: options = export_mgr.createIGESExportOptions(full_export_path, root_comp)
+            elif fmt_lower == "sat": options = export_mgr.createSATExportOptions(full_export_path, root_comp)
+            elif fmt_lower == "stl":
+                options = export_mgr.createSTLExportOptions(root_comp, full_export_path)
                 options.meshRefinement = adsk.fusion.MeshRefinementSettings.MeshRefinementHigh
-                options.isBinaryFormat = True
-            elif fmt == "dwg":
-                if hasattr(export_mgr, 'createDWGExportOptions'):
-                    # For 2D drawings
-                    options = export_mgr.createDWGExportOptions(export_file, design.rootComponent)
-                else:
-                    if ui:
-                        ui.messageBox("DWG export not supported in this Fusion version.")
-                    continue
-            elif fmt == "dxf":
-                if hasattr(export_mgr, 'createDXFExportOptions'):
-                    # For 2D drawings
-                    options = export_mgr.createDXFExportOptions(export_file, design.rootComponent)
-                else:
-                    if ui:
-                        ui.messageBox("DXF export not supported in this Fusion version.")
-                    continue
+            elif fmt_lower == "dwg" and hasattr(export_mgr, 'createDWGExportOptions'):
+                 options = export_mgr.createDWGExportOptions(full_export_path, root_comp)
+            elif fmt_lower == "dxf" and hasattr(export_mgr, 'createDXFExportOptions'):
+                 options = export_mgr.createDXFExportOptions(full_export_path) 
             else:
-                if ui:
-                    ui.messageBox(f"Unsupported format: {fmt}")
+                msg = f"Unsupported or unavailable export format: {fmt}. Skipping."
+                target_ui_ref.messageBox(msg, CMD_NAME)
+                if app: app.log(msg, adsk.core.LogLevels.WarningLogLevel)
                 continue
 
-            # Perform the actual export
-            export_mgr.execute(options)
+            if options: export_executed_successfully = export_mgr.execute(options)
+            
+            if export_executed_successfully:
+                # Check file existence and size more robustly
+                if os.path.exists(full_export_path) and os.path.getsize(full_export_path) > 0:
+                    exported_file_paths.append(full_export_path)
+                    if app: app.log(f"Exported: {full_export_path}", adsk.core.LogLevels.InfoLogLevel)
+                # Some exports might return True but the file creation is async or slightly delayed.
+                # For this example, we assume if True is returned, the file should be there.
+                # A more robust solution might involve waiting briefly and checking again for some formats.
+                elif os.path.exists(full_export_path): # File exists but is empty
+                     msg = f"Export reported success for {fmt_lower} but file is empty: {full_export_path}"
+                     target_ui_ref.messageBox(msg, CMD_NAME)
+                     if app: app.log(msg, adsk.core.LogLevels.WarningLogLevel)
+                else: # File does not exist
+                    msg = f"Export reported success for {fmt_lower} but file not found: {full_export_path}"
+                    target_ui_ref.messageBox(msg, CMD_NAME)
+                    if app: app.log(msg, adsk.core.LogLevels.WarningLogLevel)
+            elif options: # options were created, but execute returned False or None
+                msg = f"Export execution failed or did not confirm success for {fmt_lower}: {full_export_path}"
+                target_ui_ref.messageBox(msg, CMD_NAME)
+                if app: app.log(msg, adsk.core.LogLevels.WarningLogLevel)
 
-            # Verify file creation
-            if os.path.exists(export_file):
-                exported_files.append(export_file)
-            else:
-                raise Exception("File was not created.")
-
-        except Exception as export_error:
-            if ui:
-                ui.messageBox(f"[{fmt.upper()}] Export failed:\n{export_error}\nTarget: {export_file}")
-            continue
-
-    return exported_files
-
-# ------------------------------------------------------------------------------
-# COPY EXPORT TO REPO
-# ------------------------------------------------------------------------------
-def copy_to_git_repo(export_path, git_repo_path):
-    """
-    Copy a local export file into the Git working directory.
-    """
-    shutil.copy2(export_path, git_repo_path)
-
-# ------------------------------------------------------------------------------
-# HANDLE GIT OPERATIONS
-# ------------------------------------------------------------------------------
-def handle_git_operations(git_repo_path, filenames, commit_message, branch_format, ui):
-    """
-    1) Pull the latest from remote so local has all existing files.
-    2) Create a new branch.
-    3) Stage & commit only the newly exported files.
-    4) Push the changes to remote.
-    """
-    try:
-        repo = Repo(git_repo_path)
-    except InvalidGitRepositoryError:
-        ui.messageBox("Invalid Git repository.")
-        return None
-
-    if repo.head.is_detached:
-        ui.messageBox("Git repo is in a detached HEAD state.")
-        return None
-
-    # Attempt to pull existing remote data
-    try:
-        repo.git.pull('--rebase', '--autostash')
-    except Exception as e:
-        ui.messageBox(f"Git pull (rebase) failed:\n{str(e)}\nPlease resolve conflicts manually.")
-        return None
-
-    # Create a new branch name using timestamp
-    branch_name = branch_format.replace("{timestamp}", datetime.now().strftime("%Y-%m-%d-%H%M"))
-
-    # Attempt to checkout new branch
-    try:
-        repo.git.checkout("-b", branch_name)
-    except GitCommandError as e:
-        ui.messageBox(f"Couldn't create branch:\n{str(e)}")
-        return None
-
-    # Stage only newly exported files
-    for fn in filenames:
-        try:
-            repo.git.add(fn)
         except Exception as e:
-            ui.messageBox(f"Failed to stage {fn}:\n{e}")
+            msg = f"Error exporting {fmt_lower} for '{base_name}':\n{traceback.format_exc()}"
+            target_ui_ref.messageBox(msg, CMD_NAME)
+            if app: app.log(msg, adsk.core.LogLevels.ErrorLogLevel)
+            continue
+            
+    return exported_file_paths
 
-    # Commit
-    repo.index.commit(commit_message)
-
-    # Push to remote
+def handle_git_operations(repo_path, file_basenames_to_add, commit_msg, branch_format_str, target_ui_ref, design_basename_for_branch):
+    global app
+    repo = None 
+    original_branch_name_for_cleanup = None
+    stashed_changes_for_cleanup = False
     try:
-        repo.git.push("--set-upstream", "origin", branch_name)
-    except GitCommandError as e:
-        ui.messageBox(f"Git push failed:\n{str(e)}")
-        return None
+        repo = Repo(repo_path)
+        origin = repo.remotes.origin
+        
+        if repo.head.is_detached:
+            try:
+                # Attempt to find the default branch (main or master)
+                default_branch_name = "main" # Common default
+                if default_branch_name not in repo.branches:
+                    if "master" in repo.branches: default_branch_name = "master"
+                    else: # Try to get from remote HEAD if possible
+                         default_branch_remote_ref = repo.git.symbolic_ref('refs/remotes/origin/HEAD', short=True)
+                         default_branch_name = default_branch_remote_ref.split('/')[-1]
 
-    return branch_name
+                repo.git.checkout(default_branch_name)
+                original_branch_name_for_cleanup = default_branch_name
+                msg = f"Repo was detached. Switched to '{default_branch_name}'."
+                target_ui_ref.messageBox(msg, CMD_NAME)
+                if app: app.log(msg, adsk.core.LogLevels.InfoLogLevel)
+            except Exception as e_det:
+                msg = f"Repo is in detached HEAD and could not switch to default branch: {str(e_det)}. Please resolve manually."
+                target_ui_ref.messageBox(msg, CMD_NAME)
+                if app: app.log(msg, adsk.core.LogLevels.ErrorLogLevel)
+                return None
+        else:
+            original_branch_name_for_cleanup = repo.active_branch.name
+        
+        if app: app.log(f"Current branch for operations: {original_branch_name_for_cleanup}", adsk.core.LogLevels.InfoLogLevel)
+
+        if repo.is_dirty(untracked_files=False): # Check for tracked modified files
+            repo.git.stash('push', '-u', '-m', 'fusion_git_addin_autostash')
+            stashed_changes_for_cleanup = True
+            if app: app.log("Stashed local changes.", adsk.core.LogLevels.InfoLogLevel)
+
+        if app: app.log(f"Pulling from origin/{original_branch_name_for_cleanup} with rebase...", adsk.core.LogLevels.InfoLogLevel)
+        origin.pull(original_branch_name_for_cleanup, rebase=True) 
+        if app: app.log("Pull successful.", adsk.core.LogLevels.InfoLogLevel)
+
+        timestamp_str = datetime.now().strftime("%Y%m%d-%H%M%S")
+        new_branch_name = branch_format_str.replace("{timestamp}", timestamp_str).replace("{filename}", design_basename_for_branch)
+        new_branch_name = re.sub(r'[^\w\-\./_]+', '_', new_branch_name) # Sanitize branch name
+
+        if app: app.log(f"Creating and checking out new branch: {new_branch_name}", adsk.core.LogLevels.InfoLogLevel)
+        new_branch_head = repo.create_head(new_branch_name)
+        new_branch_head.checkout()
+
+        if app: app.log(f"Adding files: {', '.join(file_basenames_to_add)}", adsk.core.LogLevels.InfoLogLevel)
+        repo.index.add(file_basenames_to_add) 
+        
+        if app: app.log(f"Committing with message: {commit_msg}", adsk.core.LogLevels.InfoLogLevel)
+        repo.index.commit(commit_msg)
+
+        if app: app.log(f"Pushing branch {new_branch_name} to origin...", adsk.core.LogLevels.InfoLogLevel)
+        push_info_list = origin.push(new_branch_name, set_upstream=True)
+        for push_info in push_info_list:
+            if push_info.flags & (push_info.ERROR | push_info.REJECTED):
+                err_msg = f"Git push failed for branch '{new_branch_name}': {push_info.summary}"
+                target_ui_ref.messageBox(err_msg, CMD_NAME)
+                if app: app.log(err_msg, adsk.core.LogLevels.ErrorLogLevel)
+                raise GitCommandError(f"Push failed: {push_info.summary}") 
+        if app: app.log("Push successful.", adsk.core.LogLevels.InfoLogLevel)
+        
+        return new_branch_name
+
+    except GitCommandError as e_git:
+        msg = f"Git operation failed: {str(e_git)}"
+        target_ui_ref.messageBox(msg, CMD_NAME)
+        if app: app.log(msg, adsk.core.LogLevels.ErrorLogLevel)
+        return None
+    except Exception as e:
+        msg = f"Unexpected error during Git operations:\n{traceback.format_exc()}"
+        target_ui_ref.messageBox(msg, CMD_NAME)
+        if app: app.log(msg, adsk.core.LogLevels.ErrorLogLevel)
+        return None
+    finally:
+        try:
+            if repo and original_branch_name_for_cleanup and repo.active_branch.name != original_branch_name_for_cleanup:
+                if app: app.log(f"Attempting to switch back to original branch: {original_branch_name_for_cleanup}", adsk.core.LogLevels.InfoLogLevel)
+                repo.git.checkout(original_branch_name_for_cleanup)
+            if repo and stashed_changes_for_cleanup:
+                if app: app.log("Attempting to pop stashed changes on original branch...", adsk.core.LogLevels.InfoLogLevel)
+                repo.git.stash('pop')
+                if app: app.log("Stash pop successful on original branch.", adsk.core.LogLevels.InfoLogLevel)
+        except GitCommandError as e_cleanup_git:
+            cleanup_msg = f"Error during Git cleanup (checkout/stash pop on '{original_branch_name_for_cleanup}'): {str(e_cleanup_git)}"
+            if target_ui_ref: target_ui_ref.messageBox(cleanup_msg + "\nPlease check your repository state manually.", CMD_NAME)
+            if app: app.log(cleanup_msg, adsk.core.LogLevels.WarningLogLevel)
+        except Exception as e_cleanup_general:
+            cleanup_msg_gen = f"Unexpected error during Git cleanup: {str(e_cleanup_general)}"
+            if app: app.log(cleanup_msg_gen, adsk.core.LogLevels.WarningLogLevel)
 
 # ------------------------------------------------------------------------------
-# SCRIPT ENTRY POINT
+# ADD-IN LIFECYCLE FUNCTIONS: run() and stop()
 # ------------------------------------------------------------------------------
 def run(context):
-    """
-    This run() function is called when the script is executed from Fusion's Add-Ins.
-    It sets up a new command or reuses an existing button to push changes to GitHub.
-    """
-    try:
-        app = adsk.core.Application.get()
-        ui = app.userInterface
-    except:
-        app, ui = None, None
+    global push_cmd_def, git_push_control, handlers 
+    
+    # Ensure module-level app and ui are valid
+    if not app or not ui:
+        try:
+            temp_app_run = adsk.core.Application.get()
+            if temp_app_run:
+                globals()['app'] = temp_app_run 
+                globals()['ui'] = temp_app_run.userInterface
+            if not globals()['ui']: 
+                print("CRITICAL: Could not obtain UserInterface object in run(). Add-in cannot start.")
+                if globals()['app']: globals()['app'].log("CRITICAL: Could not obtain UserInterface object in run().", adsk.core.LogLevels.CriticalLogLevel)
+                return
+        except Exception as e_init_run:
+            print(f"CRITICAL: Exception while re-getting app/ui in run(): {traceback.format_exc()}")
+            return
 
     try:
-        if not app or not ui:
-            raise RuntimeError("Fusion application or UI could not be initialized.")
+        handlers.clear() 
 
-        # Create or retrieve the push command definition
-        cmd_defs = ui.commandDefinitions
-        push_cmd = cmd_defs.itemById("FusionGitPush")
-        if not push_cmd:
-            push_cmd = cmd_defs.addButtonDefinition(
-                "FusionGitPush",
-                "Push Fusion to GitHub",
-                "Push active design to a GitHub repo"
-            )
+        push_cmd_def = ui.commandDefinitions.itemById(CMD_ID)
+        if not push_cmd_def:
+            push_cmd_def = ui.commandDefinitions.addButtonDefinition(CMD_ID, CMD_NAME, CMD_TOOLTIP, "") 
 
-        # Attach our event handler
-        cmd_created_handler = GitCommandCreatedEventHandler()
-        push_cmd.commandCreated.add(cmd_created_handler)
-        handlers.append(cmd_created_handler)
+        on_cmd_created = GitCommandCreatedEventHandler()
+        push_cmd_def.commandCreated.add(on_cmd_created)
+        handlers.append(on_cmd_created)
 
-        # Execute the command immediately
-        push_cmd.execute()
-        adsk.autoTerminate(False)
+        target_panel = ui.allToolbarPanels.itemById(PANEL_ID)
+        if app and target_panel: app.log(f"Primary panel '{PANEL_ID}' found: {target_panel.name if target_panel else 'No'}", adsk.core.LogLevels.InfoLogLevel)
 
-    except Exception as e:
-        if ui:
-            ui.messageBox(f"Script error:\n{traceback.format_exc()}")
+        if not target_panel:
+            if app: app.log(f"Primary panel '{PANEL_ID}' not found. Trying fallbacks.", adsk.core.LogLevels.InfoLogLevel)
+            design_workspace = ui.workspaces.itemById("FusionSolidEnvironment")
+            if design_workspace:
+                possible_fallback_ids = [FALLBACK_PANEL_ID, "ToolsSolidPythonScriptsPanel", "FusionSolidScriptPanel"]
+                for panel_id_option in possible_fallback_ids:
+                    tb_panel_candidate = design_workspace.toolbarPanels.itemById(panel_id_option)
+                    if tb_panel_candidate:
+                        target_panel = tb_panel_candidate
+                        if app: app.log(f"Found fallback panel: '{target_panel.id}' ({target_panel.name})", adsk.core.LogLevels.InfoLogLevel)
+                        break
+            if not target_panel and app: app.log(f"No suitable fallback panel found in Design workspace.", adsk.core.LogLevels.WarningLogLevel)
+        
+        if target_panel:
+            if app: app.log(f"Target panel '{target_panel.id if target_panel else 'None'}' is being used. Attempting to add/find control '{CONTROL_ID}'.", adsk.core.LogLevels.InfoLogLevel)
+            
+            git_push_control = target_panel.controls.itemById(CONTROL_ID) 
+            if git_push_control and git_push_control.isValid: 
+                if app: app.log(f"Command control '{CONTROL_ID}' already exists in panel '{target_panel.id}'. Re-using.", adsk.core.LogLevels.InfoLogLevel)
+            else: 
+                git_push_control = target_panel.controls.addCommand(push_cmd_def, CONTROL_ID) 
+                if app: app.log(f"New command control '{CONTROL_ID}' {'created successfully' if git_push_control and git_push_control.isValid else 'FAILED to create'}.", adsk.core.LogLevels.InfoLogLevel)
+            
+            if git_push_control and git_push_control.isValid:
+                git_push_control.isPromotedByDefault = True 
+                git_push_control.isPromoted = True        
+                git_push_control.isVisible = True         
+                if app: app.log(f"Command control '{CONTROL_ID}' configured for visibility in panel '{target_panel.id}'.", adsk.core.LogLevels.InfoLogLevel)
+            else:
+                if app: app.log(f"Command control '{CONTROL_ID}' is None or invalid in panel '{target_panel.id}'. Button not visible.", adsk.core.LogLevels.ErrorLogLevel)
         else:
-            print("Fusion UI not available.")
-            print(traceback.format_exc())
+            msg = f"Could not find any target panel ('{PANEL_ID}' or fallbacks) to add the '{CMD_NAME}' button."
+            if ui: ui.messageBox(msg, "Add-In UI Error")
+            if app: app.log(msg, adsk.core.LogLevels.ErrorLogLevel)
+
+        adsk.autoTerminate(False)
+        if app: app.log(f"'{CMD_NAME}' Add-In Loaded and running.", adsk.core.LogLevels.InfoLogLevel)
+
+    except:
+        error_msg = 'Failed to run the Add-In (run function):\n{}'.format(traceback.format_exc())
+        if ui: ui.messageBox(error_msg, CMD_NAME + " - Critical Error")
+        if app: app.log(error_msg, adsk.core.LogLevels.CriticalLogLevel)
+        adsk.autoTerminate(True)
+
+
+def stop(context):
+    global push_cmd_def, git_push_control, handlers 
+    
+    current_app_ref = app 
+    current_ui_ref = ui
+    if not current_app_ref or not current_ui_ref:
+        try:
+            temp_app_stop = adsk.core.Application.get()
+            if temp_app_stop:
+                if not current_app_ref: globals()['app'] = temp_app_stop; current_app_ref = temp_app_stop
+                if not current_ui_ref: globals()['ui'] = temp_app_stop.userInterface; current_ui_ref = temp_app_stop.userInterface
+            if not current_ui_ref:
+                print("CRITICAL: Could not obtain UserInterface in stop(). Cannot stop cleanly.")
+                if current_app_ref: current_app_ref.log("CRITICAL: Could not obtain UserInterface in stop().", adsk.core.LogLevels.CriticalLogLevel)
+                return
+        except Exception:
+            print(f"CRITICAL: Exception while re-getting app/ui in stop(): {traceback.format_exc()}")
+            return
+    try:
+        if git_push_control and git_push_control.isValid:
+            git_push_control.deleteMe()
+        
+        if push_cmd_def and push_cmd_def.isValid:
+            push_cmd_def.deleteMe()
+
+        handlers.clear() 
+
+        if current_app_ref: current_app_ref.log(f"'{CMD_NAME}' Add-In Stopped.", adsk.core.LogLevels.InfoLogLevel)
+
+    except:
+        error_msg = 'Failed to stop the Add-In cleanly (stop function):\n{}'.format(traceback.format_exc())
+        if current_ui_ref: current_ui_ref.messageBox(error_msg, CMD_NAME + " - Stop Error")
+        if current_app_ref: current_app_ref.log(error_msg, adsk.core.LogLevels.ErrorLogLevel)
