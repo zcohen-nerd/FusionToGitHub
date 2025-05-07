@@ -7,8 +7,6 @@ This Fusion 360 Add-In automatically exports your Autodesk Fusion designs and pu
 This list is prioritized to tackle features offering a good balance of user benefit and development effort first.
 
 **Core Functionality & Enhancements**
-* [ ] **Changelog Tracking (from File Versioning Improvements & Changelog)**
-    * Implement automatic changelog tracking (e.g., appending commit messages or a summary to a `CHANGELOG.md` file within the pushed repository).
 * [ ] **Improved Logging (Structured File Logging)**
     * Enhance current logging by implementing Python's built-in `logging` module to write to a dedicated log file for easier debugging and auditing by users and developers.
 * [ ] **UI/UX Improvement: Export Format Input to Dropdown/Multiselect**
@@ -47,6 +45,7 @@ This list is prioritized to tackle features offering a good balance of user bene
 - ✅ ~~**export Format Support** Add export support for step, stl, dwg, dxf~~ Done 4/2/25
 - ✅ ~~**Add Comments** Comment the code for understanding~~ Done 4/2/25
 - ✅ ~~**Formalize as Fusion 360 Add-In** Package the script as a proper Add-In with a `.manifest` file for persistent UI (button) and easier installation/management by users.~~ Done 5/7/25
+- ✅ ~~**Changelog Tracking (from File Versioning Improvements & Changelog)** Implement automatic changelog tracking (e.g., appending commit messages or a summary to a `CHANGELOG.md` file within the pushed repository).~~ Done 5/7/25
 ---
 
 ## Installation and Setup Guide
