@@ -1,12 +1,13 @@
 {
 	"autodeskProduct":	"Fusion",
-	"type":	"script",
+	"type":	"addin",
 	"author":	"Zachary Cohen",
 	"description":	{
-		"":	"Pushes the current F3D file to GitHub when a button is pressed."
+		"":	"Integrates Fusion with GitHub, allowing users to push designs to repositories."
 	},
-	"version":	"0.3",
+	"version":	"",
+	"runOnStartup":	true,
 	"supportedOS":	"windows|mac",
 	"editEnabled":	true,
-	"iconFilename":	"ScriptIcon.svg"
+	"iconFilename":	"AddInIcon.svg"
 }
