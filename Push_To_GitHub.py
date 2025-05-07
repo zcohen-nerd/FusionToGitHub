@@ -1,5 +1,5 @@
 """This Add-In integrates Autodesk Fusion 360 with GitHub, allowing users to export
-designs and push them to specified GitHub repositories."""
+designs and push them to specified GitHub repositories, including changelog updates."""
 
 import adsk.core, adsk.fusion, adsk.cam, traceback
 import os, shutil, re, json
@@ -19,7 +19,6 @@ os.environ['GIT_PYTHON_GIT_EXECUTABLE'] = r"C:\\Program Files\\Git\\cmd\\git.exe
 CONFIG_PATH = os.path.expanduser("~/.fusion_git_repos.json")
 REPO_BASE_DIR = os.path.expanduser("~/FusionGitRepos")
 ADD_NEW_OPTION = "+ Add new GitHub repo..."
-# EDIT_EXISTING_OPTION is no longer used in repoSelector
 
 # ------------------------------------------------------------------------------
 # GLOBALS FOR ADD-IN LIFECYCLE MANAGEMENT
@@ -36,9 +35,9 @@ handlers = []
 push_cmd_def = None
 git_push_control = None
 
-CMD_ID = "PushToGitHub_Cmd_ZAC_V3" # Updated ID
+CMD_ID = "PushToGitHub_Cmd_ZAC_V4" # Updated ID for new version
 CMD_NAME = "Push to GitHub (ZAC)"
-CMD_TOOLTIP = "Exports/configures and pushes design to a GitHub repository."
+CMD_TOOLTIP = "Exports/configures, updates changelog, and pushes design to GitHub."
 PANEL_ID = "SolidUtilitiesAddinsPanel"
 FALLBACK_PANEL_ID = "SolidScriptsAddinsPanel"
 CONTROL_ID = CMD_ID + "_Control"
@@ -54,51 +53,35 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
         try:
             config = load_config()
             repo_names = list(config.keys())
-            dropdown_items = [ADD_NEW_OPTION] # Start with Add New
+            dropdown_items = [ADD_NEW_OPTION]
             if repo_names:
-                dropdown_items.extend(sorted(repo_names)) # Add existing repos, sorted
+                dropdown_items.extend(sorted(repo_names))
 
             args.command.isAutoExecute = False
-            args.command.isAutoTerminate = True # Dialog closes after OK
+            args.command.isAutoTerminate = True
             inputs = args.command.commandInputs
 
-            # --- Visible Inputs ---
-            # 1. Action/Repo Selector
-            global repoSelectorInput # Make it accessible if needed by ExecuteHandler (though usually by ID)
+            global repoSelectorInput 
             repoSelectorInput = inputs.addDropDownCommandInput(
-                "repoSelector",
-                "Action / Select Repo",
+                "repoSelector", "Action / Select Repo",
                 adsk.core.DropDownStyles.TextListDropDownStyle
             )
             for name_val in dropdown_items:
                 repoSelectorInput.listItems.add(name_val, name_val == ADD_NEW_OPTION, "")
 
-            # 2. New Repo Name (only used if "Add new..." is selected)
             inputs.addStringValueInput("newRepoName", "New Repo Name (if adding)", "")
-
-            # 3. Git URL (only used if "Add new..." is selected)
             inputs.addStringValueInput("gitUrl", "Git URL (if adding)", "https://github.com/user/repo.git")
-            
-            # 4. Export Formats (for config of new or existing selected repo)
             inputs.addStringValueInput("exportFormatsConfig", "Export Formats (config)", "f3d,step,stl")
-
-            # 5. Default Commit Message Template (for config of new or existing selected repo)
             inputs.addStringValueInput("defaultMessageConfig", "Default Commit Template (config)", "Design update: {filename}")
-
-            # 6. Branch Format Template (for config of new or existing selected repo)
             inputs.addStringValueInput("branchFormatConfig", "Branch Format (config)", "fusion-export/{filename}-{timestamp}")
-
-            # 7. Commit Message (for the current push operation)
             inputs.addStringValueInput("commitMsgPush", "Commit Message (for this push)", "Updated design")
 
-
-            # --- Execute Handler ---
             class ExecuteHandler(adsk.core.CommandEventHandler):
                 def notify(self, execute_args: adsk.core.CommandEventArgs):
                     current_app_ref = app if app else adsk.core.Application.get()
                     current_ui_ref = ui if ui else current_app_ref.userInterface
                     try:
-                        cmd_inputs = execute_args.command.commandInputs # Get inputs from execute_args
+                        cmd_inputs = execute_args.command.commandInputs
                         
                         selected_action_item = cmd_inputs.itemById("repoSelector").selectedItem
                         if not selected_action_item:
@@ -108,8 +91,6 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                         
                         current_config = load_config()
 
-                        # Get values from all config fields - they are always visible
-                        # These will be used for "Add New" or to update an existing repo's config
                         export_formats_val = [f.strip().lower() for f in cmd_inputs.itemById("exportFormatsConfig").value.split(",") if f.strip()] or ["f3d"]
                         default_message_tpl_val = cmd_inputs.itemById("defaultMessageConfig").value.strip() or "Design update: {filename}"
                         branch_format_tpl_val = cmd_inputs.itemById("branchFormatConfig").value.strip() or "fusion-export/{filename}-{timestamp}"
@@ -149,9 +130,9 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                             }
                             save_config(current_config)
                             current_ui_ref.messageBox(f"Repository '{repo_name_to_add}' added. Restart command to select it for push.", CMD_NAME)
-                            return # Done after adding
+                            return 
 
-                        else: # An existing repository was selected (selected_action is the repo name)
+                        else: 
                             selected_repo_name = selected_action
                             if selected_repo_name not in current_config:
                                 current_ui_ref.messageBox(f"Error: Selected repository '{selected_repo_name}' not found in config.", CMD_NAME)
@@ -159,19 +140,13 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                                 return
                             
                             selected_repo_details = current_config[selected_repo_name]
-
-                            # Implicitly update the selected repo's settings from the visible fields
                             selected_repo_details["exportFormats"] = export_formats_val
                             selected_repo_details["defaultMessage"] = default_message_tpl_val
                             selected_repo_details["branchFormat"] = branch_format_tpl_val
-                            # We don't update URL or path for an existing repo via these main fields
-                            # newRepoName and gitUrl fields are ignored when an existing repo is selected.
-
                             current_config[selected_repo_name] = selected_repo_details
                             save_config(current_config)
                             if app: app.log(f"Settings for repository '{selected_repo_name}' updated from dialog fields.", adsk.core.LogLevels.InfoLogLevel)
 
-                            # Now, proceed with the PUSH operation using the (potentially updated) selected_repo_details
                             if not check_git_available(current_ui_ref): return
                             design = get_fusion_design()
                             if not design:
@@ -180,7 +155,7 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
 
                             raw_name = design.rootComponent.name
                             clean_name = re.sub(r'\s+v\d+$', '', raw_name)
-                            base_name = clean_name.replace(" ", "_") # For filenames and placeholders
+                            base_name = clean_name.replace(" ", "_") 
 
                             git_repo_path = os.path.expanduser(selected_repo_details["path"])
                             if not os.path.isdir(os.path.join(git_repo_path, ".git")):
@@ -190,7 +165,6 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                             temp_dir = os.path.join(git_repo_path, "temp_fusion_export")
                             os.makedirs(temp_dir, exist_ok=True)
 
-                            # Use the (potentially updated) export formats from selected_repo_details
                             formats_for_this_push = selected_repo_details.get("exportFormats", ["f3d"])
                             exported_files_paths = export_fusion_design(design, temp_dir, base_name, formats_for_this_push, current_ui_ref)
 
@@ -201,9 +175,9 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
 
                             commit_msg_for_this_push = cmd_inputs.itemById("commitMsgPush").value.strip()
                             filename_placeholder = base_name 
-                            if not commit_msg_for_this_push: # If user left commit message blank for this push
+                            if not commit_msg_for_this_push: 
                                 commit_msg_for_this_push = selected_repo_details["defaultMessage"].replace("{filename}", filename_placeholder)
-                            else: # User provided a message, still replace placeholder if they used it
+                            else: 
                                 commit_msg_for_this_push = commit_msg_for_this_push.replace("{filename}", filename_placeholder)
                             
                             final_file_paths_in_repo_relative = []
@@ -212,7 +186,6 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                                 shutil.copy2(file_path, dest_path)
                                 final_file_paths_in_repo_relative.append(os.path.basename(file_path))
 
-                            # Use the (potentially updated) branch format from selected_repo_details
                             branch_format_for_this_push = selected_repo_details.get("branchFormat", "fusion-export/{filename}-{timestamp}")
                             
                             branch_name_pushed = handle_git_operations(
@@ -221,11 +194,11 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                                 commit_msg_for_this_push,
                                 branch_format_for_this_push,
                                 current_ui_ref,
-                                base_name # For {filename} placeholder in branch name
+                                base_name 
                             )
 
                             if branch_name_pushed:
-                                current_ui_ref.messageBox(f"✅ Successfully exported and pushed to branch: {branch_name_pushed}\nCreate a pull request on GitHub to merge.", CMD_NAME)
+                                current_ui_ref.messageBox(f"✅ Successfully exported, updated changelog, and pushed to branch: {branch_name_pushed}\nCreate a pull request on GitHub to merge.", CMD_NAME)
                             else:
                                 current_ui_ref.messageBox("Git operations completed with issues or were aborted.", CMD_NAME)
                             
@@ -246,14 +219,12 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
             if final_ui_ref: final_ui_ref.messageBox(error_message, CMD_NAME)
             if app: app.log(error_message, adsk.core.LogLevels.ErrorLogLevel)
 
-# ------------------------------------------------------------------------------
-# HELPER FUNCTIONS (check_git_available, load_config, save_config, get_fusion_design, export_fusion_design, handle_git_operations)
-# These functions remain largely the same as the previous version that had app.log fixes.
-# The prompt_repo_settings function is no longer used by ExecuteHandler.
-# Ensure handle_git_operations correctly uses its parameters.
-# ------------------------------------------------------------------------------
 
+# ------------------------------------------------------------------------------
+# HELPER FUNCTIONS
+# ------------------------------------------------------------------------------
 def check_git_available(target_ui_ref):
+    # ... (same as previous version) ...
     global app
     try:
         flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
@@ -271,6 +242,7 @@ def check_git_available(target_ui_ref):
         return False
 
 def load_config():
+    # ... (same as previous version) ...
     global app, ui 
     if not os.path.exists(CONFIG_PATH):
         with open(CONFIG_PATH, 'w') as f: json.dump({}, f)
@@ -282,7 +254,7 @@ def load_config():
         if not final_ui_ref and app: final_ui_ref = app.userInterface
 
         backup_path = CONFIG_PATH + ".bak_corrupted_" + datetime.now().strftime("%Y%m%d%H%M%S")
-        if os.path.exists(CONFIG_PATH): shutil.copyfile(CONFIG_PATH, backup_path) # Check if exists before copy
+        if os.path.exists(CONFIG_PATH): shutil.copyfile(CONFIG_PATH, backup_path)
         msg = f"Configuration file was corrupted. Backup made to '{backup_path}'. New config file created."
         if final_ui_ref: final_ui_ref.messageBox(msg, "Config Error")
         if app: app.log(msg, adsk.core.LogLevels.ErrorLogLevel)
@@ -290,6 +262,7 @@ def load_config():
         return {}
 
 def save_config(config_data):
+    # ... (same as previous version) ...
     global app, ui
     try:
         with open(CONFIG_PATH, 'w') as f: json.dump(config_data, f, indent=4)
@@ -301,6 +274,7 @@ def save_config(config_data):
         if app: app.log(msg, adsk.core.LogLevels.ErrorLogLevel)
 
 def get_fusion_design():
+    # ... (same as previous version) ...
     global app
     try:
         if not app: return None 
@@ -309,6 +283,7 @@ def get_fusion_design():
     except: return None
 
 def export_fusion_design(design: adsk.fusion.Design, export_dir: str, base_name: str, formats_to_export: list, target_ui_ref):
+    # ... (same as previous version) ...
     global app
     export_mgr = design.exportManager
     exported_file_paths = []
@@ -341,22 +316,18 @@ def export_fusion_design(design: adsk.fusion.Design, export_dir: str, base_name:
             if options: export_executed_successfully = export_mgr.execute(options)
             
             if export_executed_successfully:
-                # Check file existence and size more robustly
                 if os.path.exists(full_export_path) and os.path.getsize(full_export_path) > 0:
                     exported_file_paths.append(full_export_path)
                     if app: app.log(f"Exported: {full_export_path}", adsk.core.LogLevels.InfoLogLevel)
-                # Some exports might return True but the file creation is async or slightly delayed.
-                # For this example, we assume if True is returned, the file should be there.
-                # A more robust solution might involve waiting briefly and checking again for some formats.
-                elif os.path.exists(full_export_path): # File exists but is empty
+                elif os.path.exists(full_export_path): 
                      msg = f"Export reported success for {fmt_lower} but file is empty: {full_export_path}"
                      target_ui_ref.messageBox(msg, CMD_NAME)
                      if app: app.log(msg, adsk.core.LogLevels.WarningLogLevel)
-                else: # File does not exist
+                else: 
                     msg = f"Export reported success for {fmt_lower} but file not found: {full_export_path}"
                     target_ui_ref.messageBox(msg, CMD_NAME)
                     if app: app.log(msg, adsk.core.LogLevels.WarningLogLevel)
-            elif options: # options were created, but execute returned False or None
+            elif options: 
                 msg = f"Export execution failed or did not confirm success for {fmt_lower}: {full_export_path}"
                 target_ui_ref.messageBox(msg, CMD_NAME)
                 if app: app.log(msg, adsk.core.LogLevels.WarningLogLevel)
@@ -369,8 +340,9 @@ def export_fusion_design(design: adsk.fusion.Design, export_dir: str, base_name:
             
     return exported_file_paths
 
+# MODIFIED handle_git_operations function (as detailed above)
 def handle_git_operations(repo_path, file_basenames_to_add, commit_msg, branch_format_str, target_ui_ref, design_basename_for_branch):
-    global app
+    global app 
     repo = None 
     original_branch_name_for_cleanup = None
     stashed_changes_for_cleanup = False
@@ -380,11 +352,10 @@ def handle_git_operations(repo_path, file_basenames_to_add, commit_msg, branch_f
         
         if repo.head.is_detached:
             try:
-                # Attempt to find the default branch (main or master)
-                default_branch_name = "main" # Common default
+                default_branch_name = "main" 
                 if default_branch_name not in repo.branches:
                     if "master" in repo.branches: default_branch_name = "master"
-                    else: # Try to get from remote HEAD if possible
+                    else: 
                          default_branch_remote_ref = repo.git.symbolic_ref('refs/remotes/origin/HEAD', short=True)
                          default_branch_name = default_branch_remote_ref.split('/')[-1]
 
@@ -403,7 +374,7 @@ def handle_git_operations(repo_path, file_basenames_to_add, commit_msg, branch_f
         
         if app: app.log(f"Current branch for operations: {original_branch_name_for_cleanup}", adsk.core.LogLevels.InfoLogLevel)
 
-        if repo.is_dirty(untracked_files=False): # Check for tracked modified files
+        if repo.is_dirty(untracked_files=False):
             repo.git.stash('push', '-u', '-m', 'fusion_git_addin_autostash')
             stashed_changes_for_cleanup = True
             if app: app.log("Stashed local changes.", adsk.core.LogLevels.InfoLogLevel)
@@ -414,14 +385,57 @@ def handle_git_operations(repo_path, file_basenames_to_add, commit_msg, branch_f
 
         timestamp_str = datetime.now().strftime("%Y%m%d-%H%M%S")
         new_branch_name = branch_format_str.replace("{timestamp}", timestamp_str).replace("{filename}", design_basename_for_branch)
-        new_branch_name = re.sub(r'[^\w\-\./_]+', '_', new_branch_name) # Sanitize branch name
+        new_branch_name = re.sub(r'[^\w\-\./_]+', '_', new_branch_name) 
 
         if app: app.log(f"Creating and checking out new branch: {new_branch_name}", adsk.core.LogLevels.InfoLogLevel)
         new_branch_head = repo.create_head(new_branch_name)
         new_branch_head.checkout()
 
-        if app: app.log(f"Adding files: {', '.join(file_basenames_to_add)}", adsk.core.LogLevels.InfoLogLevel)
-        repo.index.add(file_basenames_to_add) 
+        # --- CHANGELOG LOGIC START ---
+        changelog_file_path = os.path.join(repo_path, "CHANGELOG.md")
+        log_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S") # For display in changelog
+        
+        entry_lines = []
+        entry_lines.append(f"## {log_timestamp} - {design_basename_for_branch}")
+        entry_lines.append(f"- **Branch:** `{new_branch_name}`")
+        entry_lines.append(f"- **Commit Message:** \"{commit_msg}\"")
+        if file_basenames_to_add:
+            entry_lines.append("- **Files Updated:**")
+            for fname in file_basenames_to_add:
+                entry_lines.append(f"  - `{fname}`")
+        entry_lines.append("\n---\n") 
+
+        new_entry_text = "\n".join(entry_lines) + "\n"
+
+        existing_content = ""
+        changelog_header = "# Changelog\n\n"
+        files_to_commit_gitpython = list(file_basenames_to_add) # Start with design files
+
+        try:
+            if os.path.exists(changelog_file_path):
+                with open(changelog_file_path, "r", encoding="utf-8") as f_read:
+                    existing_content = f_read.read()
+                # Remove header if it exists, to avoid duplicating it if we rewrite it
+                if existing_content.startswith(changelog_header):
+                    existing_content = existing_content[len(changelog_header):] 
+
+            with open(changelog_file_path, "w", encoding="utf-8") as f_write:
+                f_write.write(changelog_header) # Write/Rewrite header
+                f_write.write(new_entry_text)   # Write new entry at the top
+                f_write.write(existing_content) # Write old content after
+            
+            if app: app.log(f"Updated {changelog_file_path}", adsk.core.LogLevels.InfoLogLevel)
+            if "CHANGELOG.md" not in files_to_commit_gitpython: # Ensure it's added if not already
+                 files_to_commit_gitpython.insert(0, "CHANGELOG.md") # Add to beginning of list
+        except IOError as e_io:
+            msg = f"Error writing to CHANGELOG.md: {str(e_io)}. Proceeding without changelog update for this commit."
+            target_ui_ref.messageBox(msg, CMD_NAME)
+            if app: app.log(msg, adsk.core.LogLevels.ErrorLogLevel)
+            # files_to_commit_gitpython remains just the design files
+        # --- CHANGELOG LOGIC END ---
+
+        if app: app.log(f"Adding files to Git: {', '.join(files_to_commit_gitpython)}", adsk.core.LogLevels.InfoLogLevel)
+        repo.index.add(files_to_commit_gitpython) 
         
         if app: app.log(f"Committing with message: {commit_msg}", adsk.core.LogLevels.InfoLogLevel)
         repo.index.commit(commit_msg)
@@ -465,13 +479,14 @@ def handle_git_operations(repo_path, file_basenames_to_add, commit_msg, branch_f
             cleanup_msg_gen = f"Unexpected error during Git cleanup: {str(e_cleanup_general)}"
             if app: app.log(cleanup_msg_gen, adsk.core.LogLevels.WarningLogLevel)
 
+
 # ------------------------------------------------------------------------------
 # ADD-IN LIFECYCLE FUNCTIONS: run() and stop()
 # ------------------------------------------------------------------------------
 def run(context):
+    # ... (same as previous version) ...
     global push_cmd_def, git_push_control, handlers 
     
-    # Ensure module-level app and ui are valid
     if not app or not ui:
         try:
             temp_app_run = adsk.core.Application.get()
@@ -546,6 +561,7 @@ def run(context):
 
 
 def stop(context):
+    # ... (same as previous version) ...
     global push_cmd_def, git_push_control, handlers 
     
     current_app_ref = app 
