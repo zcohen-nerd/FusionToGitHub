@@ -4,8 +4,6 @@ This Fusion 360 Add-In automatically exports your Autodesk Fusion designs and pu
 
 ## To Do
 **Core Functionality & Enhancements**
-* [x] **Formalize as Fusion 360 Add-In** `Done 05/07/2025`
-    * Package the script as a proper Add-In with a `.manifest` file for persistent UI (button) and easier installation/management by users.
 * [ ] **Drawing / Electronics / Manufacturing Export**
     * Enable exporting of related Fusion outputs such as drawings (.dwg, .pdf), schematics/PCB layouts (e.g., .sch, .brd), and CAM toolpaths (e.g., .nc).
 * [ ] **Project Metadata Export**
