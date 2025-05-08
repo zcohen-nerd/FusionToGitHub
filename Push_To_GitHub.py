@@ -126,7 +126,7 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
             exportFormatsDropdown = inputs.addDropDownCommandInput(
                 "exportFormatsConfig", # Keep ID the same
                 "Export Formats (config)", # Label
-                adsk.core.DropDownStyles.CheckBoxListDropDownStyle # Style change!
+                adsk.core.DropDownStyles.CheckBoxDropDownStyle # Style change!
             )
             # Add items (formats) to the checklist dropdown
             for fmt in available_formats:
