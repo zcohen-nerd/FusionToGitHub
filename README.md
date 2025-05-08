@@ -7,12 +7,8 @@ This Fusion 360 Add-In automatically exports your Autodesk Fusion designs and pu
 This list is prioritized to tackle features offering a good balance of user benefit and development effort first.
 
 **Core Functionality & Enhancements**
-* [ ] **Improved Logging (Structured File Logging)**
-    * Enhance current logging by implementing Python's built-in `logging` module to write to a dedicated log file for easier debugging and auditing by users and developers.
-* [ ] **UI/UX Improvement: Export Format Input to Dropdown/Multiselect**
-    * Convert the text-based, comma-separated string input for "Export Formats (config)" to a more user-friendly `DropDownCommandInput` with `CheckBoxListDropDownStyle` or a similar multi-select mechanism.
 * [ ] **Bill of Materials (BOM) Export**
-    * Integrate BOM generation from the active Fusion 360 design and export it as a CSV or JSON file alongside the other design files.
+    * Integrate BOM generation from the active Fusion 360 design and export it as a CSV or JSON file alongside the other design files. (currently having issues with this, may take a while)
 * [ ] **Project Metadata Export**
     * Generate and optionally push a project metadata file (.json or .txt) with each commit (e.g., including details like export date/time, active document name, component count, or custom notes input by the user).
 * [ ] **Parameter Export (JSON/CSV)**
@@ -46,6 +42,8 @@ This list is prioritized to tackle features offering a good balance of user bene
 - ✅ ~~**Add Comments** Comment the code for understanding~~ Done 4/2/25
 - ✅ ~~**Formalize as Fusion 360 Add-In** Package the script as a proper Add-In with a `.manifest` file for persistent UI (button) and easier installation/management by users.~~ Done 5/7/25
 - ✅ ~~**Changelog Tracking (from File Versioning Improvements & Changelog)** Implement automatic changelog tracking (e.g., appending commit messages or a summary to a `CHANGELOG.md` file within the pushed repository).~~ Done 5/7/25
+- ✅ ~~**Improved Logging (Structured File Logging)** Enhance current logging by implementing Python's built-in `logging` module to write to a dedicated log file for easier debugging and auditing by users and developers.~~ Done 5/8/25
+- ✅ ~~**UI/UX Improvement: Export Format Input to Dropdown/Multiselect** Convert the text-based, comma-separated string input for "Export Formats (config)" to a more user-friendly `DropDownCommandInput` with `CheckBoxListDropDownStyle` or a similar multi-select mechanism.~~ Done 5/8/25
 ---
 
 ## Installation and Setup Guide
