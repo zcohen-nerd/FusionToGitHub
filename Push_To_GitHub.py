@@ -5,7 +5,8 @@ Also includes: progress dialog fix, double-init guard, toolbar de-dupe, robust p
 """
 
 import adsk.core, adsk.fusion, adsk.cam, traceback
-import os, shutil, re, json, subprocess, logging, logging.handlers
+import os, shutil, re, json, subprocess, logging, logging.handlers, tempfile
+from contextlib import contextmanager
 from datetime import datetime
 
 VERSION = "V7.4"
@@ -40,6 +41,24 @@ def _git_available():
 CONFIG_PATH = os.path.expanduser("~/.fusion_git_repos.json")
 REPO_BASE_DIR = os.path.expanduser("~/FusionGitRepos")
 ADD_NEW_OPTION = "+ Add new GitHub repo..."
+META_KEY = "__meta__"
+
+FORMAT_SETTINGS_DEFAULT = {
+    "stl": {"meshRefinement": "high"},
+    "step": {"protocol": "AP214"},
+}
+
+FORMAT_SETTINGS_OPTIONS = {
+    "stl": [
+        ("High (refined mesh)", "high"),
+        ("Medium", "medium"),
+        ("Low (fast)", "low"),
+    ],
+    "step": [
+        ("AP203", "AP203"),
+        ("AP214 (default)", "AP214"),
+    ],
+}
 
 LOG_DIR = os.path.expanduser("~/.PushToGitHub_AddIn_Data")
 LOG_FILE_PATH = os.path.join(LOG_DIR, "PushToGitHub.log")
@@ -50,6 +69,80 @@ CMD_TOOLTIP = "Exports/configures, updates changelog, and pushes design to GitHu
 PANEL_ID = "SolidUtilitiesAddinsPanel"
 FALLBACK_PANEL_ID = "SolidScriptsAddinsPanel"
 CONTROL_ID = CMD_ID + "_Control"
+
+
+def _has_open_drawing_document() -> bool:
+    if not app:
+        return False
+    try:
+        docs = app.documents
+        for i in range(docs.count):
+            doc = docs.item(i)
+            if doc and doc.documentType == adsk.core.DocumentTypes.DrawingDocumentType:
+                return True
+    except Exception:
+        if logger:
+            logger.debug("Failed to inspect documents for drawing presence.", exc_info=True)
+    return False
+
+
+def _component_or_children_have_sketches(component: adsk.fusion.Component) -> bool:
+    try:
+        if component.sketches.count:
+            return True
+        for occurrence in component.occurrences:
+            child = occurrence.component
+            if child and _component_or_children_have_sketches(child):
+                return True
+    except Exception:
+        if logger:
+            logger.debug("Sketch detection failed for component %s.", getattr(component, "name", "?"), exc_info=True)
+    return False
+
+
+def _design_has_sketches(design: adsk.fusion.Design) -> bool:
+    if not design:
+        return False
+    try:
+        root = design.rootComponent
+        return _component_or_children_have_sketches(root)
+    except Exception:
+        if logger:
+            logger.debug("Unable to evaluate sketches for design.", exc_info=True)
+        return False
+
+
+@contextmanager
+def temporary_export_dir(parent_dir: str):
+    temp_path = tempfile.mkdtemp(prefix="fusion_export_", dir=parent_dir)
+    try:
+        yield temp_path
+    finally:
+        shutil.rmtree(temp_path, ignore_errors=True)
+
+
+def determine_valid_export_formats(design, requested_formats):
+    valid = []
+    warnings = []
+    has_sketches = None
+    has_drawing = None
+
+    for fmt in [f.lower() for f in requested_formats]:
+        if fmt == "dwg":
+            if has_drawing is None:
+                has_drawing = _has_open_drawing_document()
+            if not has_drawing:
+                warnings.append("DWG skipped: no drawing document is open.")
+                continue
+        if fmt == "dxf":
+            if has_sketches is None:
+                has_sketches = _design_has_sketches(design)
+            if not has_sketches:
+                warnings.append("DXF skipped: design has no sketches to export.")
+                continue
+        valid.append(fmt)
+
+    return valid, warnings
 
 # -----------------------------
 # Globals
@@ -204,11 +297,20 @@ def _safe_base(name: str) -> str:
     return re.sub(r'[<>:"/\\|?*]+', '_', name)
 
 
-def export_fusion_design(design: adsk.fusion.Design, export_dir: str, base_name: str, formats_to_export: list, target_ui_ref):
+def export_fusion_design(
+    design: adsk.fusion.Design,
+    export_dir: str,
+    base_name: str,
+    formats_to_export: list,
+    target_ui_ref,
+    format_settings=None,
+):
     global logger
     em = design.exportManager
     root = design.rootComponent
     exported = []
+
+    format_settings = format_settings or {}
 
     def file_ok(p):
         return os.path.exists(p) and os.path.getsize(p) > 0
@@ -230,16 +332,44 @@ def export_fusion_design(design: adsk.fusion.Design, export_dir: str, base_name:
                 opts = em.createSATExportOptions(path, root)
             elif fmt == "stl":
                 opts = em.createSTLExportOptions(root, path)
-                opts.meshRefinement = adsk.fusion.MeshRefinementSettings.MeshRefinementHigh
+                refinement = (
+                    format_settings.get("stl", {}).get(
+                        "meshRefinement",
+                        FORMAT_SETTINGS_DEFAULT.get("stl", {}).get("meshRefinement", "high"),
+                    )
+                )
+                refinement = (refinement or "high").lower()
+                refinement_map = {
+                    "high": adsk.fusion.MeshRefinementSettings.MeshRefinementHigh,
+                    "medium": adsk.fusion.MeshRefinementSettings.MeshRefinementMedium,
+                    "low": adsk.fusion.MeshRefinementSettings.MeshRefinementLow,
+                }
+                opts.meshRefinement = refinement_map.get(
+                    refinement,
+                    adsk.fusion.MeshRefinementSettings.MeshRefinementHigh,
+                )
             elif fmt == "dwg" and hasattr(em, "createDWGExportOptions"):
-                target_ui_ref.messageBox("DWG export requires a drawing; skipping.", CMD_NAME)
-                continue
+                opts = em.createDWGExportOptions(path)
             elif fmt == "dxf" and hasattr(em, "createDXFExportOptions"):
-                target_ui_ref.messageBox("DXF export requires a sketch/drawing; skipping.", CMD_NAME)
-                continue
+                opts = em.createDXFExportOptions(path)
             else:
                 if logger: logger.warning("Unsupported/unavailable export format: %s", fmt)
                 continue
+
+            if fmt in ("step", "stp") and opts:
+                protocol = (
+                    format_settings.get("step", {}).get("protocol", "AP214")
+                )
+                if hasattr(opts, "applicationProtocol"):
+                    try:
+                        opts.applicationProtocol = str(protocol)
+                    except Exception:
+                        if logger:
+                            logger.debug(
+                                "Failed to set STEP protocol to %s.",
+                                protocol,
+                                exc_info=True,
+                            )
 
             if opts and em.execute(opts) and file_ok(path):
                 exported.append(path)
@@ -390,79 +520,448 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
         local_ui_ref = ui if ui else local_app_ref.userInterface
 
         try:
-            config = load_config()
-            repo_names = sorted(list(config.keys()))
-            dropdown_items = [ADD_NEW_OPTION] + repo_names if repo_names else [ADD_NEW_OPTION]
+            config_cache = load_config()
+            if not isinstance(config_cache, dict):
+                config_cache = {}
+            meta = config_cache.get(META_KEY, {})
+            if not isinstance(meta, dict):
+                meta = {}
+                config_cache[META_KEY] = meta
+            repo_names = sorted(
+                name for name in config_cache.keys() if name != META_KEY
+            )
+            dropdown_items = (
+                [ADD_NEW_OPTION] + repo_names if repo_names else [ADD_NEW_OPTION]
+            )
 
             args.command.isAutoExecute = False
             args.command.isAutoTerminate = True
             inputs = args.command.commandInputs
 
-            # Repo selector
-            repoSelectorInput = inputs.addDropDownCommandInput(
+            # Repo selector (grouped)
+            repo_group = inputs.addGroupCommandInput("repoGroup", "Repository")
+            repo_group.isExpanded = True
+            repo_inputs = repo_group.children
+
+            repoSelectorInput = repo_inputs.addDropDownCommandInput(
                 "repoSelector", "Action / Select Repo",
                 adsk.core.DropDownStyles.TextListDropDownStyle
             )
-            for name_val in dropdown_items:
-                repoSelectorInput.listItems.add(name_val, False, "")
+
+            default_repo_name = None
             if repo_names:
-                for li in repoSelectorInput.listItems:
-                    if li.name == repo_names[0]:
-                        li.isSelected = True
-                        break
+                default_repo_name = (
+                    meta.get("lastSelectedRepo") if isinstance(meta, dict) else None
+                )
+                if default_repo_name not in repo_names:
+                    default_repo_name = repo_names[0]
             else:
+                default_repo_name = ADD_NEW_OPTION
+
+            for name_val in dropdown_items:
+                is_selected = (name_val == default_repo_name)
+                repoSelectorInput.listItems.add(name_val, is_selected, "")
+
+            if (
+                repoSelectorInput.selectedItem is None
+                and repoSelectorInput.listItems.count
+            ):
                 repoSelectorInput.listItems.item(0).isSelected = True
 
-            # New-repo inputs
-            inputs.addStringValueInput("newRepoName", "New Repo Name (if adding)", "")
-            inputs.addStringValueInput("gitUrl", "Git URL (if adding)", "https://github.com/user/repo.git")
+            new_repo_name_input = repo_inputs.addStringValueInput(
+                "newRepoName",
+                "New Repo Name (if adding)",
+                "",
+            )
+            git_url_input = repo_inputs.addStringValueInput(
+                "gitUrl",
+                "Git URL (if adding)",
+                "https://github.com/user/repo.git",
+            )
+            repo_path_input = repo_inputs.addStringValueInput(
+                "repoPath",
+                "Repository Path",
+                "",
+            )
+            browse_repo_button = repo_inputs.addBoolValueInput(
+                "browseRepoPath", "Browse…", False, "", False
+            )
+            browse_repo_button.isFullWidth = False
+            repo_status_input = repo_inputs.addTextBoxCommandInput(
+                "repoValidationStatus", "", "", 2, True
+            )
+            repo_status_input.isFullWidth = True
+            git_status_input = repo_inputs.addTextBoxCommandInput(
+                "gitValidationStatus", "", "", 2, True
+            )
+            git_status_input.isFullWidth = True
+
+            def update_new_repo_visibility(selection_name: str):
+                show_new_repo = (selection_name == ADD_NEW_OPTION)
+                new_repo_name_input.isVisible = show_new_repo
+                git_url_input.isVisible = show_new_repo
+                git_status_input.isVisible = show_new_repo
+
+            current_selection_name = (
+                repoSelectorInput.selectedItem.name
+                if repoSelectorInput.selectedItem
+                else ADD_NEW_OPTION
+            )
+            update_new_repo_visibility(current_selection_name)
 
             # Export formats (checkbox dropdown)
-            available_formats = ["f3d", "step", "iges", "sat", "stl", "dwg", "dxf"]
+            export_group = inputs.addGroupCommandInput(
+                "exportGroup", "Export Options"
+            )
+            export_group.isExpanded = True
+            export_inputs = export_group.children
+
+            available_formats = [
+                "f3d",
+                "step",
+                "iges",
+                "sat",
+                "stl",
+                "dwg",
+                "dxf",
+            ]
             default_formats_list = ["f3d", "step", "stl"]
-            exportFormatsDropdown = inputs.addDropDownCommandInput(
+            exportFormatsDropdown = export_inputs.addDropDownCommandInput(
                 "exportFormatsConfig", "Export Formats (config)",
                 adsk.core.DropDownStyles.CheckBoxDropDownStyle
             )
             for fmt in available_formats:
-                exportFormatsDropdown.listItems.add(fmt, fmt in default_formats_list, "")
+                exportFormatsDropdown.listItems.add(
+                    fmt, fmt in default_formats_list, ""
+                )
+
+            format_settings_state = {}
+            format_setting_inputs = {}
+            format_settings_table = export_inputs.addTableCommandInput(
+                "formatSettingsTable", "Format Settings", 2,
+                adsk.core.TablePresentationStyles.minimalTablePresentationStyle
+            )
+            format_settings_table.maximumVisibleRows = len(available_formats) + 1
+            format_settings_table.columnSpacing = 4
+            format_settings_table.rowSpacing = 2
+
+            def get_selected_formats():
+                return [
+                    item.name
+                    for item in exportFormatsDropdown.listItems
+                    if item.isSelected
+                ]
+
+            def ensure_format_defaults(fmt: str):
+                defaults = FORMAT_SETTINGS_DEFAULT.get(fmt, {})
+                fmt_state = format_settings_state.setdefault(fmt, {})
+                for key, value in defaults.items():
+                    fmt_state.setdefault(key, value)
+
+            def sync_format_settings_rows():
+                format_settings_table.clear()
+                format_setting_inputs.clear()
+
+                header_label = export_inputs.addTextBoxCommandInput(
+                    "formatSettingsHeaderLabel", "", "Format", 1, True
+                )
+                header_label.isFullWidth = True
+                header_setting = export_inputs.addTextBoxCommandInput(
+                    "formatSettingsHeaderSetting", "", "Setting", 1, True
+                )
+                header_setting.isFullWidth = True
+                format_settings_table.addCommandInput(header_label, 0, 0)
+                format_settings_table.addCommandInput(header_setting, 0, 1)
+
+                row_index = 1
+                for fmt in get_selected_formats():
+                    ensure_format_defaults(fmt)
+                    label = export_inputs.addTextBoxCommandInput(
+                        f"formatSettingsLabel_{fmt}", "", fmt.upper(), 1, True
+                    )
+                    label.isFullWidth = True
+                    dropdown = export_inputs.addDropDownCommandInput(
+                        f"formatSetting_{fmt}", "",
+                        adsk.core.DropDownStyles.TextListDropDownStyle
+                    )
+
+                    options = FORMAT_SETTINGS_OPTIONS.get(fmt, [])
+                    dropdown.listItems.clear()
+                    current_state = format_settings_state.get(fmt, {})
+                    state_key = list(FORMAT_SETTINGS_DEFAULT.get(fmt, {}).keys() or ["value"])[0]
+                    current_value = current_state.get(
+                        state_key,
+                        FORMAT_SETTINGS_DEFAULT.get(fmt, {}).get(state_key, "default")
+                    )
+                    for label_text, value in options:
+                        dropdown.listItems.add(
+                            label_text,
+                            value == current_value,
+                            ""
+                        )
+                    format_setting_inputs[fmt] = (dropdown, state_key, options)
+                    format_settings_table.addCommandInput(label, row_index, 0)
+                    format_settings_table.addCommandInput(dropdown, row_index, 1)
+                    row_index += 1
+
+            def collect_format_settings_from_ui():
+                result = {}
+                for fmt, data in format_setting_inputs.items():
+                    dropdown, state_key, options = data
+                    selected_item = dropdown.selectedItem
+                    if not selected_item:
+                        continue
+                    selected_label = selected_item.name
+                    value_lookup = dict(options)
+                    selected_value = value_lookup.get(selected_label, selected_label)
+                    result[fmt] = {state_key: selected_value}
+                return result
+
+            sync_format_settings_rows()
 
             # Templates and per-push message
-            inputs.addStringValueInput("defaultMessageConfig", "Default Commit Template (config)", "Design update: {filename}")
-            inputs.addStringValueInput("branchFormatConfig", "Branch Format (config)", "fusion-export/{filename}-{timestamp}")
-            inputs.addStringValueInput("commitMsgPush", "Commit Message (for this push)", "Updated design")
+            git_group = inputs.addGroupCommandInput("gitGroup", "Git Settings")
+            git_group.isExpanded = True
+            git_inputs = git_group.children
+
+            git_inputs.addStringValueInput(
+                "defaultMessageConfig",
+                "Default Commit Template (config)",
+                "Design update: {filename}",
+            )
+            git_inputs.addStringValueInput(
+                "branchFormatConfig",
+                "Branch Format (config)",
+                "fusion-export/{filename}-{timestamp}",
+            )
+
+            last_commit_message = "Updated design"
+            if isinstance(meta, dict):
+                last_commit_message = meta.get("lastCommitMessage", last_commit_message)
+            git_inputs.addStringValueInput(
+                "commitMsgPush",
+                "Commit Message (for this push)",
+                last_commit_message,
+            )
 
             # Apply saved settings for selected repo
             def apply_repo_settings(repo_name: str):
-                cfg = load_config()
-                det = cfg.get(repo_name, {})
+                det = config_cache.get(repo_name, {})
                 saved_formats = set(det.get("exportFormats", []))
                 for item in exportFormatsDropdown.listItems:
-                    item.isSelected = (item.name in saved_formats) if saved_formats else (item.name in default_formats_list)
-                inputs.itemById("defaultMessageConfig").value = det.get("defaultMessage", "Design update: {filename}")
-                inputs.itemById("branchFormatConfig").value = det.get("branchFormat", "fusion-export/{filename}-{timestamp}")
+                    is_saved = item.name in saved_formats if saved_formats else False
+                    item.isSelected = (
+                        is_saved
+                        or (
+                            not saved_formats
+                            and item.name in default_formats_list
+                        )
+                    )
+
+                format_settings_state.clear()
+                saved_settings = det.get("formatSettings", {})
+                if isinstance(saved_settings, dict):
+                    format_settings_state.update(saved_settings)
+                sync_format_settings_rows()
+
+                inputs.itemById("defaultMessageConfig").value = det.get(
+                    "defaultMessage",
+                    "Design update: {filename}",
+                )
+                inputs.itemById("branchFormatConfig").value = det.get(
+                    "branchFormat",
+                    "fusion-export/{filename}-{timestamp}",
+                )
+                repo_path_input.value = det.get("path", "")
+                git_url_input.value = det.get("url", "")
 
             sel_item = repoSelectorInput.selectedItem
             if sel_item and sel_item.name != ADD_NEW_OPTION:
                 apply_repo_settings(sel_item.name)
+
+            auto_path_state = {"auto": True}
+
+            def default_path_for_new_repo() -> str:
+                proposed_name = new_repo_name_input.value.strip()
+                if not proposed_name:
+                    return os.path.join(REPO_BASE_DIR, "NewRepo")
+                sanitized = _safe_base(proposed_name) or proposed_name
+                return os.path.join(REPO_BASE_DIR, sanitized)
+
+            def validate_repo_inputs(selection_name: str, raw_path: str, git_url_val: str):
+                messages = {"path": ("", "info"), "git": ("", "info")}
+                ok = True
+
+                def set_msg(field: str, text: str, severity: str = "info"):
+                    messages[field] = (text, severity)
+
+                expanded = raw_path.strip()
+                if expanded:
+                    expanded = os.path.expanduser(expanded)
+                normalized_path = os.path.abspath(expanded) if expanded else ""
+
+                git_dir_exists = os.path.isdir(os.path.join(normalized_path, ".git"))
+                has_git_url = bool(git_url_val.strip())
+
+                if not normalized_path:
+                    set_msg("path", "⚠️ Provide a repository path.", "error")
+                    ok = False
+                elif not os.path.isabs(normalized_path):
+                    set_msg("path", "⚠️ Path must be absolute.", "error")
+                    ok = False
+                elif not os.path.exists(normalized_path):
+                    if selection_name == ADD_NEW_OPTION and has_git_url:
+                        set_msg(
+                            "path",
+                            "ℹ️ Path will be created when cloning the remote repository.",
+                            "info",
+                        )
+                    else:
+                        set_msg("path", "❌ Path does not exist.", "error")
+                        ok = False
+                elif not os.path.isdir(normalized_path):
+                    set_msg("path", "❌ Path is not a directory.", "error")
+                    ok = False
+                else:
+                    if git_dir_exists:
+                        set_msg("path", "✅ Repository path looks good.", "success")
+                    elif selection_name == ADD_NEW_OPTION and has_git_url:
+                        set_msg(
+                            "path",
+                            "ℹ️ .git will be created after cloning the remote repo.",
+                            "info",
+                        )
+                    else:
+                        set_msg(
+                            "path",
+                            "❌ Missing .git directory at this path.",
+                            "error",
+                        )
+                        ok = False
+
+                if selection_name == ADD_NEW_OPTION:
+                    if has_git_url:
+                        pattern = r"^(https://|git@|ssh://).+\\.git$"
+                        if re.match(pattern, git_url_val.strip()):
+                            set_msg("git", "✅ Git URL format looks valid.", "success")
+                        else:
+                            set_msg(
+                                "git",
+                                "❌ Git URL should be HTTPS, SSH, or git@ and end with .git.",
+                                "error",
+                            )
+                            ok = False
+                    else:
+                        if git_dir_exists:
+                            set_msg(
+                                "git",
+                                "✅ Local repository detected (no remote URL provided).",
+                                "success",
+                            )
+                        else:
+                            set_msg(
+                                "git",
+                                "⚠️ Provide a Git URL or choose a folder that already contains a .git directory.",
+                                "error",
+                            )
+                            ok = False
+                else:
+                    set_msg("git", "", "info")
+
+                return {
+                    "messages": messages,
+                    "ok": ok,
+                    "path": normalized_path,
+                    "has_git_dir": git_dir_exists,
+                }
+
+            def update_validation(selection_name: str = None):
+                selected = selection_name
+                if not selected:
+                    sel = repoSelectorInput.selectedItem
+                    selected = sel.name if sel else ADD_NEW_OPTION
+
+                validation = validate_repo_inputs(
+                    selected,
+                    repo_path_input.value,
+                    git_url_input.value if selected == ADD_NEW_OPTION else ""
+                )
+                repo_status_input.text = validation["messages"]["path"][0]
+                if selected == ADD_NEW_OPTION:
+                    git_status_input.text = validation["messages"]["git"][0]
+                else:
+                    git_status_input.text = ""
+                return validation
+
+            def ensure_new_repo_defaults():
+                if repoSelectorInput.selectedItem and repoSelectorInput.selectedItem.name == ADD_NEW_OPTION:
+                    if auto_path_state.get("auto", True):
+                        repo_path_input.value = default_path_for_new_repo()
+                    format_settings_state.clear()
+                    sync_format_settings_rows()
+                update_validation()
 
             class InputChangedHandler(adsk.core.InputChangedEventHandler):
                 def __init__(self, repoSelector):
                     super().__init__()
                     self._repoSelector = repoSelector
                 def notify(self, ic_args: adsk.core.InputChangedEventArgs):
-                    if ic_args.input and ic_args.input.id == "repoSelector":
+                    if not ic_args.input:
+                        return
+
+                    input_id = ic_args.input.id
+                    if input_id == "repoSelector":
                         sel = self._repoSelector.selectedItem
-                        if sel and sel.name != ADD_NEW_OPTION:
-                            apply_repo_settings(sel.name)
+                        if sel:
+                            update_new_repo_visibility(sel.name)
+                            if sel.name == ADD_NEW_OPTION:
+                                auto_path_state["auto"] = True
+                                ensure_new_repo_defaults()
+                            else:
+                                apply_repo_settings(sel.name)
+                                auto_path_state["auto"] = False
+                                update_validation(sel.name)
+                    elif input_id == "newRepoName":
+                        auto_path_state["auto"] = True
+                        ensure_new_repo_defaults()
+                    elif input_id == "repoPath":
+                        auto_path_state["auto"] = False
+                        update_validation()
+                    elif input_id == "gitUrl":
+                        update_validation()
+                    elif input_id == "exportFormatsConfig":
+                        sync_format_settings_rows()
+                    elif input_id.startswith("formatSetting_"):
+                        fmt_key = input_id.split("_", 1)[1]
+                        data = format_setting_inputs.get(fmt_key)
+                        if data:
+                            dropdown, state_key, options = data
+                            selected = dropdown.selectedItem
+                            if selected:
+                                lookup = dict(options)
+                                format_settings_state.setdefault(fmt_key, {})[state_key] = lookup.get(
+                                    selected.name,
+                                    selected.name,
+                                )
+                    elif input_id == "browseRepoPath":
+                        ic_args.input.value = False
+                        folder_dialog = local_ui_ref.createFolderDialog()
+                        folder_dialog.title = "Select Repository Folder"
+                        if folder_dialog.showDialog() == adsk.core.DialogResults.DialogOK:
+                            repo_path_input.value = folder_dialog.folder
+                            auto_path_state["auto"] = False
+                        update_validation()
 
             on_input_changed = InputChangedHandler(repoSelectorInput)
             args.command.inputChanged.add(on_input_changed)
             handlers.append(on_input_changed)
 
+            ensure_new_repo_defaults()
+
             # Execute handler
             class ExecuteHandler(adsk.core.CommandEventHandler):
                 def notify(self, execute_args: adsk.core.CommandEventArgs):
+                    nonlocal config_cache, meta
                     global logger
                     current_app_ref = app if app else adsk.core.Application.get()
                     current_ui_ref = ui if ui else current_app_ref.userInterface
@@ -475,12 +974,51 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                             current_ui_ref.messageBox("No action or repository selected.")
                             return
                         selected_action = selected_action_item.name
-                        current_config = load_config()
+                        current_config = config_cache
+                        meta_section = current_config.setdefault(META_KEY, {})
+                        if not isinstance(meta_section, dict):
+                            meta_section = {}
+                            current_config[META_KEY] = meta_section
+                        meta = meta_section
+
+                        repo_path_raw = cmd_inputs.itemById("repoPath").value.strip()
+                        git_url_val = ""
+                        if selected_action == ADD_NEW_OPTION:
+                            git_url_val = cmd_inputs.itemById("gitUrl").value.strip()
+
+                        validation = validate_repo_inputs(
+                            selected_action,
+                            repo_path_raw,
+                            git_url_val,
+                        )
+                        if not validation["ok"]:
+                            error_lines = [
+                                msg
+                                for msg, severity in validation["messages"].values()
+                                if severity == "error"
+                            ]
+                            if error_lines:
+                                current_ui_ref.messageBox(
+                                    "Please fix the following issues before continuing:\n\n"
+                                    + "\n".join(error_lines),
+                                    CMD_NAME,
+                                )
+                                return
+                        normalized_repo_path = validation["path"]
+                        if normalized_repo_path:
+                            repo_path_input.value = normalized_repo_path
+                        has_git_dir = validation["has_git_dir"]
 
                         # Formats
                         export_formats_input = cmd_inputs.itemById("exportFormatsConfig")
                         selected_formats = [item.name for item in export_formats_input.listItems if item.isSelected]
                         export_formats_val = selected_formats if selected_formats else ["f3d"]
+                        current_format_settings = collect_format_settings_from_ui()
+                        current_format_settings = {
+                            fmt: current_format_settings.get(fmt)
+                            for fmt in export_formats_val
+                            if current_format_settings.get(fmt)
+                        }
 
                         # Templates
                         default_message_tpl_val = cmd_inputs.itemById("defaultMessageConfig").value.strip() or "Design update: {filename}"
@@ -489,48 +1027,90 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                         # ADD NEW
                         if selected_action == ADD_NEW_OPTION:
                             repo_name_to_add = cmd_inputs.itemById("newRepoName").value.strip()
-                            git_url = cmd_inputs.itemById("gitUrl").value.strip()
+                            git_url = git_url_val
                             if not repo_name_to_add:
-                                current_ui_ref.messageBox("New repository name cannot be empty.", CMD_NAME); return
-                            if not git_url or not git_url.endswith(".git"):
-                                current_ui_ref.messageBox("Invalid GitHub URL for new repo.", CMD_NAME); return
+                                current_ui_ref.messageBox(
+                                    "New repository name cannot be empty.",
+                                    CMD_NAME,
+                                )
+                                return
+                            if repo_name_to_add == META_KEY:
+                                current_ui_ref.messageBox(
+                                    "Repository name is reserved for internal use.",
+                                    CMD_NAME,
+                                )
+                                return
                             if repo_name_to_add in current_config:
-                                current_ui_ref.messageBox(f"Repo '{repo_name_to_add}' already exists.", CMD_NAME); return
+                                current_ui_ref.messageBox(
+                                    f"Repo '{repo_name_to_add}' already exists.",
+                                    CMD_NAME,
+                                )
+                                return
 
-                            local_path = os.path.join(REPO_BASE_DIR, repo_name_to_add)
-                            os.makedirs(REPO_BASE_DIR, exist_ok=True)
+                            local_path = normalized_repo_path or os.path.join(REPO_BASE_DIR, repo_name_to_add)
+                            parent_dir = os.path.dirname(local_path)
+                            if parent_dir and not os.path.exists(parent_dir):
+                                os.makedirs(parent_dir, exist_ok=True)
 
-                            progress = current_ui_ref.createProgressDialog()
-                            progress.isBackgroundTranslucencyEnabled = True
-                            progress.cancelButtonText = ""
-                            progress.show("Clone Repository", "Cloning repository…", 0, 1, 0)
+                            progress = None
+                            if git_url:
+                                progress = current_ui_ref.createProgressDialog()
+                                progress.isBackgroundTranslucencyEnabled = True
+                                progress.cancelButtonText = ""
+                                progress.show(
+                                    "Clone Repository",
+                                    "Cloning repository…",
+                                    0,
+                                    1,
+                                    0,
+                                )
 
-                            if os.path.exists(local_path):
-                                confirm = current_ui_ref.messageBox(
-                                    f"Local path '{local_path}' exists.\nUse existing or cancel?", CMD_NAME,
-                                    adsk.core.MessageBoxButtonTypes.YesNoButtonType)
-                                if confirm == adsk.core.DialogResults.DialogNo:
+                                if os.path.exists(local_path):
+                                    confirm = current_ui_ref.messageBox(
+                                        f"Local path '{local_path}' exists.\nUse existing or cancel?",
+                                        CMD_NAME,
+                                        adsk.core.MessageBoxButtonTypes.YesNoButtonType,
+                                    )
+                                    if confirm == adsk.core.DialogResults.DialogNo:
+                                        progress.hide()
+                                        return
+                                else:
+                                    try:
+                                        _git(
+                                            os.path.dirname(local_path),
+                                            "clone",
+                                            git_url,
+                                            local_path,
+                                        )
+                                    except Exception as e:
+                                        progress.hide()
+                                        err_msg_clone = f"Failed to clone repo:\n{str(e)}"
+                                        current_ui_ref.messageBox(err_msg_clone, CMD_NAME)
+                                        if logger:
+                                            logger.error(err_msg_clone)
+                                        return
+
+                                if progress:
                                     progress.hide()
-                                    return
                             else:
-                                try:
-                                    _git(os.path.dirname(local_path), "clone", git_url, local_path)
-                                except Exception as e:
-                                    progress.hide()
-                                    err_msg_clone = f"Failed to clone repo:\n{str(e)}"
-                                    current_ui_ref.messageBox(err_msg_clone, CMD_NAME)
-                                    if logger: logger.error(err_msg_clone)
+                                if not has_git_dir:
+                                    current_ui_ref.messageBox(
+                                        "Selected folder does not contain a .git directory.",
+                                        CMD_NAME,
+                                    )
                                     return
-
-                            if progress: progress.hide()
 
                             current_config[repo_name_to_add] = {
                                 "url": git_url,
                                 "path": local_path.replace("/", os.sep),
                                 "exportFormats": export_formats_val,
+                                "formatSettings": current_format_settings,
                                 "defaultMessage": default_message_tpl_val,
                                 "branchFormat": branch_format_tpl_val
                             }
+                            if isinstance(meta_section, dict):
+                                meta_section["lastSelectedRepo"] = repo_name_to_add
+                                meta_section.setdefault("lastCommitMessage", "Updated design")
                             save_config(current_config)
                             current_ui_ref.messageBox(
                                 f"Repository '{repo_name_to_add}' added. Restart the command to select it for push.",
@@ -548,9 +1128,17 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                             return
 
                         selected_repo_details = current_config[selected_repo_name]
+                        selected_repo_details["path"] = normalized_repo_path or selected_repo_details.get("path", "")
                         selected_repo_details["exportFormats"] = export_formats_val
+                        selected_repo_details["formatSettings"] = current_format_settings
                         selected_repo_details["defaultMessage"] = default_message_tpl_val
                         selected_repo_details["branchFormat"] = branch_format_tpl_val
+                        commit_msg_input_value = cmd_inputs.itemById("commitMsgPush").value.strip()
+                        commit_msg_for_this_push = commit_msg_input_value or selected_repo_details["defaultMessage"]
+                        branch_format_for_this_push = selected_repo_details.get("branchFormat", "fusion-export/{filename}-{timestamp}")
+                        if isinstance(meta_section, dict):
+                            meta_section["lastSelectedRepo"] = selected_repo_name
+                            meta_section["lastCommitMessage"] = commit_msg_for_this_push
                         current_config[selected_repo_name] = selected_repo_details
                         save_config(current_config)
 
@@ -571,47 +1159,95 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                             )
                             return
 
-                        temp_dir = os.path.join(git_repo_path, "temp_fusion_export")
-                        os.makedirs(temp_dir, exist_ok=True)
-
                         progress = current_ui_ref.createProgressDialog()
                         progress.isBackgroundTranslucencyEnabled = True
                         progress.cancelButtonText = ""
                         progress.show("Fusion → GitHub", "Exporting design…", 0, 2, 0)
 
-                        formats_for_this_push = selected_repo_details.get("exportFormats", ["f3d"])
-                        exported_files_paths = export_fusion_design(design, temp_dir, base_name, formats_for_this_push, current_ui_ref)
-                        if not exported_files_paths:
-                            if progress: progress.hide()
-                            current_ui_ref.messageBox("No files exported. Aborting.", CMD_NAME)
-                            return
-
-                        # Copy to repo root; collect ABS DEST PATHS
                         final_abs = []
-                        for src in exported_files_paths:
-                            fname = os.path.basename(src)
-                            dst = os.path.join(git_repo_path, fname)
-                            try:
-                                shutil.copy2(src, dst)
-                            except Exception as e:
-                                if progress: progress.hide()
-                                current_ui_ref.messageBox(f"Copy failed:\nSRC: {src}\nDST: {dst}\n{e}", CMD_NAME)
-                                if logger: logger.error("Copy failed %s -> %s : %s", src, dst, e, exc_info=True)
+                        export_warnings = []
+                        exported_display_names = []
+                        with temporary_export_dir(git_repo_path) as temp_dir:
+                            formats_for_this_push = selected_repo_details.get("exportFormats", ["f3d"])
+                            format_settings_for_push = selected_repo_details.get("formatSettings", {})
+                            valid_formats, detected_warnings = determine_valid_export_formats(
+                                design,
+                                formats_for_this_push,
+                            )
+                            export_warnings.extend(detected_warnings)
+                            if not valid_formats:
+                                progress.hide()
+                                current_ui_ref.messageBox(
+                                    "No valid export formats available for this design.",
+                                    CMD_NAME,
+                                )
                                 return
-                            if not os.path.exists(dst) or os.path.getsize(dst) == 0:
-                                if progress: progress.hide()
-                                current_ui_ref.messageBox(f"Copied file missing/empty:\n{dst}", CMD_NAME)
-                                if logger: logger.error("Copied file missing/empty: %s", dst)
+
+                            format_settings_for_push = {
+                                fmt: format_settings_for_push.get(fmt, {})
+                                for fmt in valid_formats
+                            }
+                            exported_files_paths = export_fusion_design(
+                                design,
+                                temp_dir,
+                                base_name,
+                                valid_formats,
+                                current_ui_ref,
+                                format_settings_for_push,
+                            )
+                            if not exported_files_paths:
+                                progress.hide()
+                                current_ui_ref.messageBox(
+                                    "No files exported. Aborting.",
+                                    CMD_NAME,
+                                )
                                 return
-                            final_abs.append(os.path.normpath(dst))
-                            if logger: logger.info("Copied -> %s (%d bytes)", dst, os.path.getsize(dst))
+
+                            # Copy to repo root; collect ABS DEST PATHS
+                            for src in exported_files_paths:
+                                fname = os.path.basename(src)
+                                exported_display_names.append(fname)
+                                dst = os.path.join(git_repo_path, fname)
+                                try:
+                                    shutil.copy2(src, dst)
+                                except Exception as e:
+                                    progress.hide()
+                                    current_ui_ref.messageBox(
+                                        f"Copy failed:\nSRC: {src}\nDST: {dst}\n{e}",
+                                        CMD_NAME,
+                                    )
+                                    if logger:
+                                        logger.error(
+                                            "Copy failed %s -> %s : %s",
+                                            src,
+                                            dst,
+                                            e,
+                                            exc_info=True,
+                                        )
+                                    return
+                                if not os.path.exists(dst) or os.path.getsize(dst) == 0:
+                                    progress.hide()
+                                    current_ui_ref.messageBox(
+                                        f"Copied file missing/empty:\n{dst}",
+                                        CMD_NAME,
+                                    )
+                                    if logger:
+                                        logger.error(
+                                            "Copied file missing/empty: %s",
+                                            dst,
+                                        )
+                                    return
+                                final_abs.append(os.path.normpath(dst))
+                                if logger:
+                                    logger.info(
+                                        "Copied -> %s (%d bytes)",
+                                        dst,
+                                        os.path.getsize(dst),
+                                    )
 
                         if progress:
                             progress.message = "Pushing to GitHub…"
                             progress.progressValue = 1
-
-                        commit_msg_for_this_push = cmd_inputs.itemById("commitMsgPush").value.strip() or selected_repo_details["defaultMessage"]
-                        branch_format_for_this_push = selected_repo_details.get("branchFormat", "fusion-export/{filename}-{timestamp}")
 
                         branch_name_pushed = handle_git_operations(
                             git_repo_path,
@@ -627,12 +1263,43 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                             progress.hide()
 
                         if branch_name_pushed:
+                            summary_lines = [
+                                f"✅ Push successful to branch: {branch_name_pushed}",
+                                f"Settings for '{selected_repo_name}' updated.",
+                            ]
+                            if exported_display_names:
+                                summary_lines.append("")
+                                summary_lines.append("Exported files:")
+                                summary_lines.extend(
+                                    f" • {name}"
+                                    for name in exported_display_names
+                                )
+                            if export_warnings:
+                                summary_lines.append("")
+                                summary_lines.append("Warnings:")
+                                summary_lines.extend(
+                                    f" • {warning}"
+                                    for warning in export_warnings
+                                )
                             current_ui_ref.messageBox(
-                                f"✅ Push successful to branch: {branch_name_pushed}\n(Settings for '{selected_repo_name}' updated).",
-                                CMD_NAME
+                                "\n".join(summary_lines),
+                                CMD_NAME,
                             )
                         else:
-                            current_ui_ref.messageBox("Git operations completed with issues or were aborted.", CMD_NAME)
+                            failure_lines = [
+                                "Git operations completed with issues or were aborted.",
+                            ]
+                            if export_warnings:
+                                failure_lines.append("")
+                                failure_lines.append("Warnings:")
+                                failure_lines.extend(
+                                    f" • {warning}"
+                                    for warning in export_warnings
+                                )
+                            current_ui_ref.messageBox(
+                                "\n".join(failure_lines),
+                                CMD_NAME,
+                            )
 
                     except Exception:
                         error_message = 'ExecuteHandler failed:\n{}'.format(traceback.format_exc())
