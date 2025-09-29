@@ -77,26 +77,33 @@ This roadmap turns the current refinement backlog into a sequence of actionable 
 
 ## Milestone 4 – Git Flow Resilience
 
+**Status**
+: 🚧 In progress – planned resilience features are not yet active in the add-in (last reviewed Sept 29, 2025).
+
 **Objective**
 : Harden git interactions to handle common edge cases (dirty working tree, rebase conflicts, auth hurdles) with clear guidance.
 
-**Key Tasks**
 - Add user prompts when local changes are stashed or when rebase fails, including a "Skip pull (force push)" advanced checkbox.
 - Preview generated branch names and allow last-minute edits while keeping token support (`{filename}`, `{timestamp}`).
 - Integrate optional HTTPS PAT storage via OS credential manager (Windows Credential Manager/macOS Keychain) for smoother authentication.
+- Allow exports to target configurable subfolders within the repository for better organisation.
 
 **Success Criteria**
-- Logging shows informative messages for stash/pull events; users understand what happened without checking logs.
-- Branch names can be customized pre-push and still adhere to safe character rules.
-- Authenticating with PAT once enables subsequent pushes without re-entering credentials on supported OSes.
+- Logging shows informative messages for stash/pull events; users understand what happened without checking logs. *(Not met – auto-stash currently happens without user confirmation.)*
+- Branch names can be customized pre-push and still adhere to safe character rules. *(Not met – branch template is configurable but no per-push override exists yet.)*
+- Authenticating with PAT once enables subsequent pushes without re-entering credentials on supported OSes. *(Not met – PAT storage workflow is not implemented.)*
+- Exports can be redirected to per-repo subfolders without polluting the repo root, and changelog entries reflect the nested paths. *(Not met – exports are copied to the repo root.)*
 
 **Dependencies / Notes**
 - Depends on Milestone 2 validation for repo path accuracy.
-- PAT storage introduces security considerations—document in README (Milestone 7).
+- PAT storage introduces security considerations—document in README (Milestone 7) once implemented.
 
 ---
 
 ## Milestone 5 – Observability & Error Reporting
+
+**Status**
+: 🚧 In progress – foundational logging exists but dialog controls are still outstanding (last reviewed Sept 29, 2025).
 
 **Objective**
 : Make diagnosing issues fast by exposing richer logging controls and easy access to log outputs.
@@ -107,9 +114,9 @@ This roadmap turns the current refinement backlog into a sequence of actionable 
 - Provide a "View Log" button that opens `PushToGitHub.log` in the default editor.
 
 **Success Criteria**
-- Users can raise log verbosity without code edits.
-- Key events appear in Fusion’s text console for quick scanning.
-- One-click access to the rotating log file works on Windows and macOS.
+- Users can raise or lower log verbosity without code edits. *(Not met – no dialog control yet.)*
+- Key events appear in Fusion’s text console for quick scanning. *(Not met – log entries currently stay in the file only.)*
+- One-click access to the rotating log file works on Windows and macOS. *(Not met – button not present.)*
 
 **Dependencies / Notes**
 - Coordinate UI placement with Milestone 1 layout changes.
@@ -119,18 +126,21 @@ This roadmap turns the current refinement backlog into a sequence of actionable 
 
 ## Milestone 6 – Packaging & Dependency Strategy
 
+**Status**
+: ✅ Completed – packaging baseline and CLI harness shipped (Sept 29, 2025).
+
 **Objective**
 : Simplify installation and contribution by formalizing dependency handling and distribution artifacts.
 
 **Key Tasks**
-- Decide on GitPython vendoring vs. pure CLI approach; update code and docs accordingly.
-- Add `requirements.txt` (or `pyproject.toml`) and a simple CLI harness for offline testing.
-- Populate `version` in `Push_To_GitHub.manifest` and align with `VERSION` constant in Python.
+- Decide on GitPython vendoring vs. pure CLI approach; update code and docs accordingly. *(Done – standardized on the Git CLI and documented zero external deps.)*
+- Add `requirements.txt` (or `pyproject.toml`) and a simple CLI harness for offline testing. *(Done – empty `requirements.txt` plus `push_cli.py` harness using the shared core.)*
+- Populate `version` in `Push_To_GitHub.manifest` and align with `VERSION` constant in Python. *(Done – both bumped to V7.7.)*
 
 **Success Criteria**
-- Fresh installs no longer require manual `pip install GitPython` unless intentionally chosen.
-- Contributors can run lint/tests outside Fusion using the new manifest files.
-- Manifest version increments alongside code releases.
+- Fresh installs no longer require manual `pip install GitPython` unless intentionally chosen. *(Met – dependency section now highlights CLI-only strategy.)*
+- Contributors can run lint/tests outside Fusion using the new manifest files. *(Met – CLI harness drives git operations without Fusion.)*
+- Manifest version increments alongside code releases. *(Met – manifest and script versions now in sync at 7.7.)*
 
 **Dependencies / Notes**
 - Coordinate with Milestone 7 documentation updates.

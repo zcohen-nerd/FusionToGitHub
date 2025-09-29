@@ -1,0 +1,2 @@
+# FusionToGitHub add-in relies on the system Git CLI and Autodesk Fusion's runtime.
+# No external Python packages are required for the offline harness.

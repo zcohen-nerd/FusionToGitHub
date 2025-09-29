@@ -1,7 +1,6 @@
-"""Push to GitHub (ZAC) — V7.4
+"""Push to GitHub (ZAC) — V7.7
 Export → changelog → branch → commit → push.
-Key fix: pass ABSOLUTE exported paths into git ops, then relpath them for `git add`.
-Also includes: progress dialog fix, double-init guard, toolbar de-dupe, robust path checks.
+V7.7 formalizes dependency packaging and adds an offline CLI harness.
 """
 
 import adsk.core, adsk.fusion, adsk.cam, traceback
@@ -9,7 +8,7 @@ import os, shutil, re, json, subprocess, logging, logging.handlers, tempfile
 from contextlib import contextmanager
 from datetime import datetime
 
-VERSION = "V7.4"
+VERSION = "V7.7"
 
 # -----------------------------
 # Git (CLI) — no GitPython

@@ -15,6 +15,10 @@ This list is prioritized to tackle features offering a good balance of user bene
     * Export key user parameters (model parameters, user parameters) from the active Fusion 360 design to a structured file (e.g., JSON, CSV) to be versioned.
 * [ ] **Thumbnail/Image Export**
     * Automatically capture a thumbnail image (e.g., PNG) of the current view or a predefined isometric view of the model and include it in the commit for visual reference in Git history.
+* [ ] **Git Flow Resilience Enhancements**
+    * Restore the planned UI prompts (auto-stash confirmation, skip-pull toggle, branch preview/override, PAT credential storage) and per-repo export subfolder support.
+* [ ] **Observability Controls**
+    * Surface log-level selection, Fusion text palette mirroring, and a quick "View Log" action so diagnostics are accessible without editing code.
 * [ ] **Pull Request Automation**
     * Add an option to automatically open a GitHub pull request after successfully pushing a new branch. This will require GitHub API interaction and handling a Personal Access Token (PAT).
 * [ ] **Drawing Export (as first part of "Drawing / Electronics / Manufacturing Export")**
@@ -44,6 +48,7 @@ This list is prioritized to tackle features offering a good balance of user bene
 - ✅ ~~**Changelog Tracking (from File Versioning Improvements & Changelog)** Implement automatic changelog tracking (e.g., appending commit messages or a summary to a `CHANGELOG.md` file within the pushed repository).~~ Done 5/7/25
 - ✅ ~~**Improved Logging (Structured File Logging)** Enhance current logging by implementing Python's built-in `logging` module to write to a dedicated log file for easier debugging and auditing by users and developers.~~ Done 5/8/25
 - ✅ ~~**UI/UX Improvement: Export Format Input to Dropdown/Multiselect** Convert the text-based, comma-separated string input for "Export Formats (config)" to a more user-friendly `DropDownCommandInput` with `CheckBoxListDropDownStyle` or a similar multi-select mechanism.~~ Done 5/8/25
+- ✅ ~~**Packaging & CLI Harness** Formalize dependency packaging and ship the offline `push_cli.py` harness for smoke testing.~~ Done 9/29/25
 ---
 
 ## Installation and Setup Guide
@@ -54,14 +59,9 @@ Make sure you have:
 
 1.  **[Git](https://git-scm.com/downloads)** installed on your system and accessible via the command line.
 2.  A **GitHub account**.
-3.  **Python 3.x** installed on your system (this is mainly for `pip` to install `GitPython`).
-4.  The **`GitPython` library**. Install it using pip in your system's Command Prompt or Terminal:
-    ```cmd
-    pip install GitPython
-    ```
-    * **Important Note for `GitPython`:** Fusion 360 uses its own embedded Python environment. For this Add-In to find `GitPython`, you might need to:
-        * Ensure your system Python's site-packages directory (where `GitPython` gets installed by pip) is accessible or added to the path by Fusion's Python (this can be complex).
-        * Alternatively, for more robust distribution, `GitPython` can be "vendored" (included directly) with the Add-In. This Add-In currently assumes `GitPython` can be imported by Fusion's environment. If you encounter `ImportError: No module named 'git'`, this is the likely cause.
+3.  **Python 3.9+** installed locally (only required if you plan to use the new offline CLI harness).
+
+> 💡 The add-in interacts with Git via the system CLI only—no external Python packages are required. A `requirements.txt` file is bundled for tooling compatibility but intentionally left empty.
 
 ### ✅ Step 2: Install the Add-In
 
@@ -84,6 +84,7 @@ Make sure you have:
         os.environ['GIT_PYTHON_GIT_EXECUTABLE'] = r"C:\\Program Files\\Git\\cmd\\git.exe"
         ```
     * **Modify the path** (the part in quotes, e.g., `r"C:\\Program Files\\Git\\cmd\\git.exe"`) to point to the exact location of `git.exe` on your system if it's different. Ensure you use double backslashes `\\` for paths on Windows or a raw string `r"..."`.
+    * Even without GitPython, this environment variable helps Fusion locate the intended Git CLI—handy when multiple Git installs exist on the same machine.
 2.  **Configure Your Git Identity (if not already done globally):**
     * This tells Git who is making the commits. Open a Command Prompt or Terminal and run:
         ```cmd
@@ -106,12 +107,34 @@ Make sure you have:
     * In the "Action / Select Repo" dropdown, choose the name of the repository you want to push to.
     * The fields "Export Formats," "Default Commit Template," and "Branch Format" will be visible. **If you change any of these values, the stored configuration for the selected repository will be updated when you click "OK."**
     * Enter your desired "Commit Message (for this push)." Placeholders like `{filename}` will be replaced with the design's name.
+    * Adjust the "Branch Format (config)" if you need a different branch naming convention. Tokens such as `{filename}` and `{timestamp}` are resolved automatically when you push.
     * Click "OK." The Add-In will:
         1.  Update the selected repository's settings in the configuration file (if you changed them in the dialog).
         2.  Export your active Fusion 360 design using the configured formats.
         3.  Commit the exported files to a new local branch.
         4.  Push the new branch to your GitHub repository.
         5.  A success message will indicate the branch name. You can then create a Pull Request on GitHub to merge the changes if desired.
+
+### � Git Flow Behavior
+
+- Uncommitted local changes are auto-stashed (including untracked files) before the pull and restored afterward. If restoration fails, check `git stash list` for entries containing `fusion_git_addin_autostash`.
+- A `git pull --rebase origin <current-branch>` runs before creating the export branch so your commit builds on the latest remote history.
+- Branch names come from the configured template and are sanitized to remove unsupported characters.
+- Each run prepends a new entry to `CHANGELOG.md` summarizing the branch, commit message, and exported files.
+- Export warnings (for example, DXF without sketches) surface in the final summary dialog so you know what needs attention next time.
+
+### �🧪 Offline CLI Harness
+
+- `push_cli.py` lets you exercise the full Git pipeline (branch creation, changelog update, push) without launching Fusion. It's perfect for CI or smoke-testing repo configs.
+- Requirements: Python 3.9+, Git on PATH, and a repo cloned locally. No extra pip packages are needed; `requirements.txt` remains empty by design.
+- Typical usage:
+
+```powershell
+python push_cli.py --repo C:\path\to\repo --files exports/model.step exports/model.stl --design-name BracketV4
+```
+
+- Add `--assume-yes` to skip interactive prompts, `--branch-override` to force a branch name, and `--pat-token`/`--pat-username` to feed HTTPS credentials via the harness.
+- The script prints a concise summary (branch name, whether force-push was required, stash activity) and exits non-zero on failure so you can wire it into automated checks.
 
 ---
 
@@ -121,8 +144,10 @@ Make sure you have:
     - Ensure Fusion 360 was restarted after copying the Add-In folder.
     - Double-check the installation path is correct.
     - Validate your `Push_To_GitHub.manifest` file using an online JSON validator. Ensure the `"script"` entry points to `Push_To_GitHub.py`.
-- **`ImportError: No module named 'git'` (GitPython Not Found):**
-    - This is the most common issue for external libraries. Ensure `pip install GitPython` was successful in your system's Python environment. Fusion's embedded Python needs to be able to find this library. See the "Prerequisites" section for more notes.
+- **Local changes silently stashed:**
+    - The add-in auto-stashes local edits before pulling. If something looks off after the push, run `git status` and `git stash list`; you can re-apply the entry named `fusion_git_addin_autostash` manually if needed.
+- **Where do logs live?**
+    - A rotating log file is written to `%APPDATA%/.PushToGitHub_AddIn_Data/PushToGitHub.log` on Windows or `~/.PushToGitHub_AddIn_Data/PushToGitHub.log` on macOS. Open it with your editor if you need deeper diagnostics.
 - **"Git executable not found" or "Bad Git executable":**
     - Verify the path set for `os.environ['GIT_PYTHON_GIT_EXECUTABLE']` inside the `Push_To_GitHub.py` script is correct and points directly to your `git.exe` (on Windows) or `git` (on macOS/Linux).
     - Ensure Git is installed and its command-line tools are working.
