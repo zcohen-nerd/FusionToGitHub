@@ -9,12 +9,26 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from fusion_git_core import (
-    VERSION,
-    GitUI,
-    git_available,
-    handle_git_operations,
-)
+# Import core functions - handle both standalone and installed scenarios
+try:
+    from fusion_git_core import (
+        VERSION,
+        GitUI,
+        git_available,
+        handle_git_operations,
+    )
+except ImportError:
+    # Add current directory to path
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    if current_dir not in sys.path:
+        sys.path.insert(0, current_dir)
+    
+    from fusion_git_core import (
+        VERSION,
+        GitUI,
+        git_available,
+        handle_git_operations,
+    )
 
 
 class TerminalUI(GitUI):

@@ -20,13 +20,29 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Optional
 
-from fusion_git_core import (
-    VERSION as CORE_VERSION,
-    generate_branch_name,
-    git_available as core_git_available,
-    handle_git_operations as core_handle_git_operations,
-    sanitize_branch_name,
-)
+# Import core functions - handle both standalone and installed scenarios
+try:
+    from fusion_git_core import (
+        VERSION as CORE_VERSION,
+        generate_branch_name,
+        git_available as core_git_available,
+        handle_git_operations as core_handle_git_operations,
+        sanitize_branch_name,
+    )
+except ImportError:
+    # Add current directory to path for Fusion 360 add-in installation
+    import os
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    if current_dir not in sys.path:
+        sys.path.insert(0, current_dir)
+    
+    from fusion_git_core import (
+        VERSION as CORE_VERSION,
+        generate_branch_name,
+        git_available as core_git_available,
+        handle_git_operations as core_handle_git_operations,
+        sanitize_branch_name,
+    )
 
 VERSION = CORE_VERSION
 IS_WINDOWS = os.name == 'nt'
