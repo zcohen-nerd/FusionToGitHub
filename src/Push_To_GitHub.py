@@ -848,40 +848,26 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                             break
                 
                 # Create table with proper parameters - try different combinations
+                format_settings_table = None
                 try:
-                    if table_style is not None:
-                        # Try: id, name, numberOfColumns, columnRatio, presentationStyle
-                        format_settings_table = export_inputs.addTableCommandInput(
-                            "formatSettingsTable", "Format Settings", 2, "1:1", table_style
-                        )
-                    else:
-                        # Try: id, name, numberOfColumns, columnRatio
-                        format_settings_table = export_inputs.addTableCommandInput(
-                            "formatSettingsTable", "Format Settings", 2, "1:1"
-                        )
+                    # Try the most common signature: id, name, numberOfColumns, columnRatio
+                    format_settings_table = export_inputs.addTableCommandInput(
+                        "formatSettingsTable", "Format Settings", 2, "1:1"
+                    )
+                    logger.info("Successfully created table with 4 parameters")
                 except Exception as e1:
-                    logger.warning(f"5-parameter table creation failed: {e1}")
+                    logger.warning(f"4-parameter table creation failed: {e1}")
                     try:
-                        # Try 4 parameters: id, name, numberOfColumns, presentationStyle
-                        if table_style is not None:
-                            format_settings_table = export_inputs.addTableCommandInput(
-                                "formatSettingsTable", "Format Settings", 2, table_style
-                            )
-                        else:
-                            # Try 3 parameters: id, name, numberOfColumns  
-                            format_settings_table = export_inputs.addTableCommandInput(
-                                "formatSettingsTable", "Format Settings", 2
-                            )
+                        # Try without columnRatio: id, name, numberOfColumns
+                        format_settings_table = export_inputs.addTableCommandInput(
+                            "formatSettingsTable", "Format Settings", 2
+                        )
+                        logger.info("Successfully created table with 3 parameters")
                     except Exception as e2:
-                        logger.warning(f"4-parameter table creation failed: {e2}")
-                        try:
-                            # Final fallback: just 3 parameters
-                            format_settings_table = export_inputs.addTableCommandInput(
-                                "formatSettingsTable", "Format Settings", 2
-                            )
-                        except Exception as e3:
-                            logger.error(f"All table creation attempts failed: {e3}")
-                            format_settings_table = None
+                        logger.warning(f"3-parameter table creation failed: {e2}")
+                        # Skip format settings table entirely if it fails
+                        logger.info("Skipping format settings table - will use default formats")
+                        format_settings_table = None
                     
             except Exception as e:
                 logger.warning(f"Could not create format settings table with presentation style: {e}")
@@ -1511,26 +1497,32 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                         git_url_val = ""
                         if selected_action == ADD_NEW_OPTION:
                             git_url_val = cmd_inputs.itemById("gitUrl").value.strip()
+                            logger.info(f"Processing new repo setup: URL='{git_url_val}', Path='{repo_path_raw}'")
                             # Auto-convert GitHub URLs for user convenience (only once)
                             if git_url_val and not url_conversion_state["converted"]:
                                 converted_url = convert_github_url(git_url_val)
+                                logger.info(f"URL conversion: '{git_url_val}' -> '{converted_url}'")
                                 if converted_url != git_url_val:
                                     # Update the UI field with the converted URL
                                     cmd_inputs.itemById("gitUrl").value = converted_url
                                     git_url_val = converted_url
                                     url_conversion_state["converted"] = True
+                                    logger.info("Showing URL conversion message to user")
                                     # Show user what was converted
                                     current_ui_ref.messageBox(
                                         f"✅ Auto-converted GitHub URL to:\n{converted_url}\n\nDialog will stay open. Click OK again to continue.",
                                         "URL Converted"
                                     )
+                                    logger.info("Returning after URL conversion - dialog should stay open")
                                     return  # Simple return should keep dialog open
 
+                        logger.info("Starting validation of repository inputs")
                         validation = validate_repo_inputs(
                             selected_action,
                             repo_path_raw,
                             git_url_val,
                         )
+                        logger.info(f"Validation result: ok={validation['ok']}")
                         if not validation["ok"]:
                             error_lines = [
                                 msg
@@ -1538,11 +1530,13 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                                 if severity == "error"
                             ]
                             if error_lines:
+                                logger.warning(f"Validation errors: {error_lines}")
                                 current_ui_ref.messageBox(
                                     "⚠️ Please fix these issues:\n\n" + "\n".join(error_lines) + 
                                     "\n\nDialog will stay open for corrections.",
                                     CMD_NAME,
                                 )
+                                logger.info("Returning after validation errors - dialog should stay open")
                                 return  # Simple return to keep dialog open
                         normalized_repo_path = validation["path"]
                         if normalized_repo_path:
@@ -1920,8 +1914,12 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
 
                     except Exception:
                         error_message = 'ExecuteHandler failed:\n{}'.format(traceback.format_exc())
-                        if current_ui_ref: current_ui_ref.messageBox(error_message, CMD_NAME)
-                        if logger: logger.exception("ExecuteHandler failed")
+                        logger.error(f"ExecuteHandler exception: {error_message}")
+                        if current_ui_ref: 
+                            current_ui_ref.messageBox(error_message, CMD_NAME)
+                        if logger: 
+                            logger.exception("ExecuteHandler failed")
+                        # Don't return here - let the dialog stay open
                     finally:
                         try:
                             if progress: progress.hide()
