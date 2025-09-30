@@ -112,7 +112,8 @@ class TestRunner:
     def test_t005_cli_harness_help(self):
         """T005: Test CLI harness functionality"""
         self.log_test_start("T005", "CLI harness help")
-        success, output = self.run_command([sys.executable, "push_cli.py", "--help"])
+        cli_path = Path("src") / "push_cli.py"
+        success, output = self.run_command([sys.executable, str(cli_path), "--help"])
         help_ok = success and "usage:" in output.lower()
         self.record_result("T005", "CLI harness help", help_ok, "Help displayed" if help_ok else output)
 
@@ -230,17 +231,28 @@ class TestRunner:
         self.log_test_start("T_CLI_01", "CLI basic functionality")
         
         # Test help display  
-        success, output = self.run_command([sys.executable, "push_cli.py", "--help"])
+        cli_path = Path("src") / "push_cli.py"
+        success, output = self.run_command([sys.executable, str(cli_path), "--help"])
         help_ok = success and all(word in output.lower() for word in ["usage", "options"])
 
         # Test that we can import the CLI module and access VERSION
         try:
+            # Add src to path temporarily
+            import sys as system_module
+            src_path = str(Path("src").resolve())
+            if src_path not in system_module.path:
+                system_module.path.insert(0, src_path)
+            
             import push_cli
             # Check that push_cli can import fusion_git_core and get VERSION
             from fusion_git_core import VERSION
             version_ok = VERSION == "V7.7"
         except Exception:
             version_ok = False
+        finally:
+            # Clean up path
+            if 'src_path' in locals() and src_path in system_module.path:
+                system_module.path.remove(src_path)
 
         overall_ok = version_ok and help_ok
         msg = f"Version import OK: {version_ok}, Help OK: {help_ok}"
@@ -313,9 +325,14 @@ def main():
     
     args = parser.parse_args()
     
-    # Change to script directory
+    # Change to project root directory (parent of tests)
     script_dir = Path(__file__).parent
-    os.chdir(script_dir)
+    project_root = script_dir.parent
+    os.chdir(project_root)
+    
+    # Add src directory to Python path for imports
+    src_dir = project_root / "src"
+    sys.path.insert(0, str(src_dir))
     
     runner = TestRunner(verbose=args.verbose)
     
