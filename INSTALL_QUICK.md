@@ -5,18 +5,20 @@
 ### For Fusion 360 Add-in Installation
 
 1. **Download/Clone** this repository
-2. **Copy the `src` folder contents** to your Fusion 360 add-ins directory:
+2. **Copy ALL files from the `src` folder** to your Fusion 360 add-ins directory:
    - Windows: `%APPDATA%\Autodesk\Autodesk Fusion 360\API\AddIns\FusionToGitHub\`
    - macOS: `~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns/FusionToGitHub/`
 
-3. **Required files for Fusion 360**:
+3. **⚠️ IMPORTANT: Copy ALL src/ files together**:
    ```
-   FusionToGitHub/
-   ├── Push_To_GitHub.py         # Main add-in file
-   ├── Push_To_GitHub.manifest   # Add-in manifest
-   ├── fusion_git_core.py        # Core git operations
-   └── push_cli.py               # CLI harness (optional)
+   FusionToGitHub/                   # Create this folder
+   ├── Push_To_GitHub.py            # Main add-in file
+   ├── Push_To_GitHub.manifest      # Add-in manifest  
+   ├── fusion_git_core.py           # Core git operations (REQUIRED)
+   └── push_cli.py                  # CLI harness (optional)
    ```
+   
+   **All files must be in the same directory** for proper module imports.
 
 4. **Enable the add-in** in Fusion 360:
    - UTILITIES → ADD-INS → Scripts and Add-Ins
