@@ -1171,8 +1171,16 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                 
                 return url
 
-            # Track URL conversion state
-            url_conversion_state = {"converted": False}
+            # Track URL conversion state - store in config to persist across dialog recreations
+            def get_conversion_state():
+                return config_cache.get("_url_conversion_state", {})
+            
+            def set_conversion_state(converted=False):
+                config_cache["_url_conversion_state"] = {"converted": converted}
+                
+            def reset_conversion_state():
+                if "_url_conversion_state" in config_cache:
+                    del config_cache["_url_conversion_state"]
 
             def default_path_for_new_repo() -> str:
                 proposed_name = new_repo_name_input.value.strip()
@@ -1480,6 +1488,9 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                     progress = None
                     temp_dir = None
                     try:
+                        # Don't reset conversion state - we need it to persist across clicks
+                        # reset_conversion_state() 
+                        logger.info("Execute handler starting - preserving URL conversion state")
                         cmd_inputs = execute_args.command.commandInputs
                         selected_action_item = cmd_inputs.itemById("repoSelector").selectedItem
                         if not selected_action_item:
@@ -1498,16 +1509,17 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                         if selected_action == ADD_NEW_OPTION:
                             git_url_val = cmd_inputs.itemById("gitUrl").value.strip()
                             logger.info(f"Processing new repo setup: URL='{git_url_val}', Path='{repo_path_raw}'")
-                            logger.info(f"URL conversion state: converted={url_conversion_state['converted']}")
+                            conversion_state = get_conversion_state()
+                            logger.info(f"URL conversion state: converted={conversion_state.get('converted', False)}")
                             # Auto-convert GitHub URLs for user convenience (only once)
-                            if git_url_val and not url_conversion_state["converted"]:
+                            if git_url_val and not conversion_state.get('converted', False):
                                 converted_url = convert_github_url(git_url_val)
                                 logger.info(f"URL conversion: '{git_url_val}' -> '{converted_url}'")
                                 if converted_url != git_url_val:
                                     # Update the UI field with the converted URL
                                     cmd_inputs.itemById("gitUrl").value = converted_url
                                     git_url_val = converted_url
-                                    url_conversion_state["converted"] = True
+                                    set_conversion_state(converted=True)
                                     logger.info("Showing URL conversion message to user")
                                     # Show user what was converted
                                     current_ui_ref.messageBox(
@@ -1939,6 +1951,21 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
             on_execute = ExecuteHandler()
             args.command.execute.add(on_execute)
             handlers.append(on_execute)
+            
+            # Add command destroyed handler to reset conversion state when dialog closes
+            class CommandDestroyedHandler(adsk.core.CommandEventHandler):
+                def notify(self, destroy_args):
+                    global logger
+                    try:
+                        logger.info("Dialog closed - resetting URL conversion state")
+                        reset_conversion_state()
+                    except Exception as e:
+                        if logger:
+                            logger.warning(f"Failed to reset conversion state on dialog close: {e}")
+
+            on_destroy = CommandDestroyedHandler()
+            args.command.destroy.add(on_destroy)
+            handlers.append(on_destroy)
 
         except Exception:
             error_message = 'GitCommandCreatedEventHandler failed:\n{}'.format(traceback.format_exc())
