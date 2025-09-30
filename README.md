@@ -1,6 +1,26 @@
 # Autodesk Fusion to GitHub Add-In
 
-This Fusion 360 Add-In automatically exports your Autodesk Fusion designs and pushes them directly to a GitHub repository. Perfect for easy version control, automatic backups, and seamless collaboration.
+This Fusion 360 Add-In automatically exports your Autodesk Fusion desig        5.  A success message will indicate the branch name. You can then create a Pull Request on GitHub to merge the changes if desired.
+
+### 🔐 Personal Access Token (PAT) Storage
+
+On Windows, the add-in supports secure PAT storage via Windows Credential Manager:
+
+- **Setup**: In the dialog, check "Use stored PAT" and click "Manage PAT..." to store your GitHub token securely
+- **Benefits**: Eliminates repeated authentication prompts for HTTPS repositories
+- **Security**: Tokens are stored using Windows' native credential system and encrypted at rest
+- **Per-Repository**: Each repository can have its own stored credentials
+- **Cross-Session**: Once stored, tokens persist across Fusion sessions until manually removed
+
+### 🔄 Git Flow Behavior
+
+- Uncommitted local changes are auto-stashed (including untracked files) before the pull and restored afterward. If restoration fails, check `git stash list` for entries containing `fusion_git_addin_autostash`.
+- A `git pull --rebase origin <current-branch>` runs before creating the export branch so your commit builds on the latest remote history.
+- Branch names come from the configured template and are sanitized to remove unsupported characters.
+- Each run prepends a new entry to `CHANGELOG.md` summarizing the branch, commit message, and exported files.
+- Export warnings (for example, DXF without sketches) surface in the final summary dialog so you know what needs attention next time.
+
+### 🧪 Offline CLI Harnesses them directly to a GitHub repository. Perfect for easy version control, automatic backups, and seamless collaboration.
 
 ## To Do
 
@@ -19,10 +39,6 @@ This list is prioritized to tackle features offering a good balance of user bene
     * Add an option to automatically open a GitHub pull request after successfully pushing a new branch. This will require GitHub API interaction and handling a Personal Access Token (PAT).
 * [ ] **Drawing Export (as first part of "Drawing / Electronics / Manufacturing Export")**
     * Enable the export of associated 2D drawing documents (e.g., as .dwg or .pdf).
-* [ ] **Advanced Export Settings per Format**
-    * For common formats like STL, STEP, etc., provide UI options to control more detailed export settings (e.g., STL mesh refinement levels, binary/ASCII; STEP protocol version).
-* [ ] **UI/UX Improvement: Further Streamline Input Flow (e.g., pre-filling settings)**
-    * Consider if, for existing repos, the settings fields (`exportFormatsConfig`, etc.) should pre-fill with the selected repo's current settings when chosen from the dropdown, likely requiring an `InputChangedEventHandler`.
 * [ ] **Electronics Export (from Drawing / Electronics / Manufacturing Export)**
     * Add support for exporting schematics/PCB layouts (e.g., .sch, .brd).
 * [ ] **Manufacturing Export (CAM Toolpaths) (from Drawing / Electronics / Manufacturing Export)**
@@ -45,6 +61,8 @@ This list is prioritized to tackle features offering a good balance of user bene
 - ✅ ~~**Improved Logging (Structured File Logging)** Enhance current logging by implementing Python's built-in `logging` module to write to a dedicated log file for easier debugging and auditing by users and developers.~~ Done 5/8/25
 - ✅ ~~**UI/UX Improvement: Export Format Input to Dropdown/Multiselect** Convert the text-based, comma-separated string input for "Export Formats (config)" to a more user-friendly `DropDownCommandInput` with `CheckBoxListDropDownStyle` or a similar multi-select mechanism.~~ Done 5/8/25
 - ✅ ~~**Packaging & CLI Harness** Formalize dependency packaging and ship the offline `push_cli.py` harness for smoke testing.~~ Done 9/29/25
+- ✅ ~~**Advanced Export Settings per Format** For common formats like STL, STEP, etc., provide UI options to control more detailed export settings (e.g., STL mesh refinement levels, binary/ASCII; STEP protocol version).~~ Done 9/30/25
+- ✅ ~~**UI/UX Improvement: Further Streamline Input Flow (e.g., pre-filling settings)** Settings fields now pre-fill with the selected repo's current settings when chosen from the dropdown via InputChangedEventHandler.~~ Done 9/30/25
 ---
 
 ## Installation and Setup Guide

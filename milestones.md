@@ -1,18 +1,10 @@
 # FusionToGitHub Add-In Roadmap
 
-This roadmap turns the current refinement backlog into a sequence of **Status**
-: ✅ Completed – observability controls integrated into the add-in dialog (Sept 30, 2025).
+This roadmap turns the current refinement backlog into a sequence of actionable milestones. Each milestone lists its objective, concrete tasks, success criteria, and any notable dependencies or resources.
 
-**Objective**
-: Make diagnosing issues fast by exposing richer logging controls and easy access to log outputs.
+---
 
-**Key Tasks**
-- Mirror critical log entries to Fusion's text command palette to reduce modal spam.
-- Add log-level selector (Info/Warn/Error) in the dialog, persisted per repo or globally.
-- Provide a "View Log" button that opens `PushToGitHub.log` in the default editor.
-
-**Success Criteria**
-- Users can raise or lower log verbosity without code edits. *(Met – log level selector implemented in dialog with persistence.)*
+## Milestone 1 – Dialog UX Polish
 - Key events appear in Fusion's text console for quick scanning. *(Met – Fusion palette handler mirrors log entries.)*
 - One-click access to the rotating log file works on Windows and macOS. *(Met – View Log button opens log file in default editor.)*stones. Each milestone lists its objective, concrete tasks, success criteria, and any notable dependencies or resources.
 
