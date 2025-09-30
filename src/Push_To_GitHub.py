@@ -1129,6 +1129,37 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
 
             auto_path_state = {"auto": True}
 
+            def convert_github_url(url: str) -> str:
+                """Convert any GitHub URL format to the proper Git clone URL."""
+                if not url.strip():
+                    return url
+                
+                url = url.strip()
+                
+                # Already a proper Git URL - keep as is
+                if url.endswith('.git'):
+                    return url
+                
+                # Convert GitHub web URLs to Git clone URLs
+                import re
+                
+                # Pattern: https://github.com/user/repo or https://github.com/user/repo/
+                web_pattern = r'https://github\.com/([^/]+)/([^/]+)/?(?:\?.*)?(?:#.*)?$'
+                match = re.match(web_pattern, url)
+                if match:
+                    user, repo = match.groups()
+                    return f"https://github.com/{user}/{repo}.git"
+                
+                # If it's already a valid Git URL format, keep it
+                if re.match(r"^(https://|git@|ssh://).+", url):
+                    return url
+                
+                # If none of the above, assume it needs .git added
+                if not url.endswith('.git'):
+                    return url + '.git'
+                
+                return url
+
             def default_path_for_new_repo() -> str:
                 proposed_name = new_repo_name_input.value.strip()
                 if not proposed_name:
@@ -1189,13 +1220,21 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
 
                 if selection_name == ADD_NEW_OPTION:
                     if has_git_url:
+                        # Auto-convert GitHub URLs for user convenience
+                        converted_url = convert_github_url(git_url_val)
+                        
                         pattern = r"^(https://|git@|ssh://).+\\.git$"
-                        if re.match(pattern, git_url_val.strip()):
-                            set_msg("git", "✅ Git URL format looks valid.", "success")
+                        if re.match(pattern, converted_url):
+                            if converted_url != git_url_val:
+                                set_msg("git", f"✅ Auto-converted to: {converted_url}", "success")
+                                # Update the input field with the converted URL
+                                git_url_input.value = converted_url
+                            else:
+                                set_msg("git", "✅ Git URL format looks valid.", "success")
                         else:
                             set_msg(
                                 "git",
-                                "❌ Git URL should be HTTPS, SSH, or git@ and end with .git.",
+                                "❌ Please paste a GitHub repository URL (e.g., https://github.com/user/repo)",
                                 "error",
                             )
                             ok = False
@@ -1465,10 +1504,13 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                             ]
                             if error_lines:
                                 current_ui_ref.messageBox(
-                                    "Please fix the following issues before continuing:\n\n"
-                                    + "\n".join(error_lines),
+                                    "⚠️ Please fix these issues:\n\n" + "\n".join(error_lines) + 
+                                    "\n\nThe dialog will stay open so you can make corrections.",
                                     CMD_NAME,
                                 )
+                                # Prevent dialog from closing by canceling the execution
+                                execute_args.executeFailed = True
+                                execute_args.executeFailedMessage = "Please fix validation errors and try again."
                                 return
                         normalized_repo_path = validation["path"]
                         if normalized_repo_path:
