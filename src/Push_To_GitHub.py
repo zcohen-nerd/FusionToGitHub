@@ -74,7 +74,7 @@ def _git_available():
 # -----------------------------
 CONFIG_PATH = os.path.expanduser("~/.fusion_git_repos.json")
 REPO_BASE_DIR = os.path.expanduser("~/FusionGitRepos")
-ADD_NEW_OPTION = "+ Add new GitHub repo..."
+ADD_NEW_OPTION = "🆕 Set up new GitHub repository..."
 META_KEY = "__meta__"
 
 FORMAT_SETTINGS_DEFAULT = {
@@ -719,9 +719,8 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
             repo_names = sorted(
                 name for name in config_cache.keys() if name != META_KEY
             )
-            dropdown_items = (
-                [ADD_NEW_OPTION] + repo_names if repo_names else [ADD_NEW_OPTION]
-            )
+            # Always show "Add new repo" option first, even if existing repos exist
+            dropdown_items = [ADD_NEW_OPTION] + repo_names
 
             args.command.isAutoExecute = False
             args.command.isAutoTerminate = True
@@ -733,19 +732,17 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
             repo_inputs = repo_group.children
 
             repoSelectorInput = repo_inputs.addDropDownCommandInput(
-                "repoSelector", "Action / Select Repo",
+                "repoSelector", "Repository Setup",
                 adsk.core.DropDownStyles.TextListDropDownStyle
             )
 
-            default_repo_name = None
+            # Default to "Add new repo" to make it designer-friendly
+            default_repo_name = ADD_NEW_OPTION
             if repo_names:
-                default_repo_name = (
-                    meta.get("lastSelectedRepo") if isinstance(meta, dict) else None
-                )
-                if default_repo_name not in repo_names:
-                    default_repo_name = repo_names[0]
-            else:
-                default_repo_name = ADD_NEW_OPTION
+                # Only use existing repo if specifically saved as last used
+                last_used = meta.get("lastSelectedRepo") if isinstance(meta, dict) else None
+                if last_used and last_used in repo_names:
+                    default_repo_name = last_used
 
             for name_val in dropdown_items:
                 is_selected = (name_val == default_repo_name)
@@ -764,12 +761,12 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
             )
             git_url_input = repo_inputs.addStringValueInput(
                 "gitUrl",
-                "Git URL (if adding)",
-                "https://github.com/user/repo.git",
+                "📎 GitHub Repository URL",
+                "https://github.com/yourcompany/projectname",
             )
             repo_path_input = repo_inputs.addStringValueInput(
                 "repoPath",
-                "Repository Path",
+                "📁 Local Folder (where files will be saved)",
                 "",
             )
             browse_repo_button = repo_inputs.addBoolValueInput(
@@ -785,11 +782,20 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
             )
             git_status_input.isFullWidth = True
 
+            # Add helpful instructions for new repository setup
+            help_text_input = repo_inputs.addTextBoxCommandInput(
+                "helpText", "", 
+                "💡 Quick Setup: \n1) Paste your GitHub repository URL above\n2) Choose a folder using Browse button\n3) Click OK - everything else is automatic!", 
+                3, True
+            )
+            help_text_input.isFullWidth = True
+
             def update_new_repo_visibility(selection_name: str):
                 show_new_repo = (selection_name == ADD_NEW_OPTION)
                 new_repo_name_input.isVisible = show_new_repo
                 git_url_input.isVisible = show_new_repo
                 git_status_input.isVisible = show_new_repo
+                help_text_input.isVisible = show_new_repo
 
             current_selection_name = (
                 repoSelectorInput.selectedItem.name
