@@ -1498,6 +1498,7 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                         if selected_action == ADD_NEW_OPTION:
                             git_url_val = cmd_inputs.itemById("gitUrl").value.strip()
                             logger.info(f"Processing new repo setup: URL='{git_url_val}', Path='{repo_path_raw}'")
+                            logger.info(f"URL conversion state: converted={url_conversion_state['converted']}")
                             # Auto-convert GitHub URLs for user convenience (only once)
                             if git_url_val and not url_conversion_state["converted"]:
                                 converted_url = convert_github_url(git_url_val)
@@ -1515,6 +1516,8 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                                     )
                                     logger.info("Returning after URL conversion - dialog should stay open")
                                     return  # Simple return should keep dialog open
+                            else:
+                                logger.info("URL conversion already completed or no URL to convert")
 
                         logger.info("Starting validation of repository inputs")
                         validation = validate_repo_inputs(
@@ -1538,12 +1541,15 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                                 )
                                 logger.info("Returning after validation errors - dialog should stay open")
                                 return  # Simple return to keep dialog open
+                        
+                        logger.info("Validation passed - continuing with export process")
                         normalized_repo_path = validation["path"]
                         if normalized_repo_path:
                             repo_path_input.value = normalized_repo_path
                         has_git_dir = validation["has_git_dir"]
 
                         # Formats
+                        logger.info("Getting export formats and settings")
                         export_formats_input = cmd_inputs.itemById("exportFormatsConfig")
                         selected_formats = [item.name for item in export_formats_input.listItems if item.isSelected]
                         export_formats_val = selected_formats if selected_formats else ["f3d"]
