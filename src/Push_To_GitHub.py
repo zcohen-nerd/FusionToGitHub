@@ -847,16 +847,41 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                         if table_style is not None:
                             break
                 
-                # Create table with proper parameters: id, name, numberOfColumns, columnRatio, presentationStyle
-                if table_style is not None:
-                    format_settings_table = export_inputs.addTableCommandInput(
-                        "formatSettingsTable", "Format Settings", 2, "1:1", table_style
-                    )
-                else:
-                    # Create table without presentation style but with required columnRatio
-                    format_settings_table = export_inputs.addTableCommandInput(
-                        "formatSettingsTable", "Format Settings", 2, "1:1"
-                    )
+                # Create table with proper parameters - try different combinations
+                try:
+                    if table_style is not None:
+                        # Try: id, name, numberOfColumns, columnRatio, presentationStyle
+                        format_settings_table = export_inputs.addTableCommandInput(
+                            "formatSettingsTable", "Format Settings", 2, "1:1", table_style
+                        )
+                    else:
+                        # Try: id, name, numberOfColumns, columnRatio
+                        format_settings_table = export_inputs.addTableCommandInput(
+                            "formatSettingsTable", "Format Settings", 2, "1:1"
+                        )
+                except Exception as e1:
+                    logger.warning(f"5-parameter table creation failed: {e1}")
+                    try:
+                        # Try 4 parameters: id, name, numberOfColumns, presentationStyle
+                        if table_style is not None:
+                            format_settings_table = export_inputs.addTableCommandInput(
+                                "formatSettingsTable", "Format Settings", 2, table_style
+                            )
+                        else:
+                            # Try 3 parameters: id, name, numberOfColumns  
+                            format_settings_table = export_inputs.addTableCommandInput(
+                                "formatSettingsTable", "Format Settings", 2
+                            )
+                    except Exception as e2:
+                        logger.warning(f"4-parameter table creation failed: {e2}")
+                        try:
+                            # Final fallback: just 3 parameters
+                            format_settings_table = export_inputs.addTableCommandInput(
+                                "formatSettingsTable", "Format Settings", 2
+                            )
+                        except Exception as e3:
+                            logger.error(f"All table creation attempts failed: {e3}")
+                            format_settings_table = None
                     
             except Exception as e:
                 logger.warning(f"Could not create format settings table with presentation style: {e}")
@@ -1159,6 +1184,9 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                     return url + '.git'
                 
                 return url
+
+            # Track URL conversion state
+            url_conversion_state = {"converted": False}
 
             def default_path_for_new_repo() -> str:
                 proposed_name = new_repo_name_input.value.strip()
@@ -1483,20 +1511,20 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                         git_url_val = ""
                         if selected_action == ADD_NEW_OPTION:
                             git_url_val = cmd_inputs.itemById("gitUrl").value.strip()
-                            # Auto-convert GitHub URLs for user convenience
-                            if git_url_val:
+                            # Auto-convert GitHub URLs for user convenience (only once)
+                            if git_url_val and not url_conversion_state["converted"]:
                                 converted_url = convert_github_url(git_url_val)
                                 if converted_url != git_url_val:
                                     # Update the UI field with the converted URL
                                     cmd_inputs.itemById("gitUrl").value = converted_url
                                     git_url_val = converted_url
+                                    url_conversion_state["converted"] = True
                                     # Show user what was converted
                                     current_ui_ref.messageBox(
-                                        f"✅ Auto-converted GitHub URL to:\n{converted_url}\n\nClick OK again to continue.",
+                                        f"✅ Auto-converted GitHub URL to:\n{converted_url}\n\nDialog will stay open. Click OK again to continue.",
                                         "URL Converted"
                                     )
-                                    execute_args.isValidInput = False
-                                    return
+                                    return  # Simple return should keep dialog open
 
                         validation = validate_repo_inputs(
                             selected_action,
@@ -1512,12 +1540,10 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                             if error_lines:
                                 current_ui_ref.messageBox(
                                     "⚠️ Please fix these issues:\n\n" + "\n".join(error_lines) + 
-                                    "\n\nThe dialog will stay open so you can make corrections.",
+                                    "\n\nDialog will stay open for corrections.",
                                     CMD_NAME,
                                 )
-                                # Prevent dialog from closing by canceling the execution
-                                execute_args.isValidInput = False
-                                return
+                                return  # Simple return to keep dialog open
                         normalized_repo_path = validation["path"]
                         if normalized_repo_path:
                             repo_path_input.value = normalized_repo_path
