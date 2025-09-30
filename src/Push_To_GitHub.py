@@ -200,21 +200,50 @@ except AttributeError:
     pass
 
 class FusionPaletteHandler(logging.Handler):
-    LEVEL_MAP = {
-        logging.DEBUG: adsk.core.LogLevels.DebugLogLevel,
-        logging.INFO: adsk.core.LogLevels.InfoLogLevel,
-        logging.WARNING: adsk.core.LogLevels.WarningLogLevel,
-        logging.ERROR: adsk.core.LogLevels.ErrorLogLevel,
-        logging.CRITICAL: adsk.core.LogLevels.CriticalLogLevel,
-    }
+    """Custom logging handler that outputs to Fusion 360's text palette."""
+    
+    def __init__(self):
+        super().__init__()
+        # Try to map to Fusion LogLevels, fallback to basic logging if not available
+        try:
+            # Try the expected LogLevel enum values
+            self.LEVEL_MAP = {
+                logging.DEBUG: getattr(adsk.core.LogLevels, 'DebugLogLevel', None),
+                logging.INFO: getattr(adsk.core.LogLevels, 'InfoLogLevel', None),
+                logging.WARNING: getattr(adsk.core.LogLevels, 'WarningLogLevel', None),
+                logging.ERROR: getattr(adsk.core.LogLevels, 'ErrorLogLevel', None),
+                logging.CRITICAL: getattr(adsk.core.LogLevels, 'CriticalLogLevel', None),
+            }
+            # Remove None values (unsupported log levels)
+            self.LEVEL_MAP = {k: v for k, v in self.LEVEL_MAP.items() if v is not None}
+            
+            # If no valid mappings found, try alternative names
+            if not self.LEVEL_MAP:
+                self.LEVEL_MAP = {
+                    logging.INFO: getattr(adsk.core.LogLevels, 'InfoLogLevel', 
+                                        getattr(adsk.core.LogLevels, 'Information', None)),
+                    logging.WARNING: getattr(adsk.core.LogLevels, 'WarningLogLevel',
+                                           getattr(adsk.core.LogLevels, 'Warning', None)),
+                    logging.ERROR: getattr(adsk.core.LogLevels, 'ErrorLogLevel',
+                                         getattr(adsk.core.LogLevels, 'Error', None)),
+                }
+                self.LEVEL_MAP = {k: v for k, v in self.LEVEL_MAP.items() if v is not None}
+            
+        except (AttributeError, NameError):
+            # If LogLevels enum is not available, we'll just use app.log without levels
+            self.LEVEL_MAP = {}
 
     def emit(self, record: logging.LogRecord) -> None:
         if not app:
             return
         try:
             message = self.format(record)
-            level = self.LEVEL_MAP.get(record.levelno, adsk.core.LogLevels.InfoLogLevel)
-            app.log(message, level)
+            if self.LEVEL_MAP:
+                level = self.LEVEL_MAP.get(record.levelno, list(self.LEVEL_MAP.values())[0])
+                app.log(message, level)
+            else:
+                # Fallback: just log the message without level specification
+                app.log(message)
         except Exception:
             pass
 
@@ -256,9 +285,14 @@ def setup_logger():
     file_log_handler.setFormatter(formatter)
     logger.addHandler(file_log_handler)
 
-    fusion_palette_handler = FusionPaletteHandler()
-    fusion_palette_handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
-    logger.addHandler(fusion_palette_handler)
+    # Add Fusion palette handler with error handling for API changes
+    try:
+        fusion_palette_handler = FusionPaletteHandler()
+        fusion_palette_handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
+        logger.addHandler(fusion_palette_handler)
+    except Exception as e:
+        # If Fusion palette handler fails, log to file only
+        logger.warning(f"Could not initialize Fusion palette logging: {e}")
 
     set_logger_level(current_log_level_name)
     logger.info(f"'{CMD_NAME}' Logger initialized. Log file: {LOG_FILE_PATH}")
