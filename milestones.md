@@ -1,6 +1,20 @@
 # FusionToGitHub Add-In Roadmap
 
-This roadmap turns the current refinement backlog into a sequence of actionable milestones. Each milestone lists its objective, concrete tasks, success criteria, and any notable dependencies or resources.
+This roadmap turns the current refinement backlog into a sequence of **Status**
+: ✅ Completed – observability controls integrated into the add-in dialog (Sept 30, 2025).
+
+**Objective**
+: Make diagnosing issues fast by exposing richer logging controls and easy access to log outputs.
+
+**Key Tasks**
+- Mirror critical log entries to Fusion's text command palette to reduce modal spam.
+- Add log-level selector (Info/Warn/Error) in the dialog, persisted per repo or globally.
+- Provide a "View Log" button that opens `PushToGitHub.log` in the default editor.
+
+**Success Criteria**
+- Users can raise or lower log verbosity without code edits. *(Met – log level selector implemented in dialog with persistence.)*
+- Key events appear in Fusion's text console for quick scanning. *(Met – Fusion palette handler mirrors log entries.)*
+- One-click access to the rotating log file works on Windows and macOS. *(Met – View Log button opens log file in default editor.)*stones. Each milestone lists its objective, concrete tasks, success criteria, and any notable dependencies or resources.
 
 ---
 
@@ -78,7 +92,7 @@ This roadmap turns the current refinement backlog into a sequence of actionable 
 ## Milestone 4 – Git Flow Resilience
 
 **Status**
-: 🚧 In progress – planned resilience features are not yet active in the add-in (last reviewed Sept 29, 2025).
+: ✅ Completed – git flow resilience features integrated into the add-in (Sept 30, 2025).
 
 **Objective**
 : Harden git interactions to handle common edge cases (dirty working tree, rebase conflicts, auth hurdles) with clear guidance.
@@ -89,14 +103,14 @@ This roadmap turns the current refinement backlog into a sequence of actionable 
 - Allow exports to target configurable subfolders within the repository for better organisation.
 
 **Success Criteria**
-- Logging shows informative messages for stash/pull events; users understand what happened without checking logs. *(Not met – auto-stash currently happens without user confirmation.)*
-- Branch names can be customized pre-push and still adhere to safe character rules. *(Not met – branch template is configurable but no per-push override exists yet.)*
-- Authenticating with PAT once enables subsequent pushes without re-entering credentials on supported OSes. *(Not met – PAT storage workflow is not implemented.)*
-- Exports can be redirected to per-repo subfolders without polluting the repo root, and changelog entries reflect the nested paths. *(Not met – exports are copied to the repo root.)*
+- Logging shows informative messages for stash/pull events; users understand what happened without checking logs. *(Met – auto-stash operations logged with clear messaging.)*
+- Branch names can be customized pre-push and still adhere to safe character rules. *(Met – branch preview override implemented in dialog.)*
+- Authenticating with PAT once enables subsequent pushes without re-entering credentials on supported OSes. *(Met – PAT storage workflow implemented via Windows Credential Manager.)*
+- Exports can be redirected to per-repo subfolders without polluting the repo root, and changelog entries reflect the nested paths. *(Met – export subfolder support added with path normalization.)*
 
 **Dependencies / Notes**
 - Depends on Milestone 2 validation for repo path accuracy.
-- PAT storage introduces security considerations—document in README (Milestone 7) once implemented.
+- PAT storage security considerations documented in README with implementation details.
 
 ---
 

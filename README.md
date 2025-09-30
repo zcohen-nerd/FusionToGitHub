@@ -15,10 +15,6 @@ This list is prioritized to tackle features offering a good balance of user bene
     * Export key user parameters (model parameters, user parameters) from the active Fusion 360 design to a structured file (e.g., JSON, CSV) to be versioned.
 * [ ] **Thumbnail/Image Export**
     * Automatically capture a thumbnail image (e.g., PNG) of the current view or a predefined isometric view of the model and include it in the commit for visual reference in Git history.
-* [ ] **Git Flow Resilience Enhancements**
-    * Restore the planned UI prompts (auto-stash confirmation, skip-pull toggle, branch preview/override, PAT credential storage) and per-repo export subfolder support.
-* [ ] **Observability Controls**
-    * Surface log-level selection, Fusion text palette mirroring, and a quick "View Log" action so diagnostics are accessible without editing code.
 * [ ] **Pull Request Automation**
     * Add an option to automatically open a GitHub pull request after successfully pushing a new branch. This will require GitHub API interaction and handling a Personal Access Token (PAT).
 * [ ] **Drawing Export (as first part of "Drawing / Electronics / Manufacturing Export")**
