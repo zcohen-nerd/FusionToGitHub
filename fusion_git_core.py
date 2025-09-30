@@ -1,4 +1,5 @@
 """Core Git operations shared by the Fusion add-in and offline CLI harness."""
+
 from __future__ import annotations
 
 import logging
@@ -13,23 +14,17 @@ from typing import Any, Dict, Optional, Protocol, Sequence
 
 VERSION = "V7.7"
 IS_WINDOWS = os.name == "nt"
-GIT_EXE = shutil.which("git") or (
-    r"C:\\Program Files\\Git\\bin\\git.exe" if IS_WINDOWS else "git"
-)
+GIT_EXE = shutil.which("git") or (r"C:\\Program Files\\Git\\bin\\git.exe" if IS_WINDOWS else "git")
 
 
 class GitUI(Protocol):
-    def info(self, message: str) -> None:
-        ...
+    def info(self, message: str) -> None: ...
 
-    def warn(self, message: str) -> None:
-        ...
+    def warn(self, message: str) -> None: ...
 
-    def error(self, message: str) -> None:
-        ...
+    def error(self, message: str) -> None: ...
 
-    def confirm(self, message: str) -> bool:
-        ...
+    def confirm(self, message: str) -> bool: ...
 
 
 def sanitize_branch_name(raw: Optional[str]) -> str:
@@ -48,11 +43,7 @@ def sanitize_branch_name(raw: Optional[str]) -> str:
 def generate_branch_name(template: str, design_basename: str, timestamp: Optional[str] = None):
     ts = timestamp or datetime.now().strftime("%Y%m%d-%H%M%S")
     branch_template = template or "fusion-export/{filename}-{timestamp}"
-    populated = (
-        branch_template
-        .replace("{filename}", design_basename)
-        .replace("{timestamp}", ts)
-    )
+    populated = branch_template.replace("{filename}", design_basename).replace("{timestamp}", ts)
     return sanitize_branch_name(populated), ts
 
 
@@ -114,14 +105,14 @@ def git_askpass_env(username: str, token: str):
         script_contents = (
             "@echo off\n"
             "set PROMPT=%*\n"
-            "echo %PROMPT% | findstr /I \"Username\" >nul\n"
+            'echo %PROMPT% | findstr /I "Username" >nul\n'
             f"if %errorlevel%==0 (\n    echo {escaped_username}\n) else (\n    echo {escaped_token}\n)\n"
         )
     else:
         script_contents = (
             "#!/bin/sh\n"
-            "prompt=\"$1\"\n"
-            "case \"$prompt\" in\n"
+            'prompt="$1"\n'
+            'case "$prompt" in\n'
             f"  *Username* ) printf '%s\\n' '{username_sh}' ;;\n"
             f"  *username* ) printf '%s\\n' '{username_sh}' ;;\n"
             f"  *Password* ) printf '%s\\n' '{token_sh}' ;;\n"
@@ -172,7 +163,7 @@ def handle_git_operations(
     pull_failure_details: Optional[str] = None
 
     def _perform(git_env: Optional[Dict[str, str]]):
-        nonlocal original_branch, stashed, used_force_push, branch_name_final, timestamp_str, pull_failure_details, skip_pull
+        nonlocal original_branch, stashed, used_force_push, branch_name_final, timestamp_str, pull_failure_details, skip_pull  # noqa: E501
 
         remotes = git_output(repo_path, "remote", env=git_env).splitlines()
         if "origin" not in remotes:
@@ -198,8 +189,7 @@ def handle_git_operations(
                 default_branch = ref.split("/")[-1]
             except Exception:
                 branches = {
-                    b.strip().lstrip("* ").strip()
-                    for b in git_output(repo_path, "branch", env=git_env).splitlines()
+                    b.strip().lstrip("* ").strip() for b in git_output(repo_path, "branch", env=git_env).splitlines()
                 }
                 if "main" in branches:
                     default_branch = "main"
@@ -267,10 +257,9 @@ def handle_git_operations(
 
         changelog_file_path = os.path.join(repo_path, "CHANGELOG.md")
         log_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        commit_msg = (commit_msg_template or "Design update: {filename}")
+        commit_msg = commit_msg_template or "Design update: {filename}"
         commit_msg = (
-            commit_msg
-            .replace("{filename}", design_basename_for_branch)
+            commit_msg.replace("{filename}", design_basename_for_branch)
             .replace("{branch}", branch_name_final)
             .replace("{timestamp}", timestamp_str)
         )
@@ -278,7 +267,7 @@ def handle_git_operations(
         entry_lines = [
             f"## {log_timestamp} - {design_basename_for_branch}",
             f"- **Branch:** `{branch_name_final}`",
-            f"- **Commit Message:** \"{commit_msg}\"",
+            f'- **Commit Message:** "{commit_msg}"',
         ]
         if file_abs_paths_to_add:
             entry_lines.append("- **Files Updated:**")
@@ -296,15 +285,15 @@ def handle_git_operations(
             with open(changelog_file_path, "r", encoding="utf-8") as fr:
                 existing = fr.read()
             if existing.startswith(changelog_header):
-                existing = existing[len(changelog_header):]
+                existing = existing[len(changelog_header) :]
         with open(changelog_file_path, "w", encoding="utf-8") as fw:
             fw.write(changelog_header)
             fw.write("\n".join(entry_lines) + "\n")
             fw.write(existing)
 
-        files_abs = [
-            os.path.join(repo_path, "CHANGELOG.md")
-        ] + [os.path.normpath(p) for p in (file_abs_paths_to_add or [])]
+        files_abs = [os.path.join(repo_path, "CHANGELOG.md")] + [
+            os.path.normpath(p) for p in (file_abs_paths_to_add or [])
+        ]
         missing = [p for p in files_abs if not os.path.exists(p)]
         if missing:
             try:
@@ -312,9 +301,7 @@ def handle_git_operations(
             except Exception:
                 listing = "(dir list failed)"
             msg = (
-                "Exported files not found in repo folder:\n"
-                + "\n".join(missing)
-                + f"\n\nRepo root listing:\n{listing}"
+                "Exported files not found in repo folder:\n" + "\n".join(missing) + f"\n\nRepo root listing:\n{listing}"
             )
             ui.error(msg)
             if logger:
@@ -322,7 +309,7 @@ def handle_git_operations(
             return {"cancelled": True}
 
         rels = ["CHANGELOG.md"]
-        for p in (file_abs_paths_to_add or []):
+        for p in file_abs_paths_to_add or []:
             rels.append(os.path.relpath(os.path.normpath(p), repo_path))
 
         git_run(repo_path, "add", *rels, env=git_env)
@@ -342,12 +329,10 @@ def handle_git_operations(
             "pull_failed": pull_failure_details,
         }
 
-    git_env: Optional[Dict[str, str]] = None
     try:
         if pat_credentials and pat_credentials.get("token"):
             username = pat_credentials.get("username", "")
             with git_askpass_env(username, pat_credentials.get("token", "")) as env_map:
-                git_env = env_map
                 result = _perform(env_map)
         else:
             result = _perform(None)

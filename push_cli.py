@@ -1,4 +1,5 @@
 """Offline CLI harness for testing the FusionToGitHub Git pipeline without Fusion."""
+
 from __future__ import annotations
 
 import argparse
@@ -59,10 +60,7 @@ def _abs_paths(repo: Path, entries: list[str]) -> list[str]:
 
 def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description=(
-            "Run the FusionToGitHub git pipeline outside Fusion for smoke testing "
-            "and CI automation."
-        )
+        description=("Run the FusionToGitHub git pipeline outside Fusion for smoke testing " "and CI automation.")
     )
     parser.add_argument("--repo", required=True, help="Path to the existing Git repository")
     parser.add_argument(
