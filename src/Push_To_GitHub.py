@@ -841,27 +841,33 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                         if table_style is not None:
                             break
                 
-                # Final fallback - create table without specifying style
+                # Create table with proper parameters: id, name, numberOfColumns, columnRatio, presentationStyle
                 if table_style is not None:
                     format_settings_table = export_inputs.addTableCommandInput(
-                        "formatSettingsTable", "Format Settings", 2, table_style
+                        "formatSettingsTable", "Format Settings", 2, "1:1", table_style
                     )
                 else:
-                    # Create table with minimal parameters
+                    # Create table without presentation style but with required columnRatio
                     format_settings_table = export_inputs.addTableCommandInput(
-                        "formatSettingsTable", "Format Settings", 2
+                        "formatSettingsTable", "Format Settings", 2, "1:1"
                     )
                     
             except Exception as e:
                 logger.warning(f"Could not create format settings table with presentation style: {e}")
-                # Fallback to basic table creation
-                format_settings_table = export_inputs.addTableCommandInput(
-                    "formatSettingsTable", "Format Settings", 2
-                )
+                # Final fallback to basic table creation with required parameters
+                try:
+                    format_settings_table = export_inputs.addTableCommandInput(
+                        "formatSettingsTable", "Format Settings", 2, "1:1"
+                    )
+                except Exception as e2:
+                    logger.error(f"Could not create format settings table at all: {e2}")
+                    # Skip format settings table if it completely fails
+                    format_settings_table = None
             
-            format_settings_table.maximumVisibleRows = len(available_formats) + 1
-            format_settings_table.columnSpacing = 4
-            format_settings_table.rowSpacing = 2
+            if format_settings_table:
+                format_settings_table.maximumVisibleRows = len(available_formats) + 1
+                format_settings_table.columnSpacing = 4
+                format_settings_table.rowSpacing = 2
 
             def get_selected_formats():
                 return [
@@ -877,6 +883,10 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                     fmt_state.setdefault(key, value)
 
             def sync_format_settings_rows():
+                if not format_settings_table:
+                    # Skip format settings sync if table couldn't be created
+                    return
+                    
                 format_settings_table.clear()
                 format_setting_inputs.clear()
 
