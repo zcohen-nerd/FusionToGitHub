@@ -826,10 +826,39 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
 
             format_settings_state = {}
             format_setting_inputs = {}
-            format_settings_table = export_inputs.addTableCommandInput(
-                "formatSettingsTable", "Format Settings", 2,
-                adsk.core.TablePresentationStyles.minimalTablePresentationStyle
-            )
+            
+            # Try to get the appropriate table presentation style with fallbacks
+            try:
+                table_style = getattr(adsk.core.TablePresentationStyles, 'minimalTablePresentationStyle', None)
+                if table_style is None:
+                    # Try alternative name suggested by the error
+                    table_style = getattr(adsk.core.TablePresentationStyles, 'nameValueTablePresentationStyle', None)
+                if table_style is None:
+                    # If still None, try to get any available style
+                    style_names = ['defaultTablePresentationStyle', 'standardTablePresentationStyle']
+                    for style_name in style_names:
+                        table_style = getattr(adsk.core.TablePresentationStyles, style_name, None)
+                        if table_style is not None:
+                            break
+                
+                # Final fallback - create table without specifying style
+                if table_style is not None:
+                    format_settings_table = export_inputs.addTableCommandInput(
+                        "formatSettingsTable", "Format Settings", 2, table_style
+                    )
+                else:
+                    # Create table with minimal parameters
+                    format_settings_table = export_inputs.addTableCommandInput(
+                        "formatSettingsTable", "Format Settings", 2
+                    )
+                    
+            except Exception as e:
+                logger.warning(f"Could not create format settings table with presentation style: {e}")
+                # Fallback to basic table creation
+                format_settings_table = export_inputs.addTableCommandInput(
+                    "formatSettingsTable", "Format Settings", 2
+                )
+            
             format_settings_table.maximumVisibleRows = len(available_formats) + 1
             format_settings_table.columnSpacing = 4
             format_settings_table.rowSpacing = 2
