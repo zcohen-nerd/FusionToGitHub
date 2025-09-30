@@ -1220,17 +1220,10 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
 
                 if selection_name == ADD_NEW_OPTION:
                     if has_git_url:
-                        # Auto-convert GitHub URLs for user convenience
-                        converted_url = convert_github_url(git_url_val)
-                        
+                        # URL should already be converted at this point
                         pattern = r"^(https://|git@|ssh://).+\\.git$"
-                        if re.match(pattern, converted_url):
-                            if converted_url != git_url_val:
-                                set_msg("git", f"✅ Auto-converted to: {converted_url}", "success")
-                                # Update the input field with the converted URL
-                                git_url_input.value = converted_url
-                            else:
-                                set_msg("git", "✅ Git URL format looks valid.", "success")
+                        if re.match(pattern, git_url_val.strip()):
+                            set_msg("git", "✅ Git URL format looks valid.", "success")
                         else:
                             set_msg(
                                 "git",
@@ -1490,6 +1483,20 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                         git_url_val = ""
                         if selected_action == ADD_NEW_OPTION:
                             git_url_val = cmd_inputs.itemById("gitUrl").value.strip()
+                            # Auto-convert GitHub URLs for user convenience
+                            if git_url_val:
+                                converted_url = convert_github_url(git_url_val)
+                                if converted_url != git_url_val:
+                                    # Update the UI field with the converted URL
+                                    cmd_inputs.itemById("gitUrl").value = converted_url
+                                    git_url_val = converted_url
+                                    # Show user what was converted
+                                    current_ui_ref.messageBox(
+                                        f"✅ Auto-converted GitHub URL to:\n{converted_url}\n\nClick OK again to continue.",
+                                        "URL Converted"
+                                    )
+                                    execute_args.isValidInput = False
+                                    return
 
                         validation = validate_repo_inputs(
                             selected_action,
@@ -1509,8 +1516,7 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                                     CMD_NAME,
                                 )
                                 # Prevent dialog from closing by canceling the execution
-                                execute_args.executeFailed = True
-                                execute_args.executeFailedMessage = "Please fix validation errors and try again."
+                                execute_args.isValidInput = False
                                 return
                         normalized_repo_path = validation["path"]
                         if normalized_repo_path:
