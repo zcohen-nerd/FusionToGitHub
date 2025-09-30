@@ -4,11 +4,32 @@ V7.7 formalizes dependency packaging and adds an offline CLI harness.
 """
 
 import adsk.core, adsk.fusion, adsk.cam, traceback
-import os, shutil, re, json, subprocess, logging, logging.handlers, tempfile
+import ctypes
+import ctypes.wintypes
+import logging
+import logging.handlers
+import os
+import platform
+import re
+import json
+import shutil
+import subprocess
+import tempfile
+import sys
 from contextlib import contextmanager
 from datetime import datetime
+from typing import Optional
 
-VERSION = "V7.7"
+from fusion_git_core import (
+    VERSION as CORE_VERSION,
+    generate_branch_name,
+    git_available as core_git_available,
+    handle_git_operations as core_handle_git_operations,
+    sanitize_branch_name,
+)
+
+VERSION = CORE_VERSION
+IS_WINDOWS = os.name == 'nt'
 
 # -----------------------------
 # Git (CLI) — no GitPython
@@ -28,9 +49,7 @@ def _git_out(repo_path, *args):
 
 def _git_available():
     try:
-        flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-        subprocess.run([GIT_EXE, "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, creationflags=flags)
-        return True
+        return core_git_available()
     except Exception:
         return False
 
@@ -149,10 +168,13 @@ def determine_valid_export_formats(design, requested_formats):
 app = None
 ui = None
 logger = None
+file_log_handler: Optional[logging.Handler] = None
+fusion_palette_handler: Optional[logging.Handler] = None
 handlers = []
 push_cmd_def = None
 git_push_control = None
 is_initialized = False  # guard against double run()
+current_log_level_name = "INFO"
 
 try:
     app = adsk.core.Application.get()
@@ -161,42 +183,225 @@ try:
 except AttributeError:
     pass
 
-# -----------------------------
-# Logger
-# -----------------------------
+class FusionPaletteHandler(logging.Handler):
+    LEVEL_MAP = {
+        logging.DEBUG: adsk.core.LogLevels.DebugLogLevel,
+        logging.INFO: adsk.core.LogLevels.InfoLogLevel,
+        logging.WARNING: adsk.core.LogLevels.WarningLogLevel,
+        logging.ERROR: adsk.core.LogLevels.ErrorLogLevel,
+        logging.CRITICAL: adsk.core.LogLevels.CriticalLogLevel,
+    }
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if not app:
+            return
+        try:
+            message = self.format(record)
+            level = self.LEVEL_MAP.get(record.levelno, adsk.core.LogLevels.InfoLogLevel)
+            app.log(message, level)
+        except Exception:
+            pass
+
+
+def _ensure_log_dir_exists() -> bool:
+    if os.path.exists(LOG_DIR):
+        return True
+    try:
+        os.makedirs(LOG_DIR)
+        return True
+    except OSError as exc:
+        print(f"Error creating log directory {LOG_DIR}: {exc}. Logging disabled.")
+        if app:
+            app.log(f"Failed to create log directory {LOG_DIR}: {exc}.", adsk.core.LogLevels.ErrorLogLevel)
+        return False
+
+
 def setup_logger():
-    global logger
+    global logger, file_log_handler, fusion_palette_handler
     if logger is not None and logger.handlers:
         return
 
-    if not os.path.exists(LOG_DIR):
-        try:
-            os.makedirs(LOG_DIR)
-        except OSError as e:
-            print(f"Error creating log directory {LOG_DIR}: {e}. Logging disabled.")
-            logger = logging.getLogger(CMD_ID + "_disabled")
-            logger.addHandler(logging.NullHandler())
-            return
+    if not _ensure_log_dir_exists():
+        logger = logging.getLogger(CMD_ID + "_disabled")
+        logger.addHandler(logging.NullHandler())
+        return
 
     logger = logging.getLogger(CMD_ID)
     logger.setLevel(logging.DEBUG)
 
-    if not logger.handlers:
-        try:
-            fh = logging.handlers.RotatingFileHandler(
-                LOG_FILE_PATH, maxBytes=1 * 1024 * 1024, backupCount=3, encoding='utf-8'
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+    file_log_handler = logging.handlers.RotatingFileHandler(
+        LOG_FILE_PATH,
+        maxBytes=1 * 1024 * 1024,
+        backupCount=3,
+        encoding='utf-8',
+    )
+    file_log_handler.setFormatter(formatter)
+    logger.addHandler(file_log_handler)
+
+    fusion_palette_handler = FusionPaletteHandler()
+    fusion_palette_handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
+    logger.addHandler(fusion_palette_handler)
+
+    set_logger_level(current_log_level_name)
+    logger.info(f"'{CMD_NAME}' Logger initialized. Log file: {LOG_FILE_PATH}")
+
+
+def set_logger_level(level_name: str):
+    global current_log_level_name
+    if not logger:
+        return
+    normalized = (level_name or "INFO").upper()
+    mapped_level = getattr(logging, normalized, logging.INFO)
+    current_log_level_name = normalized
+    if file_log_handler:
+        file_log_handler.setLevel(mapped_level)
+    if fusion_palette_handler:
+        fusion_palette_handler.setLevel(mapped_level)
+    logger.debug("Logger level updated to %s", normalized)
+
+
+def open_log_file(target_ui_ref) -> None:
+    if not os.path.exists(LOG_FILE_PATH):
+        if target_ui_ref:
+            target_ui_ref.messageBox(
+                "Log file not found yet. Run a push to generate logs first.",
+                CMD_NAME,
             )
-            fh.setLevel(logging.INFO)
-            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-            fh.setFormatter(formatter)
-            logger.addHandler(fh)
-            logger.info(f"'{CMD_NAME}' Logger initialized. Log file: {LOG_FILE_PATH}")
-        except Exception as e:
-            print(f"Failed to initialize file logger for {CMD_NAME}: {e}. Logging disabled.")
-            logger = logging.getLogger(CMD_ID + "_disabled")
-            logger.addHandler(logging.NullHandler())
-            if app:
-                app.log(f"Failed to initialize file logger for {CMD_NAME}: {e}.", adsk.core.LogLevels.ErrorLogLevel)
+        return
+
+    try:
+        if IS_WINDOWS:
+            os.startfile(LOG_FILE_PATH)  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", LOG_FILE_PATH])
+        else:
+            subprocess.Popen(["xdg-open", LOG_FILE_PATH])
+    except Exception as exc:
+        if target_ui_ref:
+            target_ui_ref.messageBox(
+                f"Unable to open log file automatically.\nPath: {LOG_FILE_PATH}\nError: {exc}",
+                CMD_NAME,
+            )
+        if logger:
+            logger.error("Failed to open log file: %s", exc, exc_info=True)
+
+
+# -----------------------------
+# Windows Credential Manager helpers (PAT)
+# -----------------------------
+if IS_WINDOWS:
+    wintypes = ctypes.wintypes
+
+    CRED_TYPE_GENERIC = 1
+    CRED_PERSIST_LOCAL_MACHINE = 2
+    ERROR_NOT_FOUND = 1168
+
+    class FILETIME(ctypes.Structure):
+        _fields_ = [
+            ("dwLowDateTime", wintypes.DWORD),
+            ("dwHighDateTime", wintypes.DWORD),
+        ]
+
+    class CREDENTIAL(ctypes.Structure):
+        _fields_ = [
+            ("Flags", wintypes.DWORD),
+            ("Type", wintypes.DWORD),
+            ("TargetName", wintypes.LPWSTR),
+            ("Comment", wintypes.LPWSTR),
+            ("LastWritten", FILETIME),
+            ("CredentialBlobSize", wintypes.DWORD),
+            ("CredentialBlob", ctypes.c_void_p),
+            ("Persist", wintypes.DWORD),
+            ("AttributeCount", wintypes.DWORD),
+            ("Attributes", ctypes.c_void_p),
+            ("TargetAlias", wintypes.LPWSTR),
+            ("UserName", wintypes.LPWSTR),
+        ]
+
+    PCREDENTIAL = ctypes.POINTER(CREDENTIAL)
+    advapi32 = ctypes.WinDLL("Advapi32.dll", use_last_error=True)
+    CredReadW = advapi32.CredReadW
+    CredReadW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(PCREDENTIAL)]
+    CredReadW.restype = wintypes.BOOL
+
+    CredWriteW = advapi32.CredWriteW
+    CredWriteW.argtypes = [ctypes.POINTER(CREDENTIAL), wintypes.DWORD]
+    CredWriteW.restype = wintypes.BOOL
+
+    CredDeleteW = advapi32.CredDeleteW
+    CredDeleteW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD]
+    CredDeleteW.restype = wintypes.BOOL
+
+    CredFree = advapi32.CredFree
+    CredFree.argtypes = [ctypes.c_void_p]
+    CredFree.restype = None
+
+
+def _credential_target(repo_identifier: str) -> str:
+    return f"FusionToGitHub::{repo_identifier}"
+
+
+def read_stored_pat(repo_identifier: str) -> Optional[dict]:
+    if not IS_WINDOWS:
+        return None
+
+    target_name = _credential_target(repo_identifier)
+    credential_pp = PCREDENTIAL()
+    success = CredReadW(target_name, CRED_TYPE_GENERIC, 0, ctypes.byref(credential_pp))
+    if not success:
+        error_code = ctypes.get_last_error()
+        if error_code == ERROR_NOT_FOUND:
+            return None
+        raise ctypes.WinError(error_code)
+
+    try:
+        credential = credential_pp.contents
+        blob_size = credential.CredentialBlobSize
+        blob = ctypes.string_at(credential.CredentialBlob, blob_size)
+        token = blob.decode("utf-16-le")
+        username = credential.UserName or ""
+        return {"username": username, "token": token}
+    finally:
+        CredFree(credential_pp)
+
+
+def store_pat(repo_identifier: str, username: str, token: str) -> None:
+    if not IS_WINDOWS:
+        raise RuntimeError("PAT storage is only supported on Windows.")
+    target_name = _credential_target(repo_identifier)
+    blob = token.encode("utf-16-le")
+    blob_buffer = ctypes.create_string_buffer(blob)
+
+    credential = CREDENTIAL()
+    credential.Flags = 0
+    credential.Type = CRED_TYPE_GENERIC
+    credential.TargetName = target_name
+    credential.Comment = None
+    credential.LastWritten = FILETIME(0, 0)
+    credential.CredentialBlobSize = len(blob)
+    credential.CredentialBlob = ctypes.cast(blob_buffer, ctypes.c_void_p)
+    credential.Persist = CRED_PERSIST_LOCAL_MACHINE
+    credential.AttributeCount = 0
+    credential.Attributes = None
+    credential.TargetAlias = None
+    credential.UserName = username or ""
+
+    if not CredWriteW(ctypes.byref(credential), 0):
+        raise ctypes.WinError(ctypes.get_last_error())
+
+
+def delete_pat(repo_identifier: str) -> None:
+    if not IS_WINDOWS:
+        return
+    target_name = _credential_target(repo_identifier)
+    success = CredDeleteW(target_name, CRED_TYPE_GENERIC, 0)
+    if not success:
+        error_code = ctypes.get_last_error()
+        if error_code == ERROR_NOT_FOUND:
+            return
+        raise ctypes.WinError(error_code)
 
 # -----------------------------
 # Toolbar helpers (dedupe)
@@ -296,6 +501,69 @@ def _safe_base(name: str) -> str:
     return re.sub(r'[<>:"/\\|?*]+', '_', name)
 
 
+def normalize_export_subfolder(raw: str) -> str:
+    value = (raw or "").strip().replace("\\", "/")
+    if not value:
+        return ""
+    if value.startswith("/"):
+        raise ValueError("Export subfolder must be relative (no leading slash).")
+    parts = [segment.strip() for segment in value.split("/") if segment.strip()]
+    if not parts:
+        return ""
+    invalid = {"..", "."}
+    for segment in parts:
+        if segment in invalid:
+            raise ValueError("Export subfolder cannot contain '..' or '.' segments.")
+        if re.search(r'[<>:"\\|?*]', segment):
+            raise ValueError(f"Invalid characters in subfolder segment '{segment}'.")
+    return "/".join(parts)
+
+
+def ensure_export_subfolder_exists(repo_path: str, relative_subfolder: str) -> str:
+    if not relative_subfolder:
+        return repo_path
+    dest = os.path.normpath(os.path.join(repo_path, relative_subfolder))
+    if not dest.startswith(os.path.normpath(repo_path)):
+        raise ValueError("Export subfolder resolves outside the repository root.")
+    os.makedirs(dest, exist_ok=True)
+    return dest
+
+
+class FusionCommandGitUI:
+    def __init__(self, ui_ref: Optional[adsk.core.UserInterface]):
+        self._ui = ui_ref
+
+    def info(self, message: str) -> None:
+        if logger:
+            logger.info(message)
+        elif app:
+            app.log(message, adsk.core.LogLevels.InfoLogLevel)
+
+    def warn(self, message: str) -> None:
+        if logger:
+            logger.warning(message)
+        elif app:
+            app.log(message, adsk.core.LogLevels.WarningLogLevel)
+
+    def error(self, message: str) -> None:
+        if logger:
+            logger.error(message)
+        ui_ref = self._ui or (app.userInterface if app else None)
+        if ui_ref:
+            ui_ref.messageBox(message, CMD_NAME)
+
+    def confirm(self, message: str) -> bool:
+        ui_ref = self._ui or (app.userInterface if app else None)
+        if not ui_ref:
+            return False
+        result = ui_ref.messageBox(
+            message,
+            CMD_NAME,
+            adsk.core.MessageBoxButtonTypes.YesNoButtonType,
+        )
+        return result == adsk.core.DialogResults.DialogYes
+
+
 def export_fusion_design(
     design: adsk.fusion.Design,
     export_dir: str,
@@ -381,134 +649,6 @@ def export_fusion_design(
             target_ui_ref.messageBox(f"Error exporting {fmt} for '{base_name}'", CMD_NAME)
     return exported
 
-# -----------------------------
-# Git ops (CLI), ABS paths in
-# -----------------------------
-def handle_git_operations(repo_path, file_abs_paths_to_add, commit_msg_template, branch_format_str, target_ui_ref, design_basename_for_branch):
-    global logger
-    our_stash_msg = 'fusion_git_addin_autostash'
-    original_branch = None
-    stashed = False
-    try:
-        # Validate origin
-        remotes = _git_out(repo_path, "remote").splitlines()
-        if "origin" not in remotes:
-            target_ui_ref.messageBox("No 'origin' remote found in this repo.", CMD_NAME)
-            if logger: logger.error("No 'origin' remote in %s", repo_path)
-            return None
-
-        # Determine current branch / detached
-        head = _git_out(repo_path, "rev-parse", "--abbrev-ref", "HEAD")
-        detached = (head.strip() == "HEAD")
-        if not detached:
-            original_branch = head.strip()
-
-        if detached:
-            try:
-                ref = _git_out(repo_path, "symbolic-ref", "refs/remotes/origin/HEAD", "--short")  # e.g., origin/main
-                default_branch = ref.split("/")[-1]
-            except Exception:
-                branches = set([b.strip().lstrip("* ").strip() for b in _git_out(repo_path, "branch").splitlines()])
-                default_branch = "main" if "main" in branches else ("master" if "master" in branches else None)
-            if not default_branch:
-                target_ui_ref.messageBox("Unable to determine default branch while in detached HEAD.", CMD_NAME)
-                if logger: logger.error("Cannot determine default branch")
-                return None
-            _git(repo_path, "checkout", default_branch)
-            original_branch = default_branch
-            if logger: logger.info("Detached HEAD → switched to '%s'", default_branch)
-
-        # Stash local changes if dirty
-        status = _git_out(repo_path, "status", "--porcelain")
-        if status.strip():
-            _git(repo_path, "stash", "push", "-u", "-m", our_stash_msg)
-            stashed = True
-            if logger: logger.info("Stashed local changes.")
-
-        # Rebase pull
-        _git(repo_path, "pull", "--rebase", "origin", original_branch)
-
-        # New branch name
-        timestamp_str = datetime.now().strftime("%Y%m%d-%H%M%S")
-        new_branch_name = branch_format_str.replace("{timestamp}", timestamp_str).replace("{filename}", design_basename_for_branch)
-        new_branch_name = re.sub(r'[^\w\-\./_]+', '_', new_branch_name)
-
-        # Create/checkout branch
-        _git(repo_path, "checkout", "-b", new_branch_name)
-
-        # Changelog
-        changelog_file_path = os.path.join(repo_path, "CHANGELOG.md")
-        log_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        commit_msg = (commit_msg_template or "Design update: {filename}")
-        commit_msg = (commit_msg
-                      .replace("{filename}", design_basename_for_branch)
-                      .replace("{branch}", new_branch_name)
-                      .replace("{timestamp}", timestamp_str))
-
-        entry_lines = [
-            f"## {log_timestamp} - {design_basename_for_branch}",
-            f"- **Branch:** `{new_branch_name}`",
-            f"- **Commit Message:** \"{commit_msg}\"",
-        ]
-        if file_abs_paths_to_add:
-            entry_lines.append("- **Files Updated:**")
-            entry_lines.extend([f"  - `{os.path.basename(f)}`" for f in file_abs_paths_to_add])
-        entry_lines.append("\n---\n")
-
-        changelog_header = "# Changelog\n\n"
-        existing = ""
-        if os.path.exists(changelog_file_path):
-            with open(changelog_file_path, "r", encoding="utf-8") as fr:
-                existing = fr.read()
-            if existing.startswith(changelog_header):
-                existing = existing[len(changelog_header):]
-        with open(changelog_file_path, "w", encoding="utf-8") as fw:
-            fw.write(changelog_header)
-            fw.write("\n".join(entry_lines) + "\n")
-            fw.write(existing)
-
-        # Validate absolute existence
-        files_abs = [os.path.join(repo_path, "CHANGELOG.md")] + [os.path.normpath(p) for p in (file_abs_paths_to_add or [])]
-        missing = [p for p in files_abs if not os.path.exists(p)]
-        if missing:
-            # Log repo root listing to help diagnose
-            try:
-                listing = "\n".join(sorted(os.listdir(repo_path)))
-            except Exception:
-                listing = "(dir list failed)"
-            msg = "Exported files not found in repo folder:\n" + "\n".join(missing) + f"\n\nRepo root listing:\n{listing}"
-            target_ui_ref.messageBox(msg, CMD_NAME)
-            if logger: logger.error(msg)
-            return None
-
-        # Convert to repo-relative for git add
-        rels = ["CHANGELOG.md"]
-        for p in (file_abs_paths_to_add or []):
-            rels.append(os.path.relpath(os.path.normpath(p), repo_path))
-
-        _git(repo_path, "add", *rels)
-        _git(repo_path, "commit", "-m", commit_msg)
-        _git(repo_path, "push", "-u", "origin", new_branch_name)
-
-        return new_branch_name
-
-    except Exception as e:
-        msg = f"Git operation failed:\n{str(e)}"
-        target_ui_ref.messageBox(msg, CMD_NAME)
-        if logger: logger.error(msg, exc_info=True)
-        return None
-    finally:
-        try:
-            if original_branch:
-                _git(repo_path, "checkout", original_branch, check=False)
-            if stashed:
-                stash_list = _git_out(repo_path, "stash", "list")
-                if stash_list.splitlines() and our_stash_msg in stash_list.splitlines()[0]:
-                    _git(repo_path, "stash", "pop", "stash@{0}", check=False)
-                else:
-                    if logger: logger.warning("Leaving changes stashed; top stash not ours.")
-        except Exception:
-            if logger: logger.warning("Cleanup failed", exc_info=True)
 
 # -----------------------------
 # UI: CommandCreated
@@ -718,6 +858,27 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
 
             sync_format_settings_rows()
 
+            def compute_branch_preview(branch_template: str) -> str:
+                design_preview = get_fusion_design()
+                if design_preview and isinstance(design_preview, adsk.fusion.Design):
+                    base_name_preview = _safe_base(design_preview.rootComponent.name)
+                else:
+                    base_name_preview = "Design"
+                generated_branch, _ = generate_branch_name(branch_template, base_name_preview)
+                return generated_branch
+
+            def update_export_subfolder_feedback(raw_value: str):
+                try:
+                    normalized = normalize_export_subfolder(raw_value)
+                    if normalized:
+                        flow_status_input.text = f"✅ Exports will be copied to repo/{normalized}"
+                    else:
+                        flow_status_input.text = ""
+                    return normalized
+                except ValueError as exc:
+                    flow_status_input.text = f"❌ {exc}"
+                    return raw_value
+
             # Templates and per-push message
             git_group = inputs.addGroupCommandInput("gitGroup", "Git Settings")
             git_group.isExpanded = True
@@ -742,6 +903,79 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                 "Commit Message (for this push)",
                 last_commit_message,
             )
+
+            flow_group = inputs.addGroupCommandInput("flowGroup", "Git Flow Helpers")
+            flow_group.isExpanded = True
+            flow_inputs = flow_group.children
+
+            flow_inputs.addStringValueInput(
+                "exportSubfolder",
+                "Export Subfolder (optional)",
+                "",
+            )
+            flow_inputs.addStringValueInput(
+                "branchPreview",
+                "Branch Name (for this push)",
+                "",
+            )
+            skip_pull_input = flow_inputs.addBoolValueInput(
+                "skipPull",
+                "Skip pull (force push)",
+                True,
+                "",
+                False,
+            )
+            skip_pull_input.isFullWidth = False
+
+            use_pat_input = flow_inputs.addBoolValueInput(
+                "useStoredPat",
+                "Use stored PAT (Windows only)",
+                True,
+                "",
+                False,
+            )
+            use_pat_input.isFullWidth = False
+            use_pat_input.isVisible = IS_WINDOWS
+
+            manage_pat_button = flow_inputs.addBoolValueInput(
+                "managePat",
+                "Manage Personal Access Token…",
+                False,
+                "",
+                False,
+            )
+            manage_pat_button.isFullWidth = True
+            manage_pat_button.isVisible = IS_WINDOWS
+
+            flow_status_input = flow_inputs.addTextBoxCommandInput(
+                "flowValidationStatus",
+                "",
+                "",
+                2,
+                True,
+            )
+            flow_status_input.isFullWidth = True
+
+            log_group = inputs.addGroupCommandInput("logGroup", "Observability")
+            log_group.isExpanded = True
+            log_inputs = log_group.children
+
+            logLevelDropdown = log_inputs.addDropDownCommandInput(
+                "logLevel",
+                "Log Level",
+                adsk.core.DropDownStyles.TextListDropDownStyle,
+            )
+            for level_name in ["ERROR", "WARNING", "INFO", "DEBUG"]:
+                logLevelDropdown.listItems.add(level_name, level_name == current_log_level_name, "")
+
+            open_log_button = log_inputs.addBoolValueInput(
+                "openLogFile",
+                "Open Log File…",
+                False,
+                "",
+                False,
+            )
+            open_log_button.isFullWidth = True
 
             # Apply saved settings for selected repo
             def apply_repo_settings(repo_name: str):
@@ -773,6 +1007,26 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                 )
                 repo_path_input.value = det.get("path", "")
                 git_url_input.value = det.get("url", "")
+
+                export_subfolder_value = det.get("exportSubfolder", "")
+                export_input = inputs.itemById("exportSubfolder")
+                if export_input:
+                    export_input.value = export_subfolder_value
+
+                skip_pull_input.value = bool(det.get("skipPullDefault", False))
+                if IS_WINDOWS:
+                    use_pat_input.value = bool(det.get("useStoredPat", False))
+
+                repo_log_level = det.get("logLevel") or meta.get("globalLogLevel") or current_log_level_name
+                for item in logLevelDropdown.listItems:
+                    item.isSelected = (item.name == repo_log_level)
+
+                branch_format_current = inputs.itemById("branchFormatConfig").value
+                generated_branch = compute_branch_preview(branch_format_current)
+                branch_preview_input = inputs.itemById("branchPreview")
+                if branch_preview_input:
+                    branch_preview_input.value = det.get("lastBranchPreview", generated_branch)
+                update_export_subfolder_feedback(export_subfolder_value)
 
             sel_item = repoSelectorInput.selectedItem
             if sel_item and sel_item.name != ADD_NEW_OPTION:
@@ -898,7 +1152,83 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                         repo_path_input.value = default_path_for_new_repo()
                     format_settings_state.clear()
                     sync_format_settings_rows()
+                    export_input = inputs.itemById("exportSubfolder")
+                    if export_input:
+                        export_input.value = ""
+                    skip_pull_input.value = False
+                    if IS_WINDOWS:
+                        use_pat_input.value = False
+                    branch_template_default = inputs.itemById("branchFormatConfig").value
+                    branch_preview_input = inputs.itemById("branchPreview")
+                    if branch_preview_input:
+                        branch_preview_input.value = compute_branch_preview(branch_template_default)
+                    flow_status_input.text = ""
+                    for item in logLevelDropdown.listItems:
+                        item.isSelected = (item.name == (meta.get("globalLogLevel") or current_log_level_name))
                 update_validation()
+
+            def get_selected_repo_name() -> str:
+                sel = repoSelectorInput.selectedItem
+                return sel.name if sel else ADD_NEW_OPTION
+
+            def prompt_pat_credentials(existing_username: str = "") -> Optional[dict]:
+                if not IS_WINDOWS:
+                    return None
+                username_value, cancelled = local_ui_ref.inputBox(
+                    "Enter the username associated with the PAT (leave blank to rely on token only):",
+                    CMD_NAME,
+                    existing_username or "",
+                )
+                if cancelled:
+                    return None
+                token_value, token_cancelled = local_ui_ref.inputBox(
+                    "Enter the Personal Access Token (input is visible):",
+                    CMD_NAME,
+                    "",
+                )
+                if token_cancelled:
+                    return None
+                token_value = token_value.strip()
+                if not token_value:
+                    local_ui_ref.messageBox("Token cannot be empty.", CMD_NAME)
+                    return None
+                return {"username": username_value.strip(), "token": token_value}
+
+            def manage_pat_for_repo(repo_name: str):
+                if not IS_WINDOWS:
+                    local_ui_ref.messageBox("PAT storage is only available on Windows.", CMD_NAME)
+                    return
+
+                existing = read_stored_pat(repo_name)
+                if existing:
+                    choice = local_ui_ref.messageBox(
+                        "A stored PAT already exists for this repository.\n\nYes: Update token\nNo: Delete token\nCancel: Leave unchanged",
+                        CMD_NAME,
+                        adsk.core.MessageBoxButtonTypes.YesNoCancelButtonType,
+                    )
+                    if choice == adsk.core.DialogResults.DialogYes:
+                        creds = prompt_pat_credentials(existing.get("username", ""))
+                        if creds:
+                            store_pat(repo_name, creds["username"], creds["token"])
+                            local_ui_ref.messageBox("Personal Access Token updated.", CMD_NAME)
+                            use_pat_input.value = True
+                    elif choice == adsk.core.DialogResults.DialogNo:
+                        delete_pat(repo_name)
+                        local_ui_ref.messageBox("Stored Personal Access Token removed.", CMD_NAME)
+                        use_pat_input.value = False
+                    return
+
+                add_choice = local_ui_ref.messageBox(
+                    "No stored PAT found for this repository. Would you like to add one now?",
+                    CMD_NAME,
+                    adsk.core.MessageBoxButtonTypes.YesNoButtonType,
+                )
+                if add_choice == adsk.core.DialogResults.DialogYes:
+                    creds = prompt_pat_credentials()
+                    if creds:
+                        store_pat(repo_name, creds["username"], creds["token"])
+                        local_ui_ref.messageBox("Personal Access Token saved.", CMD_NAME)
+                        use_pat_input.value = True
 
             class InputChangedHandler(adsk.core.InputChangedEventHandler):
                 def __init__(self, repoSelector):
@@ -930,6 +1260,23 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                         update_validation()
                     elif input_id == "exportFormatsConfig":
                         sync_format_settings_rows()
+                    elif input_id == "branchFormatConfig":
+                        template_value = inputs.itemById("branchFormatConfig").value
+                        branch_preview_input = inputs.itemById("branchPreview")
+                        if branch_preview_input:
+                            branch_preview_input.value = compute_branch_preview(template_value)
+                    elif input_id == "branchPreview":
+                        preview_input = inputs.itemById("branchPreview")
+                        if preview_input:
+                            sanitized = sanitize_branch_name(preview_input.value)
+                            if sanitized != preview_input.value:
+                                preview_input.value = sanitized
+                    elif input_id == "exportSubfolder":
+                        export_input = inputs.itemById("exportSubfolder")
+                        if export_input:
+                            normalized_value = update_export_subfolder_feedback(export_input.value)
+                            if normalized_value != export_input.value:
+                                export_input.value = normalized_value
                     elif input_id.startswith("formatSetting_"):
                         fmt_key = input_id.split("_", 1)[1]
                         data = format_setting_inputs.get(fmt_key)
@@ -950,6 +1297,31 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                             repo_path_input.value = folder_dialog.folder
                             auto_path_state["auto"] = False
                         update_validation()
+                    elif input_id == "logLevel":
+                        selected_item = logLevelDropdown.selectedItem
+                        if selected_item:
+                            set_logger_level(selected_item.name)
+                    elif input_id == "openLogFile":
+                        ic_args.input.value = False
+                        open_log_file(local_ui_ref)
+                    elif input_id == "managePat":
+                        ic_args.input.value = False
+                        repo_name_for_pat = get_selected_repo_name()
+                        if repo_name_for_pat == ADD_NEW_OPTION:
+                            local_ui_ref.messageBox("Add the repository before managing credentials.", CMD_NAME)
+                        else:
+                            manage_pat_for_repo(repo_name_for_pat)
+                    elif input_id == "useStoredPat" and IS_WINDOWS:
+                        repo_name_for_pat = get_selected_repo_name()
+                        if repo_name_for_pat == ADD_NEW_OPTION:
+                            local_ui_ref.messageBox("Add the repository before enabling stored PAT usage.", CMD_NAME)
+                            use_pat_input.value = False
+                        elif use_pat_input.value and not read_stored_pat(repo_name_for_pat):
+                            local_ui_ref.messageBox(
+                                "No stored Personal Access Token was found. Use 'Manage Personal Access Token…' to add one first.",
+                                CMD_NAME,
+                            )
+                            use_pat_input.value = False
 
             on_input_changed = InputChangedHandler(repoSelectorInput)
             args.command.inputChanged.add(on_input_changed)
@@ -1132,14 +1504,72 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                         selected_repo_details["formatSettings"] = current_format_settings
                         selected_repo_details["defaultMessage"] = default_message_tpl_val
                         selected_repo_details["branchFormat"] = branch_format_tpl_val
+
                         commit_msg_input_value = cmd_inputs.itemById("commitMsgPush").value.strip()
                         commit_msg_for_this_push = commit_msg_input_value or selected_repo_details["defaultMessage"]
                         branch_format_for_this_push = selected_repo_details.get("branchFormat", "fusion-export/{filename}-{timestamp}")
+
+                        export_subfolder_input = cmd_inputs.itemById("exportSubfolder")
+                        export_subfolder_raw = export_subfolder_input.value if export_subfolder_input else ""
+                        try:
+                            normalized_export_subfolder = normalize_export_subfolder(export_subfolder_raw)
+                        except ValueError as exc:
+                            current_ui_ref.messageBox(str(exc), CMD_NAME)
+                            return
+
+                        skip_pull_selected = bool(cmd_inputs.itemById("skipPull").value)
+
+                        branch_preview_input = cmd_inputs.itemById("branchPreview")
+                        branch_override_raw = branch_preview_input.value.strip() if branch_preview_input else ""
+                        branch_override_sanitized = sanitize_branch_name(branch_override_raw) if branch_override_raw else ""
+                        if branch_override_raw and not branch_override_sanitized:
+                            current_ui_ref.messageBox(
+                                "Branch name contains unsupported characters even after sanitization.",
+                                CMD_NAME,
+                            )
+                            return
+                        if branch_preview_input and branch_override_sanitized:
+                            branch_preview_input.value = branch_override_sanitized
+
+                        use_pat_selected = False
+                        if IS_WINDOWS:
+                            use_pat_input_cmd = cmd_inputs.itemById("useStoredPat")
+                            use_pat_selected = bool(use_pat_input_cmd.value) if use_pat_input_cmd else False
+
+                        selected_log_item = logLevelDropdown.selectedItem or next(
+                            (item for item in logLevelDropdown.listItems if item.isSelected),
+                            None,
+                        )
+                        log_level_name = selected_log_item.name if selected_log_item else current_log_level_name
+                        set_logger_level(log_level_name)
+
+                        selected_repo_details["exportSubfolder"] = normalized_export_subfolder
+                        selected_repo_details["skipPullDefault"] = skip_pull_selected
+                        selected_repo_details["logLevel"] = log_level_name
+                        if IS_WINDOWS:
+                            selected_repo_details["useStoredPat"] = use_pat_selected
+                        if branch_override_sanitized:
+                            selected_repo_details["lastBranchPreview"] = branch_override_sanitized
+                        else:
+                            selected_repo_details["lastBranchPreview"] = compute_branch_preview(branch_format_for_this_push)
+
                         if isinstance(meta_section, dict):
                             meta_section["lastSelectedRepo"] = selected_repo_name
                             meta_section["lastCommitMessage"] = commit_msg_for_this_push
+                            meta_section["globalLogLevel"] = log_level_name
+
                         current_config[selected_repo_name] = selected_repo_details
                         save_config(current_config)
+
+                        pat_credentials = None
+                        if IS_WINDOWS and use_pat_selected:
+                            pat_credentials = read_stored_pat(selected_repo_name)
+                            if not pat_credentials:
+                                current_ui_ref.messageBox(
+                                    "No stored Personal Access Token was found. Use 'Manage Personal Access Token…' before enabling this option.",
+                                    CMD_NAME,
+                                )
+                                return
 
                         if not check_git_available(current_ui_ref):
                             return
@@ -1166,6 +1596,7 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                         final_abs = []
                         export_warnings = []
                         exported_display_names = []
+                        destination_root = ensure_export_subfolder_exists(git_repo_path, normalized_export_subfolder)
                         with temporary_export_dir(git_repo_path) as temp_dir:
                             formats_for_this_push = selected_repo_details.get("exportFormats", ["f3d"])
                             format_settings_for_push = selected_repo_details.get("formatSettings", {})
@@ -1202,11 +1633,10 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                                 )
                                 return
 
-                            # Copy to repo root; collect ABS DEST PATHS
+                            # Copy into repo (respecting subfolder); collect ABS DEST PATHS
                             for src in exported_files_paths:
                                 fname = os.path.basename(src)
-                                exported_display_names.append(fname)
-                                dst = os.path.join(git_repo_path, fname)
+                                dst = os.path.join(destination_root, fname)
                                 try:
                                     shutil.copy2(src, dst)
                                 except Exception as e:
@@ -1237,6 +1667,8 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                                         )
                                     return
                                 final_abs.append(os.path.normpath(dst))
+                                rel_display = os.path.relpath(dst, git_repo_path).replace("\\", "/")
+                                exported_display_names.append(rel_display)
                                 if logger:
                                     logger.info(
                                         "Copied -> %s (%d bytes)",
@@ -1248,22 +1680,28 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                             progress.message = "Pushing to GitHub…"
                             progress.progressValue = 1
 
-                        branch_name_pushed = handle_git_operations(
+                        git_ui_adapter = FusionCommandGitUI(current_ui_ref)
+                        git_result = core_handle_git_operations(
                             git_repo_path,
-                            final_abs,  # ABS paths
+                            final_abs,
                             commit_msg_for_this_push,
                             branch_format_for_this_push,
-                            current_ui_ref,
-                            base_name
+                            git_ui_adapter,
+                            base_name,
+                            branch_override=branch_override_sanitized or None,
+                            skip_pull=skip_pull_selected,
+                            pat_credentials=pat_credentials,
+                            logger=logger,
                         )
 
                         if progress:
                             progress.progressValue = 2
                             progress.hide()
 
-                        if branch_name_pushed:
+                        if git_result:
+                            branch_name_effective = git_result.get("branch", "<unknown>")
                             summary_lines = [
-                                f"✅ Push successful to branch: {branch_name_pushed}",
+                                f"✅ Push successful to branch: {branch_name_effective}",
                                 f"Settings for '{selected_repo_name}' updated.",
                             ]
                             if exported_display_names:
@@ -1273,6 +1711,17 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                                     f" • {name}"
                                     for name in exported_display_names
                                 )
+                            status_notes = []
+                            if git_result.get("stashed"):
+                                status_notes.append("Auto-stashed local changes and restored them afterward.")
+                            if git_result.get("force_push"):
+                                status_notes.append("Used --force-with-lease (skip pull).")
+                            if git_result.get("pull_failed"):
+                                status_notes.append("Initial pull --rebase failed; branch was force-pushed.")
+                            if status_notes:
+                                summary_lines.append("")
+                                summary_lines.append("Git flow details:")
+                                summary_lines.extend(f" • {note}" for note in status_notes)
                             if export_warnings:
                                 summary_lines.append("")
                                 summary_lines.append("Warnings:")
