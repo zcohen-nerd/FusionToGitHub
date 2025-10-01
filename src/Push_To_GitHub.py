@@ -3,22 +3,32 @@ Export → changelog → branch → commit → push.
 V7.7 formalizes dependency packaging and adds an offline CLI harness.
 """
 
-import adsk.core, adsk.fusion, adsk.cam, traceback
 import ctypes
 import ctypes.wintypes
+import json
 import logging
 import logging.handlers
 import os
-import platform
 import re
-import json
 import shutil
 import subprocess
-import tempfile
 import sys
+import tempfile
+import traceback
 from contextlib import contextmanager
 from datetime import datetime
 from typing import Optional
+
+# Fusion 360 API imports - these must be imported after Fusion is initialized
+# They're available in the Fusion 360 Python environment but not at module load
+try:
+    import adsk.core
+    import adsk.fusion
+    import adsk.cam
+except ImportError:
+    # This is expected when running outside Fusion 360 (e.g., for linting)
+    # The actual import will succeed when Fusion loads the add-in
+    pass
 
 # Import core functions - handle both standalone and installed scenarios
 try:
@@ -31,7 +41,6 @@ try:
     )
 except ImportError:
     # Add current directory to path for Fusion 360 add-in installation
-    import os
     current_dir = os.path.dirname(os.path.abspath(__file__))
     if current_dir not in sys.path:
         sys.path.insert(0, current_dir)
@@ -51,17 +60,30 @@ IS_WINDOWS = os.name == 'nt'
 # Git (CLI) — no GitPython
 # -----------------------------
 GIT_EXE = shutil.which("git") or r"C:\Program Files\Git\bin\git.exe"
-os.environ['GIT_PYTHON_GIT_EXECUTABLE'] = GIT_EXE  # harmless if GitPython absent
+# Set Git executable for potential GitPython usage
+os.environ['GIT_PYTHON_GIT_EXECUTABLE'] = GIT_EXE
+
 
 def _git(repo_path, *args, check=True):
     flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-    p = subprocess.run([GIT_EXE, *args], cwd=repo_path, capture_output=True, text=True, creationflags=flags)
+    p = subprocess.run(
+        [GIT_EXE, *args],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        creationflags=flags
+    )
     if check and p.returncode != 0:
-        raise RuntimeError(f"git {' '.join(args)} failed:\n{p.stderr or p.stdout}")
+        stderr_or_stdout = p.stderr or p.stdout
+        raise RuntimeError(
+            f"git {' '.join(args)} failed:\n{stderr_or_stdout}"
+        )
     return p
+
 
 def _git_out(repo_path, *args):
     return (_git(repo_path, *args, check=True).stdout or "").strip()
+
 
 def _git_available():
     try:
@@ -69,13 +91,24 @@ def _git_available():
     except Exception:
         return False
 
+
 # -----------------------------
 # Config / constants
 # -----------------------------
 CONFIG_PATH = os.path.expanduser("~/.fusion_git_repos.json")
 REPO_BASE_DIR = os.path.expanduser("~/FusionGitRepos")
+
+# UI String Constants
 ADD_NEW_OPTION = "🆕 Set up new GitHub repository..."
 META_KEY = "__meta__"
+
+# Dialog Titles and Labels
+DIALOG_TITLE_CONFIG_ERROR = "Config Error"
+DIALOG_TITLE_GIT_NOT_FOUND = "Git Not Found"
+
+# Default Values
+DEFAULT_COMMIT_TEMPLATE = "Design update: {filename}"
+DEFAULT_BRANCH_FORMAT = "fusion-export/{filename}-{timestamp}"
 
 FORMAT_SETTINGS_DEFAULT = {
     "stl": {"meshRefinement": "high"},
@@ -99,7 +132,9 @@ LOG_FILE_PATH = os.path.join(LOG_DIR, "PushToGitHub.log")
 
 CMD_ID = "PushToGitHub_Cmd_ZAC_V7_4"
 CMD_NAME = "Push to GitHub (ZAC)"
-CMD_TOOLTIP = "Exports/configures, updates changelog, and pushes design to GitHub."
+CMD_TOOLTIP = (
+    "Exports/configures, updates changelog, and pushes design to GitHub."
+)
 PANEL_ID = "SolidUtilitiesAddinsPanel"
 FALLBACK_PANEL_ID = "SolidScriptsAddinsPanel"
 CONTROL_ID = CMD_ID + "_Control"
@@ -112,15 +147,21 @@ def _has_open_drawing_document() -> bool:
         docs = app.documents
         for i in range(docs.count):
             doc = docs.item(i)
-            if doc and doc.documentType == adsk.core.DocumentTypes.DrawingDocumentType:
+            doc_type = adsk.core.DocumentTypes.DrawingDocumentType
+            if doc and doc.documentType == doc_type:
                 return True
     except Exception:
         if logger:
-            logger.debug("Failed to inspect documents for drawing presence.", exc_info=True)
+            logger.debug(
+                "Failed to inspect documents for drawing presence.",
+                exc_info=True
+            )
     return False
 
 
-def _component_or_children_have_sketches(component: adsk.fusion.Component) -> bool:
+def _component_or_children_have_sketches(
+    component: adsk.fusion.Component
+) -> bool:
     try:
         if component.sketches.count:
             return True
@@ -130,7 +171,12 @@ def _component_or_children_have_sketches(component: adsk.fusion.Component) -> bo
                 return True
     except Exception:
         if logger:
-            logger.debug("Sketch detection failed for component %s.", getattr(component, "name", "?"), exc_info=True)
+            comp_name = getattr(component, "name", "?")
+            logger.debug(
+                "Sketch detection failed for component %s.",
+                comp_name,
+                exc_info=True
+            )
     return False
 
 
@@ -142,7 +188,10 @@ def _design_has_sketches(design: adsk.fusion.Design) -> bool:
         return _component_or_children_have_sketches(root)
     except Exception:
         if logger:
-            logger.debug("Unable to evaluate sketches for design.", exc_info=True)
+            logger.debug(
+                "Unable to evaluate sketches for design.",
+                exc_info=True
+            )
         return False
 
 
@@ -155,7 +204,10 @@ def temporary_export_dir(parent_dir: str):
         shutil.rmtree(temp_path, ignore_errors=True)
 
 
-def determine_valid_export_formats(design, requested_formats):
+def determine_valid_export_formats(
+    design: adsk.fusion.Design,
+    requested_formats: list
+) -> tuple:
     valid = []
     warnings = []
     has_sketches = None
@@ -172,11 +224,13 @@ def determine_valid_export_formats(design, requested_formats):
             if has_sketches is None:
                 has_sketches = _design_has_sketches(design)
             if not has_sketches:
-                warnings.append("DXF skipped: design has no sketches to export.")
+                msg = "DXF skipped: design has no sketches to export."
+                warnings.append(msg)
                 continue
         valid.append(fmt)
 
     return valid, warnings
+
 
 # -----------------------------
 # Globals
@@ -199,38 +253,66 @@ try:
 except AttributeError:
     pass
 
+
 class FusionPaletteHandler(logging.Handler):
     """Custom logging handler that outputs to Fusion 360's text palette."""
-    
+
     def __init__(self):
         super().__init__()
-        # Try to map to Fusion LogLevels, fallback to basic logging if not available
+        # Try to map to Fusion LogLevels,
+        # fallback to basic logging if not available
         try:
             # Try the expected LogLevel enum values
             self.LEVEL_MAP = {
-                logging.DEBUG: getattr(adsk.core.LogLevels, 'DebugLogLevel', None),
-                logging.INFO: getattr(adsk.core.LogLevels, 'InfoLogLevel', None),
-                logging.WARNING: getattr(adsk.core.LogLevels, 'WarningLogLevel', None),
-                logging.ERROR: getattr(adsk.core.LogLevels, 'ErrorLogLevel', None),
-                logging.CRITICAL: getattr(adsk.core.LogLevels, 'CriticalLogLevel', None),
+                logging.DEBUG: getattr(
+                    adsk.core.LogLevels, 'DebugLogLevel', None
+                ),
+                logging.INFO: getattr(
+                    adsk.core.LogLevels, 'InfoLogLevel', None
+                ),
+                logging.WARNING: getattr(
+                    adsk.core.LogLevels, 'WarningLogLevel', None
+                ),
+                logging.ERROR: getattr(
+                    adsk.core.LogLevels, 'ErrorLogLevel', None
+                ),
+                logging.CRITICAL: getattr(
+                    adsk.core.LogLevels, 'CriticalLogLevel', None
+                ),
             }
             # Remove None values (unsupported log levels)
-            self.LEVEL_MAP = {k: v for k, v in self.LEVEL_MAP.items() if v is not None}
-            
+            self.LEVEL_MAP = {
+                k: v for k, v in self.LEVEL_MAP.items()
+                if v is not None
+            }
+
             # If no valid mappings found, try alternative names
             if not self.LEVEL_MAP:
+                info_level = getattr(
+                    adsk.core.LogLevels, 'InfoLogLevel',
+                    getattr(adsk.core.LogLevels, 'Information', None)
+                )
+                warning_level = getattr(
+                    adsk.core.LogLevels, 'WarningLogLevel',
+                    getattr(adsk.core.LogLevels, 'Warning', None)
+                )
+                error_level = getattr(
+                    adsk.core.LogLevels, 'ErrorLogLevel',
+                    getattr(adsk.core.LogLevels, 'Error', None)
+                )
                 self.LEVEL_MAP = {
-                    logging.INFO: getattr(adsk.core.LogLevels, 'InfoLogLevel', 
-                                        getattr(adsk.core.LogLevels, 'Information', None)),
-                    logging.WARNING: getattr(adsk.core.LogLevels, 'WarningLogLevel',
-                                           getattr(adsk.core.LogLevels, 'Warning', None)),
-                    logging.ERROR: getattr(adsk.core.LogLevels, 'ErrorLogLevel',
-                                         getattr(adsk.core.LogLevels, 'Error', None)),
+                    logging.INFO: info_level,
+                    logging.WARNING: warning_level,
+                    logging.ERROR: error_level,
                 }
-                self.LEVEL_MAP = {k: v for k, v in self.LEVEL_MAP.items() if v is not None}
-            
+                self.LEVEL_MAP = {
+                    k: v for k, v in self.LEVEL_MAP.items()
+                    if v is not None
+                }
+
         except (AttributeError, NameError):
-            # If LogLevels enum is not available, we'll just use app.log without levels
+            # If LogLevels enum is not available,
+            # we'll just use app.log without levels
             self.LEVEL_MAP = {}
 
     def emit(self, record: logging.LogRecord) -> None:
@@ -239,10 +321,11 @@ class FusionPaletteHandler(logging.Handler):
         try:
             message = self.format(record)
             if self.LEVEL_MAP:
-                level = self.LEVEL_MAP.get(record.levelno, list(self.LEVEL_MAP.values())[0])
+                default_level = list(self.LEVEL_MAP.values())[0]
+                level = self.LEVEL_MAP.get(record.levelno, default_level)
                 app.log(message, level)
             else:
-                # Fallback: just log the message without level specification
+                # Fallback: just log the message without level spec
                 app.log(message)
         except Exception:
             pass
@@ -255,9 +338,11 @@ def _ensure_log_dir_exists() -> bool:
         os.makedirs(LOG_DIR)
         return True
     except OSError as exc:
-        print(f"Error creating log directory {LOG_DIR}: {exc}. Logging disabled.")
+        msg = f"Error creating log directory {LOG_DIR}: {exc}"
+        print(f"{msg}. Logging disabled.")
         if app:
-            app.log(f"Failed to create log directory {LOG_DIR}: {exc}.", adsk.core.LogLevels.ErrorLogLevel)
+            error_level = adsk.core.LogLevels.ErrorLogLevel
+            app.log(f"{msg}.", error_level)
         return False
 
 
@@ -274,7 +359,10 @@ def setup_logger():
     logger = logging.getLogger(CMD_ID)
     logger.setLevel(logging.DEBUG)
 
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    fmt_string = (
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    formatter = logging.Formatter(fmt_string)
 
     file_log_handler = logging.handlers.RotatingFileHandler(
         LOG_FILE_PATH,
@@ -288,7 +376,8 @@ def setup_logger():
     # Add Fusion palette handler with error handling for API changes
     try:
         fusion_palette_handler = FusionPaletteHandler()
-        fusion_palette_handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
+        simple_fmt = logging.Formatter('%(levelname)s: %(message)s')
+        fusion_palette_handler.setFormatter(simple_fmt)
         logger.addHandler(fusion_palette_handler)
     except Exception as e:
         # If Fusion palette handler fails, log to file only
@@ -312,7 +401,9 @@ def set_logger_level(level_name: str):
     logger.debug("Logger level updated to %s", normalized)
 
 
-def open_log_file(target_ui_ref) -> None:
+def open_log_file(
+    target_ui_ref: Optional[adsk.core.UserInterface]
+) -> None:
     if not os.path.exists(LOG_FILE_PATH):
         if target_ui_ref:
             target_ui_ref.messageBox(
@@ -330,10 +421,11 @@ def open_log_file(target_ui_ref) -> None:
             subprocess.Popen(["xdg-open", LOG_FILE_PATH])
     except Exception as exc:
         if target_ui_ref:
-            target_ui_ref.messageBox(
-                f"Unable to open log file automatically.\nPath: {LOG_FILE_PATH}\nError: {exc}",
-                CMD_NAME,
+            msg = (
+                f"Unable to open log file automatically.\n"
+                f"Path: {LOG_FILE_PATH}\nError: {exc}"
             )
+            target_ui_ref.messageBox(msg, CMD_NAME)
         if logger:
             logger.error("Failed to open log file: %s", exc, exc_info=True)
 
@@ -373,7 +465,12 @@ if IS_WINDOWS:
     PCREDENTIAL = ctypes.POINTER(CREDENTIAL)
     advapi32 = ctypes.WinDLL("Advapi32.dll", use_last_error=True)
     CredReadW = advapi32.CredReadW
-    CredReadW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(PCREDENTIAL)]
+    CredReadW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.POINTER(PCREDENTIAL)
+    ]
     CredReadW.restype = wintypes.BOOL
 
     CredWriteW = advapi32.CredWriteW
@@ -399,7 +496,9 @@ def read_stored_pat(repo_identifier: str) -> Optional[dict]:
 
     target_name = _credential_target(repo_identifier)
     credential_pp = PCREDENTIAL()
-    success = CredReadW(target_name, CRED_TYPE_GENERIC, 0, ctypes.byref(credential_pp))
+    success = CredReadW(
+        target_name, CRED_TYPE_GENERIC, 0, ctypes.byref(credential_pp)
+    )
     if not success:
         error_code = ctypes.get_last_error()
         if error_code == ERROR_NOT_FOUND:
@@ -453,6 +552,7 @@ def delete_pat(repo_identifier: str) -> None:
             return
         raise ctypes.WinError(error_code)
 
+
 # -----------------------------
 # Toolbar helpers (dedupe)
 # -----------------------------
@@ -465,9 +565,10 @@ def _find_control_anywhere(control_id: str):
             ctrl = panel.controls.itemById(control_id)
             if ctrl and ctrl.isValid:
                 return ctrl, panel
-        except:
+        except Exception:
             pass
     return None, None
+
 
 def _delete_all_controls(control_id: str):
     if not ui:
@@ -478,21 +579,29 @@ def _delete_all_controls(control_id: str):
             ctrl = panel.controls.itemById(control_id)
             if ctrl and ctrl.isValid:
                 ctrl.deleteMe()
-        except:
+        except Exception:
             pass
+
 
 # -----------------------------
 # Helpers
 # -----------------------------
-def check_git_available(target_ui_ref):
+def check_git_available(
+    target_ui_ref: adsk.core.UserInterface
+) -> bool:
     if _git_available():
         return True
-    msg = "Git executable not found or not working. Check PATH or install Git."
-    target_ui_ref.messageBox(msg, "Git Not Found")
-    if logger: logger.error(msg)
+    msg = (
+        "Git executable not found or not working. "
+        "Check PATH or install Git."
+    )
+    target_ui_ref.messageBox(msg, DIALOG_TITLE_GIT_NOT_FOUND)
+    if logger:
+        logger.error(msg)
     return False
 
-def load_config():
+
+def load_config() -> dict:
     global logger, ui
     if not os.path.exists(CONFIG_PATH):
         with open(CONFIG_PATH, 'w') as f:
@@ -503,47 +612,69 @@ def load_config():
             return json.load(f)
     except json.JSONDecodeError:
         final_ui_ref = ui or (app.userInterface if app else None)
-        backup_path = CONFIG_PATH + ".bak_corrupted_" + datetime.now().strftime("%Y%m%d%H%M%S")
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        backup_path = f"{CONFIG_PATH}.bak_corrupted_{timestamp}"
         try:
             if os.path.exists(CONFIG_PATH):
                 shutil.copyfile(CONFIG_PATH, backup_path)
         finally:
-            msg = f"Config file corrupt. Backup at:\n{backup_path}\nNew config created."
-            if final_ui_ref: final_ui_ref.messageBox(msg, "Config Error")
-            if logger: logger.error(msg)
+            msg = (
+                f"Config file corrupt. Backup at:\n"
+                f"{backup_path}\nNew config created."
+            )
+            if final_ui_ref:
+                final_ui_ref.messageBox(msg, DIALOG_TITLE_CONFIG_ERROR)
+            if logger:
+                logger.error(msg)
             with open(CONFIG_PATH, 'w') as f:
                 json.dump({}, f)
         return {}
     except Exception as e:
         msg = f"Error loading config '{CONFIG_PATH}': {str(e)}"
         final_ui_ref = ui or (app.userInterface if app else None)
-        if final_ui_ref: final_ui_ref.messageBox(msg, "Config Error")
-        if logger: logger.error(msg, exc_info=True)
+        if final_ui_ref:
+            final_ui_ref.messageBox(msg, DIALOG_TITLE_CONFIG_ERROR)
+        if logger:
+            logger.error(msg, exc_info=True)
         return {}
 
-def save_config(config_data):
+
+def save_config(config_data: dict) -> None:
     global logger, ui
     try:
         with open(CONFIG_PATH, 'w') as f:
             json.dump(config_data, f, indent=4)
-        if logger: logger.info(f"Configuration saved to {CONFIG_PATH}")
+        if logger:
+            logger.info(f"Configuration saved to {CONFIG_PATH}")
     except Exception as e:
         msg = f"Failed to save configuration: {str(e)}"
         final_ui_ref = ui or (app.userInterface if app else None)
-        if final_ui_ref: final_ui_ref.messageBox(msg, "Config Error")
-        if logger: logger.error(msg, exc_info=True)
+        if final_ui_ref:
+            final_ui_ref.messageBox(msg, DIALOG_TITLE_CONFIG_ERROR)
+        if logger:
+            logger.error(msg, exc_info=True)
 
-def get_fusion_design():
+
+def get_fusion_design() -> Optional[adsk.fusion.Design]:
     global app, logger
     try:
         if not app:
-            if logger: logger.warning("get_fusion_design called but global 'app' is None.")
+            if logger:
+                logger.warning(
+                    "get_fusion_design called but global 'app' is None."
+                )
             return None
         product = app.activeProduct
-        return product if product and product.objectType == adsk.fusion.Design.classType() else None
-    except:
-        if logger: logger.exception("Error in get_fusion_design")
+        is_design = (
+            product and
+            product.objectType == adsk.fusion.Design.classType()
+        )
+        return product if is_design else None
+    except Exception:
+        if logger:
+            logger.exception("Error in get_fusion_design")
         return None
+
 
 def _safe_base(name: str) -> str:
     name = re.sub(r'\s+v[\dA-Za-z]+$', '', name).strip()   # drop trailing " v8" etc.
@@ -781,6 +912,12 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                 "gitValidationStatus", "", "", 2, True
             )
             git_status_input.isFullWidth = True
+
+            # Add a status label for conversion and other info
+            conversion_status_input = repo_inputs.addTextBoxCommandInput(
+                "conversionStatus", "", "", 2, True
+            )
+            conversion_status_input.isFullWidth = True
 
             # Add helpful instructions for new repository setup
             help_text_input = repo_inputs.addTextBoxCommandInput(
@@ -1171,17 +1308,6 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                 
                 return url
 
-            # Track URL conversion state - store in config to persist across dialog recreations
-            def get_conversion_state():
-                return config_cache.get("_url_conversion_state", {})
-            
-            def set_conversion_state(converted=False):
-                config_cache["_url_conversion_state"] = {"converted": converted}
-                
-            def reset_conversion_state():
-                if "_url_conversion_state" in config_cache:
-                    del config_cache["_url_conversion_state"]
-
             def default_path_for_new_repo() -> str:
                 proposed_name = new_repo_name_input.value.strip()
                 if not proposed_name:
@@ -1229,7 +1355,7 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                     elif selection_name == ADD_NEW_OPTION and has_git_url:
                         set_msg(
                             "path",
-                            "ℹ️ .git will be created after cloning the remote repo.",
+                            "ℹ️ Git repository will be initialized here.",
                             "info",
                         )
                     else:
@@ -1243,7 +1369,7 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                 if selection_name == ADD_NEW_OPTION:
                     if has_git_url:
                         # URL should already be converted at this point
-                        pattern = r"^(https://|git@|ssh://).+\\.git$"
+                        pattern = r"^(https://|git@|ssh://).+\.git$"
                         if re.match(pattern, git_url_val.strip()):
                             set_msg("git", "✅ Git URL format looks valid.", "success")
                         else:
@@ -1406,6 +1532,17 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                         auto_path_state["auto"] = False
                         update_validation()
                     elif input_id == "gitUrl":
+                        # Auto-convert GitHub URLs when user enters them
+                        git_url_input = inputs.itemById("gitUrl")
+                        if git_url_input:
+                            current_url = git_url_input.value.strip()
+                            if current_url:
+                                converted = convert_github_url(current_url)
+                                if converted != current_url:
+                                    git_url_input.value = converted
+                                    status_input = inputs.itemById("conversionStatus")
+                                    if status_input:
+                                        status_input.text = f"✅ Auto-converted to: {converted}"
                         update_validation()
                     elif input_id == "exportFormatsConfig":
                         sync_format_settings_rows()
@@ -1488,9 +1625,7 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                     progress = None
                     temp_dir = None
                     try:
-                        # Don't reset conversion state - we need it to persist across clicks
-                        # reset_conversion_state() 
-                        logger.info("Execute handler starting - preserving URL conversion state")
+                        logger.info("Execute handler starting")
                         cmd_inputs = execute_args.command.commandInputs
                         selected_action_item = cmd_inputs.itemById("repoSelector").selectedItem
                         if not selected_action_item:
@@ -1509,27 +1644,6 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                         if selected_action == ADD_NEW_OPTION:
                             git_url_val = cmd_inputs.itemById("gitUrl").value.strip()
                             logger.info(f"Processing new repo setup: URL='{git_url_val}', Path='{repo_path_raw}'")
-                            conversion_state = get_conversion_state()
-                            logger.info(f"URL conversion state: converted={conversion_state.get('converted', False)}")
-                            # Auto-convert GitHub URLs for user convenience (only once)
-                            if git_url_val and not conversion_state.get('converted', False):
-                                converted_url = convert_github_url(git_url_val)
-                                logger.info(f"URL conversion: '{git_url_val}' -> '{converted_url}'")
-                                if converted_url != git_url_val:
-                                    # Update the UI field with the converted URL
-                                    cmd_inputs.itemById("gitUrl").value = converted_url
-                                    git_url_val = converted_url
-                                    set_conversion_state(converted=True)
-                                    logger.info("Showing URL conversion message to user")
-                                    # Show user what was converted
-                                    current_ui_ref.messageBox(
-                                        f"✅ Auto-converted GitHub URL to:\n{converted_url}\n\nDialog will stay open. Click OK again to continue.",
-                                        "URL Converted"
-                                    )
-                                    logger.info("Returning after URL conversion - dialog should stay open")
-                                    return  # Simple return should keep dialog open
-                            else:
-                                logger.info("URL conversion already completed or no URL to convert")
 
                         logger.info("Starting validation of repository inputs")
                         validation = validate_repo_inputs(
@@ -1546,13 +1660,16 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                             ]
                             if error_lines:
                                 logger.warning(f"Validation errors: {error_lines}")
-                                current_ui_ref.messageBox(
-                                    "⚠️ Please fix these issues:\n\n" + "\n".join(error_lines) + 
-                                    "\n\nDialog will stay open for corrections.",
-                                    CMD_NAME,
+                                msg = (
+                                    "⚠️ Please fix these issues:\n\n" +
+                                    "\n".join(error_lines) +
+                                    "\n\nDialog will stay open for corrections."
                                 )
-                                logger.info("Returning after validation errors - dialog should stay open")
-                                return  # Simple return to keep dialog open
+                                current_ui_ref.messageBox(msg, CMD_NAME)
+                                logger.info("Keeping dialog open after validation errors")
+                                # Set executeFailed to True to keep dialog open
+                                execute_args.executeFailed = True
+                                return
                         
                         logger.info("Validation passed - continuing with export process")
                         normalized_repo_path = validation["path"]
@@ -1604,52 +1721,47 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                             if parent_dir and not os.path.exists(parent_dir):
                                 os.makedirs(parent_dir, exist_ok=True)
 
-                            progress = None
+                            # Initialize Git repository if needed
+                            if not os.path.exists(local_path):
+                                os.makedirs(local_path, exist_ok=True)
+                            
+                            # Check if folder already has a .git directory
+                            git_dir_path = os.path.join(local_path, ".git")
+                            needs_init = not os.path.isdir(git_dir_path)
+                            
+                            if needs_init:
+                                try:
+                                    # Initialize a new Git repository
+                                    _git(local_path, "init")
+                                    if logger:
+                                        logger.info(f"Initialized Git repository in {local_path}")
+                                except Exception as e:
+                                    err_msg_init = f"Failed to initialize Git repository:\n{str(e)}"
+                                    current_ui_ref.messageBox(err_msg_init, CMD_NAME)
+                                    if logger:
+                                        logger.error(err_msg_init)
+                                    return
+                            
+                            # Add remote origin if URL is provided
                             if git_url:
-                                progress = current_ui_ref.createProgressDialog()
-                                progress.isBackgroundTranslucencyEnabled = True
-                                progress.cancelButtonText = ""
-                                progress.show(
-                                    "Clone Repository",
-                                    "Cloning repository…",
-                                    0,
-                                    1,
-                                    0,
-                                )
-
-                                if os.path.exists(local_path):
-                                    confirm = current_ui_ref.messageBox(
-                                        f"Local path '{local_path}' exists.\nUse existing or cancel?",
-                                        CMD_NAME,
-                                        adsk.core.MessageBoxButtonTypes.YesNoButtonType,
-                                    )
-                                    if confirm == adsk.core.DialogResults.DialogNo:
-                                        progress.hide()
-                                        return
-                                else:
-                                    try:
-                                        _git(
-                                            os.path.dirname(local_path),
-                                            "clone",
-                                            git_url,
-                                            local_path,
-                                        )
-                                    except Exception as e:
-                                        progress.hide()
-                                        err_msg_clone = f"Failed to clone repo:\n{str(e)}"
-                                        current_ui_ref.messageBox(err_msg_clone, CMD_NAME)
+                                try:
+                                    # Check if remote 'origin' already exists
+                                    result = _git(local_path, "remote", "get-url", "origin", check=False)
+                                    if result.returncode == 0:
+                                        # Remote exists, update it
+                                        _git(local_path, "remote", "set-url", "origin", git_url)
                                         if logger:
-                                            logger.error(err_msg_clone)
-                                        return
-
-                                if progress:
-                                    progress.hide()
-                            else:
-                                if not has_git_dir:
-                                    current_ui_ref.messageBox(
-                                        "Selected folder does not contain a .git directory.",
-                                        CMD_NAME,
-                                    )
+                                            logger.info(f"Updated remote 'origin' to {git_url}")
+                                    else:
+                                        # Remote doesn't exist, add it
+                                        _git(local_path, "remote", "add", "origin", git_url)
+                                        if logger:
+                                            logger.info(f"Added remote 'origin': {git_url}")
+                                except Exception as e:
+                                    err_msg_remote = f"Failed to configure remote:\n{str(e)}"
+                                    current_ui_ref.messageBox(err_msg_remote, CMD_NAME)
+                                    if logger:
+                                        logger.error(err_msg_remote)
                                     return
 
                             current_config[repo_name_to_add] = {
@@ -1662,14 +1774,23 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                             }
                             if isinstance(meta_section, dict):
                                 meta_section["lastSelectedRepo"] = repo_name_to_add
-                                meta_section.setdefault("lastCommitMessage", "Updated design")
+                                meta_section.setdefault(
+                                    "lastCommitMessage", "Updated design"
+                                )
                             save_config(current_config)
-                            current_ui_ref.messageBox(
-                                f"Repository '{repo_name_to_add}' added. Restart the command to select it for push.",
-                                CMD_NAME
-                            )
-                            if logger: logger.info("Repository '%s' added (%s).", repo_name_to_add, git_url)
-                            return
+                            
+                            # Don't return - let the user continue to push immediately
+                            # Update the UI to reflect the new repository is now selected
+                            selected_action = repo_name_to_add
+                            if logger:
+                                logger.info(
+                                    "Repository '%s' added (%s). Continuing to push...",
+                                    repo_name_to_add,
+                                    git_url,
+                                )
+                            
+                            # Fall through to the push logic below
+                            # (don't return here)
 
                         # EXISTING → PUSH
                         selected_repo_name = selected_action
@@ -1951,21 +2072,6 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
             on_execute = ExecuteHandler()
             args.command.execute.add(on_execute)
             handlers.append(on_execute)
-            
-            # Add command destroyed handler to reset conversion state when dialog closes
-            class CommandDestroyedHandler(adsk.core.CommandEventHandler):
-                def notify(self, destroy_args):
-                    global logger
-                    try:
-                        logger.info("Dialog closed - resetting URL conversion state")
-                        reset_conversion_state()
-                    except Exception as e:
-                        if logger:
-                            logger.warning(f"Failed to reset conversion state on dialog close: {e}")
-
-            on_destroy = CommandDestroyedHandler()
-            args.command.destroy.add(on_destroy)
-            handlers.append(on_destroy)
 
         except Exception:
             error_message = 'GitCommandCreatedEventHandler failed:\n{}'.format(traceback.format_exc())
