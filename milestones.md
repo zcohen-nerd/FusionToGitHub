@@ -5,12 +5,6 @@ This roadmap turns the current refinement backlog into a sequence of actionable 
 ---
 
 ## Milestone 1 – Dialog UX Polish
-- Key events appear in Fusion's text console for quick scanning. *(Met – Fusion palette handler mirrors log entries.)*
-- One-click access to the rotating log file works on Windows and macOS. *(Met – View Log button opens log file in default editor.)*stones. Each milestone lists its objective, concrete tasks, success criteria, and any notable dependencies or resources.
-
----
-
-## Milestone 1 – Dialog UX Polish
 
 **Status**
 : ✅ Completed – initial dialog UX polish merged (Sept 28, 2025).
@@ -121,8 +115,8 @@ This roadmap turns the current refinement backlog into a sequence of actionable 
 
 **Success Criteria**
 - Users can raise or lower log verbosity without code edits. *(Not met – no dialog control yet.)*
-- Key events appear in Fusion’s text console for quick scanning. *(Not met – log entries currently stay in the file only.)*
-- One-click access to the rotating log file works on Windows and macOS. *(Not met – button not present.)*
+- Key events appear in Fusion's text console for quick scanning. *(Partial – Fusion palette handler mirrors log entries, but no dialog-level control.)*
+- One-click access to the rotating log file works on Windows and macOS. *(Partial – View Log button exists but only triggered from dialog, not standalone.)*
 
 **Dependencies / Notes**
 - Coordinate UI placement with Milestone 1 layout changes.

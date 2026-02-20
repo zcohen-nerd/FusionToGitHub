@@ -39,6 +39,12 @@ try:
         handle_git_operations as core_handle_git_operations,
         sanitize_branch_name,
     )
+    from dialog_helpers import (
+        convert_github_url as _convert_github_url,
+        default_path_for_new_repo as _default_path_for_new_repo,
+        setup_new_repository as _setup_new_repository,
+        validate_repo_inputs as _validate_repo_inputs,
+    )
 except ImportError:
     # Add current directory to path for Fusion 360 add-in installation
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -51,6 +57,12 @@ except ImportError:
         git_available as core_git_available,
         handle_git_operations as core_handle_git_operations,
         sanitize_branch_name,
+    )
+    from dialog_helpers import (
+        convert_github_url as _convert_github_url,
+        default_path_for_new_repo as _default_path_for_new_repo,
+        setup_new_repository as _setup_new_repository,
+        validate_repo_inputs as _validate_repo_inputs,
     )
 
 VERSION = CORE_VERSION
@@ -88,7 +100,7 @@ def _git_out(repo_path, *args):
 def _git_available():
     try:
         return core_git_available()
-    except Exception:
+    except (OSError, RuntimeError):
         return False
 
 
@@ -566,7 +578,12 @@ def _find_control_anywhere(control_id: str):
             if ctrl and ctrl.isValid:
                 return ctrl, panel
         except Exception:
-            pass
+            if logger:
+                logger.debug(
+                    "Error searching panel for control '%s'",
+                    control_id,
+                    exc_info=True,
+                )
     return None, None
 
 
@@ -580,7 +597,12 @@ def _delete_all_controls(control_id: str):
             if ctrl and ctrl.isValid:
                 ctrl.deleteMe()
         except Exception:
-            pass
+            if logger:
+                logger.debug(
+                    "Error deleting control '%s' from panel",
+                    control_id,
+                    exc_info=True,
+                )
 
 
 # -----------------------------
@@ -863,7 +885,7 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
             repo_inputs = repo_group.children
 
             repoSelectorInput = repo_inputs.addDropDownCommandInput(
-                "repoSelector", "Repository Setup",
+                "repoSelector", "Select Repository",
                 adsk.core.DropDownStyles.TextListDropDownStyle
             )
 
@@ -887,17 +909,17 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
 
             new_repo_name_input = repo_inputs.addStringValueInput(
                 "newRepoName",
-                "New Repo Name (if adding)",
+                "Repository Name",
                 "",
             )
             git_url_input = repo_inputs.addStringValueInput(
                 "gitUrl",
-                "📎 GitHub Repository URL",
+                "GitHub URL",
                 "https://github.com/yourcompany/projectname",
             )
             repo_path_input = repo_inputs.addStringValueInput(
                 "repoPath",
-                "📁 Local Folder (where files will be saved)",
+                "Local Folder",
                 "",
             )
             browse_repo_button = repo_inputs.addBoolValueInput(
@@ -933,6 +955,12 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                 git_url_input.isVisible = show_new_repo
                 git_status_input.isVisible = show_new_repo
                 help_text_input.isVisible = show_new_repo
+                # For existing repos, hide path editing and browse
+                # (path is saved in config; shown only for new repos)
+                repo_path_input.isVisible = show_new_repo
+                browse_repo_button.isVisible = show_new_repo
+                repo_status_input.isVisible = show_new_repo
+                conversion_status_input.isVisible = show_new_repo
 
             current_selection_name = (
                 repoSelectorInput.selectedItem.name
@@ -941,11 +969,22 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
             )
             update_new_repo_visibility(current_selection_name)
 
-            # Export formats (checkbox dropdown)
-            export_group = inputs.addGroupCommandInput(
-                "exportGroup", "Export Options"
+            # Commit message — top-level, always visible
+            last_commit_message = "Updated design"
+            if isinstance(meta, dict):
+                last_commit_message = meta.get("lastCommitMessage", last_commit_message)
+            commit_msg_input = inputs.addStringValueInput(
+                "commitMsgPush",
+                "Commit Message",
+                last_commit_message,
             )
-            export_group.isExpanded = True
+
+            # Export formats — collapsed for returning users
+            export_group = inputs.addGroupCommandInput(
+                "exportGroup", "Export Formats"
+            )
+            has_saved_repo = (current_selection_name != ADD_NEW_OPTION)
+            export_group.isExpanded = not has_saved_repo
             export_inputs = export_group.children
 
             available_formats = [
@@ -959,7 +998,7 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
             ]
             default_formats_list = ["f3d", "step", "stl"]
             exportFormatsDropdown = export_inputs.addDropDownCommandInput(
-                "exportFormatsConfig", "Export Formats (config)",
+                "exportFormatsConfig", "Export Formats",
                 adsk.core.DropDownStyles.CheckBoxDropDownStyle
             )
             for fmt in available_formats:
@@ -1122,48 +1161,39 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                     flow_status_input.text = f"❌ {exc}"
                     return raw_value
 
-            # Templates and per-push message
-            git_group = inputs.addGroupCommandInput("gitGroup", "Git Settings")
-            git_group.isExpanded = True
+            # Templates — rarely changed, collapsed by default
+            git_group = inputs.addGroupCommandInput("gitGroup", "Templates")
+            git_group.isExpanded = False
             git_inputs = git_group.children
 
             git_inputs.addStringValueInput(
                 "defaultMessageConfig",
-                "Default Commit Template (config)",
+                "Commit Template",
                 "Design update: {filename}",
             )
             git_inputs.addStringValueInput(
                 "branchFormatConfig",
-                "Branch Format (config)",
+                "Branch Name Template",
                 "fusion-export/{filename}-{timestamp}",
             )
 
-            last_commit_message = "Updated design"
-            if isinstance(meta, dict):
-                last_commit_message = meta.get("lastCommitMessage", last_commit_message)
-            git_inputs.addStringValueInput(
-                "commitMsgPush",
-                "Commit Message (for this push)",
-                last_commit_message,
-            )
-
-            flow_group = inputs.addGroupCommandInput("flowGroup", "Git Flow Helpers")
-            flow_group.isExpanded = True
+            flow_group = inputs.addGroupCommandInput("flowGroup", "Advanced")
+            flow_group.isExpanded = False
             flow_inputs = flow_group.children
 
             flow_inputs.addStringValueInput(
                 "exportSubfolder",
-                "Export Subfolder (optional)",
+                "Export Subfolder",
                 "",
             )
             flow_inputs.addStringValueInput(
                 "branchPreview",
-                "Branch Name (for this push)",
+                "Branch Name Override",
                 "",
             )
             skip_pull_input = flow_inputs.addBoolValueInput(
                 "skipPull",
-                "Skip pull (force push)",
+                "Force Push (skip pull)",
                 True,
                 "",
                 False,
@@ -1172,7 +1202,7 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
 
             use_pat_input = flow_inputs.addBoolValueInput(
                 "useStoredPat",
-                "Use stored PAT (Windows only)",
+                "Use Stored Token",
                 True,
                 "",
                 False,
@@ -1182,7 +1212,7 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
 
             manage_pat_button = flow_inputs.addBoolValueInput(
                 "managePat",
-                "Manage Personal Access Token…",
+                "Manage Token…",
                 False,
                 "",
                 False,
@@ -1199,8 +1229,8 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
             )
             flow_status_input.isFullWidth = True
 
-            log_group = inputs.addGroupCommandInput("logGroup", "Observability")
-            log_group.isExpanded = True
+            log_group = inputs.addGroupCommandInput("logGroup", "Logging")
+            log_group.isExpanded = False
             log_inputs = log_group.children
 
             logLevelDropdown = log_inputs.addDropDownCommandInput(
@@ -1278,130 +1308,14 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
             auto_path_state = {"auto": True}
 
             def convert_github_url(url: str) -> str:
-                """Convert any GitHub URL format to the proper Git clone URL."""
-                if not url.strip():
-                    return url
-                
-                url = url.strip()
-                
-                # Already a proper Git URL - keep as is
-                if url.endswith('.git'):
-                    return url
-                
-                # Convert GitHub web URLs to Git clone URLs
-                import re
-                
-                # Pattern: https://github.com/user/repo or https://github.com/user/repo/
-                web_pattern = r'https://github\.com/([^/]+)/([^/]+)/?(?:\?.*)?(?:#.*)?$'
-                match = re.match(web_pattern, url)
-                if match:
-                    user, repo = match.groups()
-                    return f"https://github.com/{user}/{repo}.git"
-                
-                # If it's already a valid Git URL format, keep it
-                if re.match(r"^(https://|git@|ssh://).+", url):
-                    return url
-                
-                # If none of the above, assume it needs .git added
-                if not url.endswith('.git'):
-                    return url + '.git'
-                
-                return url
+                return _convert_github_url(url)
 
             def default_path_for_new_repo() -> str:
                 proposed_name = new_repo_name_input.value.strip()
-                if not proposed_name:
-                    return os.path.join(REPO_BASE_DIR, "NewRepo")
-                sanitized = _safe_base(proposed_name) or proposed_name
-                return os.path.join(REPO_BASE_DIR, sanitized)
+                return _default_path_for_new_repo(proposed_name, REPO_BASE_DIR, _safe_base)
 
             def validate_repo_inputs(selection_name: str, raw_path: str, git_url_val: str):
-                messages = {"path": ("", "info"), "git": ("", "info")}
-                ok = True
-
-                def set_msg(field: str, text: str, severity: str = "info"):
-                    messages[field] = (text, severity)
-
-                expanded = raw_path.strip()
-                if expanded:
-                    expanded = os.path.expanduser(expanded)
-                normalized_path = os.path.abspath(expanded) if expanded else ""
-
-                git_dir_exists = os.path.isdir(os.path.join(normalized_path, ".git"))
-                has_git_url = bool(git_url_val.strip())
-
-                if not normalized_path:
-                    set_msg("path", "⚠️ Provide a repository path.", "error")
-                    ok = False
-                elif not os.path.isabs(normalized_path):
-                    set_msg("path", "⚠️ Path must be absolute.", "error")
-                    ok = False
-                elif not os.path.exists(normalized_path):
-                    if selection_name == ADD_NEW_OPTION and has_git_url:
-                        set_msg(
-                            "path",
-                            "ℹ️ Path will be created when cloning the remote repository.",
-                            "info",
-                        )
-                    else:
-                        set_msg("path", "❌ Path does not exist.", "error")
-                        ok = False
-                elif not os.path.isdir(normalized_path):
-                    set_msg("path", "❌ Path is not a directory.", "error")
-                    ok = False
-                else:
-                    if git_dir_exists:
-                        set_msg("path", "✅ Repository path looks good.", "success")
-                    elif selection_name == ADD_NEW_OPTION and has_git_url:
-                        set_msg(
-                            "path",
-                            "ℹ️ Git repository will be initialized here.",
-                            "info",
-                        )
-                    else:
-                        set_msg(
-                            "path",
-                            "❌ Missing .git directory at this path.",
-                            "error",
-                        )
-                        ok = False
-
-                if selection_name == ADD_NEW_OPTION:
-                    if has_git_url:
-                        # URL should already be converted at this point
-                        pattern = r"^(https://|git@|ssh://).+\.git$"
-                        if re.match(pattern, git_url_val.strip()):
-                            set_msg("git", "✅ Git URL format looks valid.", "success")
-                        else:
-                            set_msg(
-                                "git",
-                                "❌ Please paste a GitHub repository URL (e.g., https://github.com/user/repo)",
-                                "error",
-                            )
-                            ok = False
-                    else:
-                        if git_dir_exists:
-                            set_msg(
-                                "git",
-                                "✅ Local repository detected (no remote URL provided).",
-                                "success",
-                            )
-                        else:
-                            set_msg(
-                                "git",
-                                "⚠️ Provide a Git URL or choose a folder that already contains a .git directory.",
-                                "error",
-                            )
-                            ok = False
-                else:
-                    set_msg("git", "", "info")
-
-                return {
-                    "messages": messages,
-                    "ok": ok,
-                    "path": normalized_path,
-                    "has_git_dir": git_dir_exists,
-                }
+                return _validate_repo_inputs(selection_name, raw_path, git_url_val, ADD_NEW_OPTION)
 
             def update_validation(selection_name: str = None):
                 selected = selection_name
@@ -1543,6 +1457,17 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                                     status_input = inputs.itemById("conversionStatus")
                                     if status_input:
                                         status_input.text = f"✅ Auto-converted to: {converted}"
+                                # Auto-fill repo name from URL
+                                url_to_parse = converted if converted != current_url else current_url
+                                name_input = inputs.itemById("newRepoName")
+                                if name_input and not name_input.value.strip():
+                                    repo_name = url_to_parse.rstrip("/").rsplit("/", 1)[-1]
+                                    if repo_name.endswith(".git"):
+                                        repo_name = repo_name[:-4]
+                                    if repo_name:
+                                        name_input.value = repo_name
+                                        auto_path_state["auto"] = True
+                                        ensure_new_repo_defaults()
                         update_validation()
                     elif input_id == "exportFormatsConfig":
                         sync_format_settings_rows()
@@ -1721,48 +1646,18 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                             if parent_dir and not os.path.exists(parent_dir):
                                 os.makedirs(parent_dir, exist_ok=True)
 
-                            # Initialize Git repository if needed
-                            if not os.path.exists(local_path):
-                                os.makedirs(local_path, exist_ok=True)
-                            
-                            # Check if folder already has a .git directory
-                            git_dir_path = os.path.join(local_path, ".git")
-                            needs_init = not os.path.isdir(git_dir_path)
-                            
-                            if needs_init:
-                                try:
-                                    # Initialize a new Git repository
-                                    _git(local_path, "init")
-                                    if logger:
-                                        logger.info(f"Initialized Git repository in {local_path}")
-                                except Exception as e:
-                                    err_msg_init = f"Failed to initialize Git repository:\n{str(e)}"
-                                    current_ui_ref.messageBox(err_msg_init, CMD_NAME)
-                                    if logger:
-                                        logger.error(err_msg_init)
-                                    return
-                            
-                            # Add remote origin if URL is provided
-                            if git_url:
-                                try:
-                                    # Check if remote 'origin' already exists
-                                    result = _git(local_path, "remote", "get-url", "origin", check=False)
-                                    if result.returncode == 0:
-                                        # Remote exists, update it
-                                        _git(local_path, "remote", "set-url", "origin", git_url)
-                                        if logger:
-                                            logger.info(f"Updated remote 'origin' to {git_url}")
-                                    else:
-                                        # Remote doesn't exist, add it
-                                        _git(local_path, "remote", "add", "origin", git_url)
-                                        if logger:
-                                            logger.info(f"Added remote 'origin': {git_url}")
-                                except Exception as e:
-                                    err_msg_remote = f"Failed to configure remote:\n{str(e)}"
-                                    current_ui_ref.messageBox(err_msg_remote, CMD_NAME)
-                                    if logger:
-                                        logger.error(err_msg_remote)
-                                    return
+                            error = _setup_new_repository(
+                                repo_name_to_add,
+                                local_path,
+                                git_url,
+                                _git,
+                                logger=logger,
+                            )
+                            if error:
+                                current_ui_ref.messageBox(error, CMD_NAME)
+                                if logger:
+                                    logger.error(error)
+                                return
 
                             current_config[repo_name_to_add] = {
                                 "url": git_url,
@@ -2062,7 +1957,9 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                     finally:
                         try:
                             if progress: progress.hide()
-                        except: pass
+                        except Exception:
+                            if logger:
+                                logger.debug("Failed to hide progress dialog", exc_info=True)
                         try:
                             if temp_dir and os.path.exists(temp_dir):
                                 shutil.rmtree(temp_dir)
