@@ -256,7 +256,7 @@ Automated test execution for rapid feedback.
 
 ### Self-Service Resources
 1. **Search documentation**: Use Ctrl+F to find specific topics
-2. **Check logs**: View Log button in add-in dialog
+2. **Check logs**: Open Log File… in the Logging group
 3. **Run tests**: Use automated and manual test procedures
 4. **Review examples**: Follow workflow examples in guides
 

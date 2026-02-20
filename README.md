@@ -49,6 +49,7 @@ FusionToGitHub/
 │   ├── Push_To_GitHub.py         # Main Fusion 360 add-in
 │   ├── Push_To_GitHub.manifest   # Add-in manifest file
 │   ├── fusion_git_core.py        # Shared git operations
+│   ├── dialog_helpers.py         # Dialog validation/setup helpers
 │   └── push_cli.py               # Offline CLI harness
 ├── docs/                         # Documentation
 │   ├── DOCUMENTATION_INDEX.md    # Documentation navigation
@@ -79,7 +80,7 @@ FusionToGitHub/
 ### Prerequisites
 - Autodesk Fusion 360
 - Git installed on your system
-- GitHub account with Personal Access Token
+- GitHub account (PAT recommended for HTTPS auth)
 
 ### Installation
 1. **Download** add-in files
@@ -93,7 +94,7 @@ FusionToGitHub/
 1. **Click** "Push to GitHub" button in Fusion 360
 2. **Configure** repository settings
 3. **Choose** export format and commit message
-4. **Click** "Export & Push to GitHub"
+4. **Click** "OK"
 
 **Detailed walkthrough**: [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)
 
@@ -143,11 +144,11 @@ FusionToGitHub/
 
 ---
 
-## 🔐 Personal Access Token (PAT) Storage
+## 🔐 Stored Token (PAT) on Windows
 
 On Windows, the add-in supports secure PAT storage via Windows Credential Manager:
 
-- **Setup**: Check "Use stored PAT" and click "Manage PAT..." to store your GitHub token securely
+- **Setup**: In **Advanced**, check "Use Stored Token" and click "Manage Token…" to store your GitHub token securely
 - **Benefits**: Eliminates repeated authentication prompts for HTTPS repositories
 - **Security**: Tokens are stored using Windows' native credential system and encrypted at rest
 - **Per-Repository**: Each repository can have its own stored credentials
@@ -218,8 +219,8 @@ python tests/test_runner.py --category pre-install
 - Restart computer after installation
 
 ### Authentication Failed
-- Verify Personal Access Token has `repo` scope
-- Re-enter credentials via "Manage PAT..."
+- Verify your Personal Access Token has `repo` scope
+- Re-enter credentials via "Manage Token…"
 - Check GitHub repository access permissions
 
 **Complete troubleshooting**: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
@@ -238,7 +239,7 @@ python tests/test_runner.py --category pre-install
 
 ### Completed Milestones
 - ✅ **V7.7**: Dependency packaging and offline CLI harness
-- ✅ **Milestones 4&5**: Branch preview, log level controls, export subfolder support
+- ✅ **Milestones 4&5**: Branch override, log level controls, export subfolder support
 - ✅ **Core Features**: Multi-format export, secure PAT storage, professional Git workflow
 
 ---

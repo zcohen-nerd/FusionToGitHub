@@ -30,7 +30,7 @@ Before installing, make sure you have:
    - Download from: https://git-scm.com/downloads
    - During installation, choose "Git from the command line and also from 3rd-party software"
 3. **GitHub account** (free at github.com)
-4. **Personal Access Token (PAT)** from GitHub
+4. **GitHub authentication ready**
    - Go to GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)
    - Click "Generate new token (classic)"
    - Select scopes: `repo` (Full control of private repositories)
@@ -64,11 +64,11 @@ Before installing, make sure you have:
 1. **Click the "Push to GitHub" button** in Fusion 360
 2. **Select "+ Add new GitHub repo..."** from the dropdown
 3. **Fill in the repository details:**
+   - **Repository Name**: Your local name (auto-filled from URL if empty)
    - **GitHub URL**: `https://github.com/YOUR_USERNAME/YOUR_REPO_NAME`
-   - **Local Path**: Choose where to store files locally (e.g., `C:\Projects\MyDesigns`)
-   - **Personal Access Token**: Paste your GitHub PAT
-4. **Check "Use stored PAT"** to save credentials securely
-5. **Click "Test Connection"** to verify everything works
+   - **Local Folder**: Choose where to store files locally (e.g., `C:\Projects\MyDesigns`)
+4. **Optional (Windows)**: Expand **Advanced**, check **Use Stored Token**, then click **Manage Token…**
+5. **Click OK** to save the repository and run the export workflow
 
 ### Step 5: Export Your First Design 🎉
 
@@ -78,7 +78,7 @@ Before installing, make sure you have:
    - **Format**: Keep default (Fusion Archive) or choose STEP/STL
    - **Subfolder**: Use default or customize
    - **Commit Message**: Describe your changes
-4. **Click "Export & Push to GitHub"**
+4. **Click "OK"**
 5. **Wait for success message**
 6. **Check your GitHub repository** - your design is now backed up!
 
@@ -141,7 +141,7 @@ A: The add-in is free. GitHub has free plans with unlimited public repositories.
 
 If something isn't working:
 
-1. **Check the logs**: Click "View Log" in the add-in dialog
+1. **Check the logs**: Expand **Logging** and click **Open Log File…**
 2. **Run the tests**: Use `python test_runner.py` in the add-in folder
 3. **Verify prerequisites**: Make sure Git and GitHub access work
 4. **Review troubleshooting**: See `TROUBLESHOOTING.md` for common issues
@@ -154,7 +154,7 @@ Now that you're set up:
 
 - **Read the User Guide** (`USER_GUIDE.md`) for detailed features
 - **Try the Quick Reference** (`QUICK_REFERENCE.md`) for keyboard shortcuts
-- **Explore Advanced Features** like branch previews and custom templates
+- **Explore Advanced Features** like branch override and custom templates
 - **Set up team collaboration** by sharing repositories
 
 **Congratulations!** You now have professional-grade design backup and version control for your Fusion 360 projects! 🎉

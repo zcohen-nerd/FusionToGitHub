@@ -83,14 +83,14 @@ This roadmap turns the current refinement backlog into a sequence of actionable 
 **Objective**
 : Harden git interactions to handle common edge cases (dirty working tree, rebase conflicts, auth hurdles) with clear guidance.
 
-- Add user prompts when local changes are stashed or when rebase fails, including a "Skip pull (force push)" advanced checkbox.
+- Add user prompts when local changes are stashed or when rebase fails, including a "Force Push (skip pull)" advanced checkbox.
 - Preview generated branch names and allow last-minute edits while keeping token support (`{filename}`, `{timestamp}`).
 - Integrate optional HTTPS PAT storage via OS credential manager (Windows Credential Manager/macOS Keychain) for smoother authentication.
 - Allow exports to target configurable subfolders within the repository for better organisation.
 
 **Success Criteria**
 - Logging shows informative messages for stash/pull events; users understand what happened without checking logs. *(Met – auto-stash operations logged with clear messaging.)*
-- Branch names can be customized pre-push and still adhere to safe character rules. *(Met – branch preview override implemented in dialog.)*
+- Branch names can be customized pre-push and still adhere to safe character rules. *(Met – branch override implemented in dialog.)*
 - Authenticating with PAT once enables subsequent pushes without re-entering credentials on supported OSes. *(Met – PAT storage workflow implemented via Windows Credential Manager.)*
 - Exports can be redirected to per-repo subfolders without polluting the repo root, and changelog entries reflect the nested paths. *(Met – export subfolder support added with path normalization.)*
 
@@ -100,7 +100,7 @@ This roadmap turns the current refinement backlog into a sequence of actionable 
 
 ---
 
-## Milestone 5 – Observability & Error Reporting
+## Milestone 5 – Logging & Error Reporting
 
 **Status**
 : 🚧 In progress – foundational logging exists but dialog controls are still outstanding (last reviewed Sept 29, 2025).
@@ -111,12 +111,12 @@ This roadmap turns the current refinement backlog into a sequence of actionable 
 **Key Tasks**
 - Mirror critical log entries to Fusion’s text command palette to reduce modal spam.
 - Add log-level selector (Info/Warn/Error) in the dialog, persisted per repo or globally.
-- Provide a "View Log" button that opens `PushToGitHub.log` in the default editor.
+- Provide an "Open Log File…" button that opens `PushToGitHub.log` in the default editor.
 
 **Success Criteria**
 - Users can raise or lower log verbosity without code edits. *(Not met – no dialog control yet.)*
 - Key events appear in Fusion's text console for quick scanning. *(Partial – Fusion palette handler mirrors log entries, but no dialog-level control.)*
-- One-click access to the rotating log file works on Windows and macOS. *(Partial – View Log button exists but only triggered from dialog, not standalone.)*
+- One-click access to the rotating log file works on Windows and macOS. *(Met – "Open Log File…" exists in the Logging group.)*
 
 **Dependencies / Notes**
 - Coordinate UI placement with Milestone 1 layout changes.

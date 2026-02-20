@@ -5,7 +5,7 @@
 - [Basic Operations](#basic-operations)
 - [Advanced Features](#advanced-features)
 - [Repository Management](#repository-management)
-- [Export Options](#export-options)
+- [Export Formats](#export-formats)
 - [Branch & Version Control](#branch--version-control)
 - [Collaboration Features](#collaboration-features)
 - [Troubleshooting](#troubleshooting)
@@ -35,26 +35,24 @@ FusionToGitHub integrates Autodesk Fusion 360 with GitHub to provide professiona
 
 ### The Main Dialog
 
-The add-in dialog has several sections:
+The add-in dialog has these sections:
 
-#### Repository Selection
-- **Dropdown**: Choose from configured repositories
-- **"+ Add new GitHub repo..."**: Configure new repositories
-- **Current Selection**: Shows active repository path and status
+#### Repository
+- **Select Repository** dropdown: choose a saved repo or **"+ Add new GitHub repo..."**
+- For new repos: **Repository Name**, **GitHub URL**, **Local Folder**, and validation status
+- For existing repos: setup-only fields are hidden for a cleaner flow
 
-#### Export Settings
-- **Format**: Choose output format (F3D, STEP, STL, etc.)
-- **Subfolder**: Organize exports in subdirectories
-- **Include Changelog**: Add entries to CHANGELOG.md
+#### Commit Message (Top-Level)
+- **Commit Message** is always visible for fast daily use
 
-#### Git Settings
-- **Branch Template**: Control branch naming
-- **Commit Message**: Describe your changes
-- **Branch Preview**: See operations before executing
+#### Export Formats
+- **Export Formats** group contains selectable formats and per-format settings
+- Group defaults to collapsed for returning users and expanded for new repo setup
 
-#### Credentials
-- **Use Stored PAT**: Leverage Windows Credential Manager
-- **Manage PAT**: Store/update Personal Access Tokens
+#### Templates / Advanced / Logging
+- **Templates**: Commit and branch naming templates (collapsed by default)
+- **Advanced**: Export Subfolder, Branch Name Override, Force Push (skip pull), token controls
+- **Logging**: Log level selector and **Open Log File…**
 
 ---
 
@@ -74,18 +72,13 @@ Control how branches are named using templates with placeholders:
 - `work-in-progress/{filename}` → `work-in-progress/Bracket_V2`
 - `{filename}/iteration-{timestamp}` → `Bracket_V2/iteration-20250930-143022`
 
-### Branch Preview Mode
+### Branch Name Override
 
-Enable preview to see what the add-in will do without executing:
+Use **Branch Name Override** in the **Advanced** group when you want an explicit branch name for the current push.
 
-1. **Check "Branch Preview"** in the dialog
-2. **Click "Export & Push to GitHub"**
-3. **Review the preview dialog** showing:
-   - Branch name to be created
-   - Files to be exported
-   - Git operations planned
-   - Commit message
-4. **Choose to proceed or cancel**
+1. Enter a branch name in **Branch Name Override**
+2. Click **OK**
+3. The add-in sanitizes unsupported characters automatically
 
 ### Log Level Controls
 
@@ -96,7 +89,7 @@ Adjust logging detail for troubleshooting:
 - **WARNING**: Only important warnings
 - **ERROR**: Only error conditions
 
-Access via the "Advanced" section in the dialog.
+Access via the "Logging" section in the dialog.
 
 ### Changelog Generation
 
@@ -126,14 +119,14 @@ When enabled, the add-in maintains a `CHANGELOG.md` file:
 1. **Select "+ Add new GitHub repo..."** from dropdown
 2. **Fill in details**:
    - **GitHub URL**: Full repository URL (HTTPS or SSH)
-   - **Local Path**: Where to store files locally
-   - **Personal Access Token**: GitHub authentication
+   - **Repository Name**: Local config name (can auto-fill from URL)
+   - **Local Folder**: Where to store files locally
 
 #### GitHub URL Formats
 - **HTTPS**: `https://github.com/username/repository-name`
 - **SSH**: `git@github.com:username/repository-name.git`
 
-#### Local Path Guidelines
+#### Local Folder Guidelines
 - Use absolute paths: `C:\Projects\MyDesigns`
 - Avoid spaces in paths when possible
 - Ensure write permissions
@@ -153,17 +146,17 @@ The add-in validates repositories in real-time:
 - Credentials stored securely by Windows
 - Per-repository credential management
 - Automatic authentication for HTTPS repositories
-- Manage via "Manage PAT..." button
+- Manage via "Manage Token…" in **Advanced**
 
 **Setting up PAT storage**:
-1. Check "Use stored PAT"
-2. Click "Manage PAT..."
+1. In **Advanced**, check "Use Stored Token"
+2. Click "Manage Token…"
 3. Enter your GitHub Personal Access Token
 4. Credentials are saved for future sessions
 
 ---
 
-## Export Options
+## Export Formats
 
 ### File Formats
 
@@ -322,16 +315,16 @@ If you want to continue work on an existing branch:
 #### "Authentication failed"
 **Problem**: Can't push to GitHub
 **Solutions**:
-- Verify Personal Access Token is valid
+- Verify your Personal Access Token is valid
 - Check PAT has `repo` scope permissions
-- Re-enter credentials via "Manage PAT..."
+- Re-enter credentials via "Manage Token…"
 - Ensure GitHub URL is correct
 
 #### "Repository not found"
 **Problem**: Local repository doesn't exist or isn't valid
 **Solutions**:
-- Verify local path exists and is writable
-- Check if `.git` folder exists in local path
+- Verify local folder exists and is writable
+- Check if `.git` folder exists in the local folder
 - Initialize repository manually: `git init` in local folder
 - Clone repository if it exists remotely
 
@@ -349,12 +342,12 @@ If you want to continue work on an existing branch:
 - Use fresh branch names
 - Pull latest changes before exporting
 - Resolve conflicts manually in Git
-- Use branch preview to avoid conflicts
+- Use branch override only when you need a fixed branch name
 
 ### Getting Help
 
 **Built-in Diagnostics**:
-1. **View Log**: Click button in add-in dialog
+1. **Open Log File…**: Click in the Logging group
 2. **Run Tests**: Execute `python test_runner.py`
 3. **Check Git Status**: Verify repository state
 
@@ -381,7 +374,7 @@ If you want to continue work on an existing branch:
 - Save designs before exporting
 - Use meaningful commit messages
 - Export regularly to maintain history
-- Test with branch preview for complex changes
+- Use branch override for complex repeat runs that need a fixed branch
 
 ### Team Collaboration
 - Establish branch naming conventions

@@ -7,7 +7,7 @@ This checklist provides a streamlined set of manual tests to verify core functio
 ### Pre-Test Setup
 - [ ] Fusion 360 is running with a design loaded
 - [ ] Git is installed and accessible from command line
-- [ ] Valid GitHub repository and PAT available
+- [ ] Valid GitHub repository available (PAT required for HTTPS)
 - [ ] Add-in installed and enabled in Fusion 360
 
 ---
@@ -22,16 +22,17 @@ This checklist provides a streamlined set of manual tests to verify core functio
 
 #### Test 2: Repository Configuration
 - [ ] **Step**: Select "+ Add new GitHub repo..." 
+- [ ] **Step**: Enter Repository Name: `test-repo` (or leave blank to auto-fill)
 - [ ] **Step**: Enter GitHub URL: `https://github.com/YOUR_USERNAME/test-repo`
-- [ ] **Step**: Set local path: `C:\temp\test-fusion-repo`
-- [ ] **Step**: Enter valid PAT
+- [ ] **Step**: Set local folder: `C:\temp\test-fusion-repo`
+- [ ] **Step**: Optional (Windows): Advanced → "Use Stored Token" → "Manage Token…" and enter PAT
 - [ ] **Expected**: Fields validate in real-time
 - [ ] **Expected**: No red error indicators
 
 #### Test 3: Simple Export and Push
 - [ ] **Step**: Keep default export settings
 - [ ] **Step**: Set commit message: "Test export from Fusion"
-- [ ] **Step**: Click "Export & Push to GitHub"
+- [ ] **Step**: Click "OK"
 - [ ] **Expected**: Progress dialog appears
 - [ ] **Expected**: Success message after completion
 - [ ] **Expected**: Files appear in GitHub repository
@@ -43,9 +44,9 @@ This checklist provides a streamlined set of manual tests to verify core functio
 #### Test 4: Custom Export Settings
 - [ ] **Step**: Change export format to STEP
 - [ ] **Step**: Set custom subfolder: "fusion-exports/step-files"
-- [ ] **Step**: Enable branch preview mode
-- [ ] **Expected**: Preview shows branch name and operations
-- [ ] **Expected**: No actual git operations performed
+- [ ] **Step**: Set Branch Name Override: `feature/manual-test-override`
+- [ ] **Expected**: Branch override value is used for the push
+- [ ] **Expected**: Branch name is sanitized if invalid characters are entered
 
 #### Test 5: Branch Template
 - [ ] **Step**: Set branch template: `feature/{filename}-{timestamp}`

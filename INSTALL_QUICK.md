@@ -15,6 +15,7 @@
    ├── Push_To_GitHub.py            # Main add-in file
    ├── Push_To_GitHub.manifest      # Add-in manifest  
    ├── fusion_git_core.py           # Core git operations (REQUIRED)
+   ├── dialog_helpers.py            # Dialog/setup helpers (REQUIRED)
    └── push_cli.py                  # CLI harness (optional)
    ```
    

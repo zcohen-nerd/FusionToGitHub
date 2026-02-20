@@ -94,22 +94,17 @@ cd FusionToGitHub
 ### Install Files
 
 1. **Create folder**: `FusionToGitHub` in the AddIns directory
-2. **Copy all files** from download into this folder:
+2. **Copy add-in runtime files** into this folder (from the repository `src/` directory):
    ```
    FusionToGitHub/
    ├── Push_To_GitHub.py
    ├── Push_To_GitHub.manifest
    ├── fusion_git_core.py
-   ├── push_cli.py
-   ├── GETTING_STARTED.md
-   ├── USER_GUIDE.md
-   ├── QUICK_REFERENCE.md
-   ├── TROUBLESHOOTING.md
-   ├── TESTING.md
-   ├── MANUAL_TESTS.md
-   ├── test_runner.py
-   └── README.md
+   ├── dialog_helpers.py
+   └── push_cli.py
    ```
+
+   Documentation and test files can remain in your project workspace; they do not need to be copied into the Fusion add-in runtime folder.
 
 ### Verify File Permissions (Windows)
 
@@ -156,12 +151,12 @@ cd FusionToGitHub
 1. **Click "Push to GitHub"** button in Fusion 360
 2. **Select "+ Add new GitHub repo..."**
 3. **Fill in details**:
+   - **Repository Name**: `fusion-test-repo` (auto-filled from URL if left empty)
    - **GitHub URL**: `https://github.com/YOUR_USERNAME/fusion-test-repo`
-   - **Local Path**: `C:\Projects\fusion-test-repo` (Windows) or `/Users/YOUR_USERNAME/Projects/fusion-test-repo` (macOS)
-   - **Personal Access Token**: Paste your PAT from Step 1
-4. ✅ **Check "Use stored PAT"**
-5. **Click "Test Connection"**
-6. **Should show**: ✅ Green checkmark with "Connection successful"
+   - **Local Folder**: `C:\Projects\fusion-test-repo` (Windows) or `/Users/YOUR_USERNAME/Projects/fusion-test-repo` (macOS)
+4. ✅ **Optional (Windows)**: Expand **Advanced** and enable **Use Stored Token**
+5. **Click "Manage Token…"** if you want to store/update a PAT in Credential Manager
+6. **Click "OK"** to save and execute
 
 ### Clone Repository Locally
 
@@ -202,7 +197,7 @@ git clone https://github.com/YOUR_USERNAME/fusion-test-repo.git
 4. **Configure export**:
    - **Format**: Fusion Archive (.f3d)
    - **Commit message**: "Test export from installation"
-5. **Click "Export & Push to GitHub"**
+5. **Click "OK"**
 6. **Wait for success message**
 7. **Check GitHub repository** - should see new files and commit
 
@@ -219,7 +214,7 @@ git clone https://github.com/YOUR_USERNAME/fusion-test-repo.git
 - [ ] Add-in appears in Fusion 360 Scripts and Add-Ins
 - [ ] "Push to GitHub" button visible in toolbar
 - [ ] Test repository created on GitHub
-- [ ] Repository configured in add-in with green checkmark
+- [ ] Repository configured in add-in and saved successfully
 - [ ] Automated tests pass (7/7)
 - [ ] Test export completed successfully
 - [ ] Files appear in GitHub repository

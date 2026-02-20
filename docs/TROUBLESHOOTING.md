@@ -2,7 +2,7 @@
 
 ## 🆘 Quick Problem Solver
 
-**Before you start**: Check the add-in logs by clicking "View Log" in the dialog - this often shows exactly what went wrong.
+**Before you start**: Check the add-in logs by opening the **Logging** group and clicking "Open Log File…" - this often shows exactly what went wrong.
 
 ---
 
@@ -92,9 +92,9 @@ python -c "import os, subprocess, tempfile"
    ```
 
 3. **Re-enter credentials**:
-   - In add-in dialog: "Manage PAT..."
+   - In add-in dialog (**Advanced**): "Manage Token…"
    - Enter fresh token
-   - Test connection
+   - Retry the export/push
 
 4. **Check repository access**:
    - Verify you have write access to the repository
@@ -243,7 +243,7 @@ python -c "import os, subprocess, tempfile"
    ```
 
 3. **Re-store credentials**:
-   - In add-in: Uncheck "Use stored PAT"
+   - In add-in: Uncheck "Use Stored Token"
    - Re-check and enter PAT again
 
 ### "PAT has insufficient permissions"

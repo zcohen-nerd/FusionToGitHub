@@ -6,9 +6,9 @@
 |--------|-------|
 | **Open Add-in** | Click "Push to GitHub" button in toolbar |
 | **Add Repository** | Select "+ Add new GitHub repo..." → Fill details |
-| **Export Design** | Select repo → Configure settings → "Export & Push" |
-| **View Logs** | Click "View Log" button in dialog |
-| **Manage Credentials** | Check "Use stored PAT" → "Manage PAT..." |
+| **Export Design** | Select repo → Edit Commit Message → Click "OK" |
+| **View Logs** | Expand "Logging" → Click "Open Log File…" |
+| **Manage Credentials** | Expand "Advanced" → "Use Stored Token" → "Manage Token…" |
 
 ---
 
@@ -54,7 +54,7 @@
 2. Generate new token (classic)
 3. Select scope: **repo** (Full control of private repositories)
 4. Copy token
-5. In add-in: Check "Use stored PAT" → "Manage PAT..." → Paste token
+5. In add-in: Advanced → "Use Stored Token" → "Manage Token…" → Paste token
 
 ### PAT Permissions Needed
 - ✅ **repo** - Access repositories
@@ -121,10 +121,10 @@
 
 ## 🔧 Advanced Features
 
-### Branch Preview Mode
-- **Purpose**: See operations before executing
-- **How**: Check "Branch Preview" box
-- **Result**: Shows preview dialog before actual operations
+### Branch Name Override
+- **Purpose**: Use an exact branch name for the current push
+- **How**: Enter value in "Branch Name Override" (Advanced)
+- **Result**: Add-in sanitizes unsupported characters automatically
 
 ### Custom Export Paths
 - **Relative**: `exports/step/` (inside repository)
@@ -133,7 +133,7 @@
 
 ### Git Workflow Override
 - **Branch Override**: Force specific branch name
-- **Skip Pull**: Don't update from remote first
+- **Force Push (skip pull)**: Skip pull before push
 - **Force Push**: Overwrite remote branch
 
 ---
@@ -153,7 +153,7 @@
 ### Simple Backup
 1. Open design → Click "Push to GitHub"
 2. Keep defaults → Enter commit message
-3. Click "Export & Push to GitHub"
+3. Click "OK"
 
 ### Team Collaboration
 1. Use branch template: `features/{filename}-{timestamp}`
@@ -173,7 +173,7 @@
 
 ### If Something Goes Wrong
 1. **Don't panic** - everything is version controlled
-2. **Check logs** - Click "View Log" for details
+2. **Check logs** - In "Logging", click "Open Log File…" for details
 3. **Check Git status** - Use `git status` in repository folder
 4. **Restore from stash** - Use `git stash list` and `git stash pop`
 

@@ -9,7 +9,7 @@ This document provides a comprehensive testing strategy for the FusionToGitHub V
 - Windows 10/11 with PowerShell
 - Git CLI installed and accessible
 - GitHub account with repository access
-- Valid Personal Access Token (PAT) for GitHub
+- GitHub authentication available (PAT for HTTPS, or SSH key workflow)
 
 ---
 
@@ -73,7 +73,7 @@ This document provides a comprehensive testing strategy for the FusionToGitHub V
 #### 3.1 New Repository Setup
 - [ ] **T009**: Add new GitHub repository
   - Action: Select "+ Add new GitHub repo..." option
-  - Action: Fill in GitHub URL, local path, PAT
+  - Action: Fill in Repository Name, GitHub URL, and Local Folder
   - Expected: Fields become visible/hidden appropriately
   - Expected: Real-time validation shows status
 
@@ -93,7 +93,7 @@ This document provides a comprehensive testing strategy for the FusionToGitHub V
     - Non-GitHub URL
   - Expected: Appropriate validation messages
 
-- [ ] **T012**: Personal Access Token validation
+- [ ] **T012**: Stored token (PAT) validation
   - Test Cases:
     - Valid PAT with repo permissions
     - Invalid/expired PAT
@@ -171,10 +171,10 @@ This document provides a comprehensive testing strategy for the FusionToGitHub V
   - Expected: New branch created from current HEAD
   - Expected: Working directory switched to new branch
 
-- [ ] **T023**: Branch preview functionality
-  - Action: Enable branch preview mode
-  - Expected: Branch operations shown without execution
-  - Expected: User can review before committing
+- [ ] **T023**: Branch override functionality
+  - Action: Set a custom value in "Branch Name Override"
+  - Expected: Override branch name is used for the push
+  - Expected: Unsupported characters are sanitized safely
 
 #### 5.2 Commit Operations
 - [ ] **T024**: File staging and commit
@@ -248,8 +248,8 @@ This document provides a comprehensive testing strategy for the FusionToGitHub V
   - Expected: Log verbosity changes appropriately
   - Expected: Debug information available when needed
 
-- [ ] **T035**: View log functionality
-  - Action: Click "View Log" button
+- [ ] **T035**: Open log file functionality
+  - Action: In Logging, click "Open Log File…"
   - Expected: Log file opens in default editor
   - Expected: Recent entries visible
 
