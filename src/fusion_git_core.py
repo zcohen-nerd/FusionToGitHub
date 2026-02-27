@@ -14,7 +14,7 @@ from typing import Any, Dict, Optional, Protocol, Sequence
 
 VERSION = "V7.7"
 IS_WINDOWS = os.name == "nt"
-GIT_EXE = shutil.which("git") or (r"C:\\Program Files\\Git\\bin\\git.exe" if IS_WINDOWS else "git")
+GIT_EXE = shutil.which("git") or (r"C:\Program Files\Git\bin\git.exe" if IS_WINDOWS else "git")
 
 
 class GitUI(Protocol):
@@ -96,8 +96,16 @@ def git_askpass_env(username: str, token: str):
         "askpass.bat" if IS_WINDOWS else "askpass.sh",
     )
 
-    escaped_username = (username or "").replace("%", "%%")
-    escaped_token = (token or "").replace("%", "%%")
+    def _escape_bat(value: str) -> str:
+        """Escape a value for safe embedding in a Windows batch echo."""
+        s = value.replace("^", "^^")
+        for ch in ("&", "|", "<", ">", "(", ")"):
+            s = s.replace(ch, f"^{ch}")
+        s = s.replace("%", "%%")
+        return s
+
+    escaped_username = _escape_bat(username or "")
+    escaped_token = _escape_bat(token or "")
     username_sh = (username or "").replace("'", "'\"'\"'")
     token_sh = (token or "").replace("'", "'\"'\"'")
 

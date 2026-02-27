@@ -39,11 +39,8 @@ def convert_github_url(url: str) -> str:
     if re.match(r"^(https://|git@|ssh://).+", url):
         return url
 
-    # If none of the above, assume it needs .git added
-    if not url.endswith(".git"):
-        return url + ".git"
-
-    return url
+    # None of the recognised patterns matched; append .git
+    return url + ".git"
 
 
 def validate_repo_inputs(
