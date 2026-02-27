@@ -626,11 +626,11 @@ def check_git_available(
 def load_config() -> dict:
     global logger, ui
     if not os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, 'w') as f:
+        with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
             json.dump({}, f)
         return {}
     try:
-        with open(CONFIG_PATH, 'r') as f:
+        with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
             return json.load(f)
     except json.JSONDecodeError:
         final_ui_ref = ui or (app.userInterface if app else None)
@@ -648,7 +648,7 @@ def load_config() -> dict:
                 final_ui_ref.messageBox(msg, DIALOG_TITLE_CONFIG_ERROR)
             if logger:
                 logger.error(msg)
-            with open(CONFIG_PATH, 'w') as f:
+            with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
                 json.dump({}, f)
         return {}
     except Exception as e:
@@ -664,7 +664,7 @@ def load_config() -> dict:
 def save_config(config_data: dict) -> None:
     global logger, ui
     try:
-        with open(CONFIG_PATH, 'w') as f:
+        with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
             json.dump(config_data, f, indent=4)
         if logger:
             logger.info(f"Configuration saved to {CONFIG_PATH}")
@@ -1948,12 +1948,10 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
 
                     except Exception:
                         error_message = 'ExecuteHandler failed:\n{}'.format(traceback.format_exc())
-                        logger.error(f"ExecuteHandler exception: {error_message}")
                         if current_ui_ref: 
                             current_ui_ref.messageBox(error_message, CMD_NAME)
                         if logger: 
                             logger.exception("ExecuteHandler failed")
-                        # Don't return here - let the dialog stay open
                     finally:
                         try:
                             if progress: progress.hide()
