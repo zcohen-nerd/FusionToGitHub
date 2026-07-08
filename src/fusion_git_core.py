@@ -50,6 +50,11 @@ def generate_branch_name(template: str, design_basename: str, timestamp: Optiona
 def git_run(repo_path: str, *args: str, check: bool = True, env: Optional[Dict[str, str]] = None):
     creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if IS_WINDOWS else 0
     env_vars = os.environ.copy()
+    # Force the C locale so git's messages are always English: the pipeline
+    # matches on message text (e.g. "couldn't find remote ref"), which a
+    # localized git would translate.
+    env_vars["LC_ALL"] = "C"
+    env_vars["LANG"] = "C"
     if env:
         env_vars.update(env)
     proc = subprocess.run(
@@ -341,6 +346,38 @@ def handle_git_operations(
 
         if reused_branch:
             git_run(repo_path, "checkout", branch_name_final, env=git_env)
+            # The local branch may be behind origin (e.g. pushed to from
+            # another machine); sync it so the export lands on the remote
+            # tip instead of the push being rejected as non-fast-forward.
+            if not skip_pull:
+                try:
+                    git_run(repo_path, "pull", "--rebase", "origin", branch_name_final, env=git_env)
+                except Exception as sync_exc:
+                    git_run(repo_path, "rebase", "--abort", check=False, env=git_env)
+                    details = str(sync_exc)
+                    if "couldn't find remote ref" in details:
+                        # Branch only exists locally so far; nothing to sync.
+                        if logger:
+                            logger.info(
+                                "Remote 'origin' has no branch '%s' yet; skipping sync.",
+                                branch_name_final,
+                            )
+                    elif ui.confirm(
+                        f"Could not update branch '{branch_name_final}' from origin.\n\n"
+                        f"Details:\n{details}\n\n"
+                        "Would you like to force-push this export over the remote branch instead?"
+                    ):
+                        pull_failure_details = details
+                        skip_pull = True
+                        used_force_push = True
+                        if logger:
+                            logger.warning(
+                                "Sync of reused branch '%s' failed; proceeding with force push.",
+                                branch_name_final,
+                            )
+                    else:
+                        pull_failure_details = details
+                        raise
         else:
             git_run(repo_path, "checkout", "-b", branch_name_final, env=git_env)
 
