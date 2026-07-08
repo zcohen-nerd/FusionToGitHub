@@ -19,8 +19,8 @@
 | **F3D** | Fusion users, full history | Large | Complete design |
 | **STEP** | CAD software | Medium | 3D geometry |
 | **STL** | 3D printing | Small | Triangle mesh |
-| **DXF** | 2D manufacturing | Small | 2D sketches |
 | **IGES** | Legacy CAD | Medium | Curves & surfaces |
+| **SAT** | ACIS-based CAD | Medium | 3D geometry |
 
 ---
 
