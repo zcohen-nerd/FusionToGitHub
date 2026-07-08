@@ -72,7 +72,7 @@ This document provides a comprehensive testing strategy for the FusionToGitHub V
 
 #### 3.1 New Repository Setup
 - [ ] **T009**: Add new GitHub repository
-  - Action: Select "+ Add new GitHub repo..." option
+  - Action: Select "🆕 Set up new GitHub repository..." option
   - Action: Fill in Repository Name, GitHub URL, and Local Folder
   - Expected: Fields become visible/hidden appropriately
   - Expected: Real-time validation shows status

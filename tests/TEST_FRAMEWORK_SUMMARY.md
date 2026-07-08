@@ -32,8 +32,9 @@ This document summarizes the comprehensive testing framework created for the Fus
 
 ### 3. **test_runner.py** - Automated Test Execution
 - **Purpose**: Automated validation of programmatically testable components
-- **Scope**: 7 automated tests covering environment, modules, and git operations
-- **Execution Time**: ~30 seconds for complete suite
+- **Scope**: 17 automated tests covering environment, modules, git
+  operations, and end-to-end pipeline scenarios against local repositories
+- **Execution Time**: under a minute for the complete suite
 - **Target Audience**: Developers, CI/CD integration, rapid feedback
 
 **Key Features:**
@@ -47,20 +48,21 @@ This document summarizes the comprehensive testing framework created for the Fus
 | Component | Automated Tests | Manual Tests | Total Coverage |
 |-----------|----------------|--------------|----------------|
 | **Environment Setup** | ✅ T001-T005 | ✅ Pre-test setup | High |
-| **Core Modules** | ✅ T_CORE_01 | ✅ Import validation | High |
+| **Core Modules** | ✅ T_CORE_01–T_CORE_04 | ✅ Import validation | High |
 | **Git Operations** | ✅ T_GIT_01 | ✅ Repository tests | High |
-| **CLI Interface** | ✅ T_CLI_01 | ✅ CLI functionality | High |
+| **Git Pipeline (end-to-end)** | ✅ T_PIPE_01–T_PIPE_07 | ✅ Push workflows | High |
+| **CLI Interface** | ✅ T_CLI_01, T_PIPE_05 | ✅ CLI functionality | High |
 | **Fusion 360 UI** | ❌ Not possible | ✅ T1-T16 | Manual only |
-| **GitHub Integration** | ❌ Requires auth | ✅ Push/pull tests | Manual only |
-| **Security Features** | ❌ System-dependent | ✅ PAT storage tests | Manual only |
-| **Error Handling** | ⚠️ Limited | ✅ Comprehensive | Mixed |
+| **GitHub Integration** | ⚠️ Local remotes only | ✅ Push/pull tests | Mixed |
+| **Security Features** | ✅ Askpass script (T_CORE_03) | ✅ PAT storage tests | Mixed |
+| **Error Handling** | ✅ Conflict/cancel paths | ✅ Comprehensive | Mixed |
 
 ## Testing Workflow
 
 ### For Developers
 ```bash
-# 1. Run automated tests first (30 seconds)
-python test_runner.py --verbose
+# 1. Run automated tests first (from the project root)
+python tests/test_runner.py --verbose
 
 # 2. If automated tests pass, run quick smoke test in Fusion 360 (3 minutes)
 # Follow MANUAL_TESTS.md "Quick Smoke Test" section
@@ -84,7 +86,7 @@ python test_runner.py --verbose
 ### For CI/CD Integration
 ```bash
 # Automated pipeline step
-python test_runner.py
+python tests/test_runner.py
 if [ $? -eq 0 ]; then
     echo "Automated tests passed - ready for manual validation"
 else
@@ -96,10 +98,10 @@ fi
 ## Quality Metrics
 
 ### Automated Test Results (Last Run)
-- **Tests Executed**: 7
-- **Pass Rate**: 100% (7/7)
-- **Execution Time**: ~30 seconds
-- **Environment**: Python 3.12.1, Windows 11, Git 2.x
+- **Tests Executed**: 17
+- **Pass Rate**: 100% (17/17)
+- **Execution Time**: under a minute
+- **Environment**: CI matrix — Ubuntu & Windows, Python 3.10–3.12
 
 ### Coverage Areas
 - **High Coverage**: Core functionality, git operations, environment validation
@@ -115,7 +117,7 @@ fi
 ## Validation Criteria
 
 ### Minimum Acceptance Threshold
-- ✅ All 7 automated tests must pass (100%)
+- ✅ All automated tests must pass (100%)
 - ✅ Quick smoke test (4 steps) must pass
 - ✅ Core functionality tests (T1-T3) must pass
 - ✅ No critical security or data loss issues

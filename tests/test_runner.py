@@ -285,6 +285,65 @@ class TestRunner:
         except Exception as e:
             self.record_result("T_CORE_03", "Askpass script security", False, str(e))
 
+    def test_export_subfolder_helpers(self):
+        """T_CORE_04: subfolder normalisation, placeholder expansion, containment"""
+        self.log_test_start("T_CORE_04", "Export subfolder helpers")
+        base = None
+        try:
+            from dialog_helpers import (
+                ensure_export_subfolder_exists,
+                expand_export_subfolder,
+                normalize_export_subfolder,
+            )
+
+            failures = []
+
+            norm_cases = [
+                ("exports/", "exports"),
+                ("exports\\step", "exports/step"),
+                ("  ", ""),
+                ("{filename}/v{timestamp}", "{filename}/v{timestamp}"),
+            ]
+            for raw, expected in norm_cases:
+                result = normalize_export_subfolder(raw)
+                if result != expected:
+                    failures.append(f"normalize {raw!r} -> {result!r} (expected {expected!r})")
+            for bad in ("../up", "a/../b", "/absolute", "bad|segment"):
+                try:
+                    normalize_export_subfolder(bad)
+                    failures.append(f"normalize accepted invalid input {bad!r}")
+                except ValueError:
+                    pass
+
+            expanded = expand_export_subfolder(
+                "exports/{filename}/v{timestamp}", "Bracket V2", "20260708-120000"
+            )
+            if expanded != "exports/Bracket V2/v20260708-120000":
+                failures.append(f"expansion wrong: {expanded!r}")
+            if expand_export_subfolder("", "X") != "":
+                failures.append("blank template should stay blank")
+            if expand_export_subfolder("plain/folder", "X") != "plain/folder":
+                failures.append("template without placeholders should be unchanged")
+            # A generated timestamp is used when none is supplied.
+            auto = expand_export_subfolder("v{timestamp}", "X")
+            if not (auto.startswith("v") and len(auto) == len("v20260708-120000")):
+                failures.append(f"auto timestamp expansion wrong: {auto!r}")
+
+            base = tempfile.mkdtemp(prefix="fusion_subfolder_")
+            dest = ensure_export_subfolder_exists(base, "exports/step")
+            if not os.path.isdir(dest):
+                failures.append("subfolder was not created")
+            if ensure_export_subfolder_exists(base, "") != base:
+                failures.append("blank subfolder should return the repo root")
+
+            self.record_result(
+                "T_CORE_04", "Export subfolder helpers", not failures, "; ".join(failures)
+            )
+        except Exception as e:
+            self.record_result("T_CORE_04", "Export subfolder helpers", False, str(e))
+        finally:
+            self._cleanup_dir(base)
+
     # Git Operations Tests
     def test_git_operations_with_temp_repo(self):
         """Test git operations with temporary repository"""
@@ -876,6 +935,7 @@ class TestRunner:
         self.test_core_git_functions()
         self.test_dialog_helpers_url_functions()
         self.test_askpass_script_security()
+        self.test_export_subfolder_helpers()
 
     def run_git_tests(self):
         """Run git operation tests"""

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+from datetime import datetime
 from typing import Optional
 
 
@@ -165,6 +166,69 @@ def validate_repo_inputs(
     }
 
 
+def normalize_export_subfolder(raw: str) -> str:
+    """Validate and normalise an export subfolder value or template.
+
+    Accepts forward or back slashes; rejects absolute paths, ``..``/``.``
+    segments, and characters that are invalid in folder names. Returns the
+    cleaned relative path ('' when blank). ``{filename}`` and
+    ``{timestamp}`` placeholders pass through untouched — they are filled
+    by :func:`expand_export_subfolder` at export time.
+    """
+    value = (raw or "").strip().replace("\\", "/")
+    if not value:
+        return ""
+    if value.startswith("/"):
+        raise ValueError("Export subfolder must be relative (no leading slash).")
+    parts = [segment.strip() for segment in value.split("/") if segment.strip()]
+    if not parts:
+        return ""
+    invalid = {"..", "."}
+    for segment in parts:
+        if segment in invalid:
+            raise ValueError("Export subfolder cannot contain '..' or '.' segments.")
+        if re.search(r'[<>:"\\|?*]', segment):
+            raise ValueError(f"Invalid characters in subfolder segment '{segment}'.")
+    return "/".join(parts)
+
+
+def expand_export_subfolder(
+    template: str,
+    design_name: str,
+    timestamp: Optional[str] = None,
+) -> str:
+    """Fill ``{filename}`` and ``{timestamp}`` placeholders in a subfolder.
+
+    Returns the normalised, expanded relative path ('' when the template is
+    blank). Raises ``ValueError`` if the expansion produces an invalid path.
+    """
+    if not template:
+        return ""
+    ts = timestamp or datetime.now().strftime("%Y%m%d-%H%M%S")
+    expanded = (
+        template.replace("{filename}", design_name or "Design").replace("{timestamp}", ts)
+    )
+    return normalize_export_subfolder(expanded)
+
+
+def ensure_export_subfolder_exists(repo_path: str, relative_subfolder: str) -> str:
+    """Create the export subfolder inside the repo and return its path.
+
+    Raises ``ValueError`` if the subfolder would resolve outside the
+    repository root.
+    """
+    if not relative_subfolder:
+        return repo_path
+    root = os.path.normpath(repo_path)
+    dest = os.path.normpath(os.path.join(root, relative_subfolder))
+    # Separator-aware containment check: a bare prefix test would accept
+    # sibling paths like "C:\repo-evil" for root "C:\repo".
+    if dest != root and not dest.startswith(root + os.sep):
+        raise ValueError("Export subfolder resolves outside the repository root.")
+    os.makedirs(dest, exist_ok=True)
+    return dest
+
+
 def default_path_for_new_repo(
     proposed_name: str,
     base_dir: str,
@@ -267,6 +331,9 @@ __all__ = [
     "convert_github_url",
     "default_path_for_new_repo",
     "derive_repo_name_from_url",
+    "ensure_export_subfolder_exists",
+    "expand_export_subfolder",
+    "normalize_export_subfolder",
     "setup_new_repository",
     "validate_repo_inputs",
 ]

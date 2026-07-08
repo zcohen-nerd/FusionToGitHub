@@ -99,9 +99,11 @@ cd FusionToGitHub
    FusionToGitHub/
    ├── Push_To_GitHub.py
    ├── Push_To_GitHub.manifest
+   ├── AddInIcon.svg
    ├── fusion_git_core.py
    ├── dialog_helpers.py
-   └── push_cli.py
+   ├── push_cli.py
+   └── diagnostic.py
    ```
 
    Documentation and test files can remain in your project workspace; they do not need to be copied into the Fusion add-in runtime folder.
@@ -149,7 +151,7 @@ cd FusionToGitHub
 ### Configure Add-in
 
 1. **Click "Push to GitHub"** button in Fusion 360
-2. **Select "+ Add new GitHub repo..."**
+2. **Select "🆕 Set up new GitHub repository..."**
 3. **Fill in details**:
    - **Repository Name**: `fusion-test-repo` (auto-filled from URL if left empty)
    - **GitHub URL**: `https://github.com/YOUR_USERNAME/fusion-test-repo`
@@ -178,16 +180,17 @@ git clone https://github.com/YOUR_USERNAME/fusion-test-repo.git
 ### Run Automated Tests
 
 1. **Open command prompt/terminal**
-2. **Navigate to add-in folder**:
+2. **Navigate to the downloaded project folder** (the one containing
+   `src/`, `docs/`, and `tests/` — not the Fusion AddIns folder):
    ```bash
-   cd "%APPDATA%\Autodesk\Autodesk Fusion 360\API\AddIns\FusionToGitHub" # Windows
-   cd "~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns/FusionToGitHub" # macOS
+   cd path\to\FusionToGitHub
    ```
 3. **Run tests**:
    ```bash
-   python test_runner.py
+   python tests/test_runner.py
    ```
-4. **Expected result**: All tests should pass (7/7)
+4. **Expected result**: all tests pass (the suite currently has 17
+   automated tests, including end-to-end git pipeline checks)
 
 ### Test Basic Export
 
@@ -215,7 +218,7 @@ git clone https://github.com/YOUR_USERNAME/fusion-test-repo.git
 - [ ] "Push to GitHub" button visible in toolbar
 - [ ] Test repository created on GitHub
 - [ ] Repository configured in add-in and saved successfully
-- [ ] Automated tests pass (7/7)
+- [ ] Automated tests pass (`python tests/test_runner.py`)
 - [ ] Test export completed successfully
 - [ ] Files appear in GitHub repository
 

@@ -30,11 +30,11 @@ Before installing, make sure you have:
    - Download from: https://git-scm.com/downloads
    - During installation, choose "Git from the command line and also from 3rd-party software"
 3. **GitHub account** (free at github.com)
-4. **GitHub authentication ready**
-   - Go to GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)
-   - Click "Generate new token (classic)"
-   - Select scopes: `repo` (Full control of private repositories)
-   - Copy the token and save it securely
+4. **GitHub authentication ready** *(optional — on Windows the first push
+   normally opens a browser sign-in, and that's all you need)*
+   - Only if you prefer a stored token: GitHub → Settings → Developer
+     settings → Personal access tokens → Tokens (classic) → "Generate new
+     token (classic)" with the `repo` scope, and save it securely
 
 ### Step 2: Install the Add-in 📦
 
@@ -43,12 +43,17 @@ Before installing, make sure you have:
    - Windows: `%APPDATA%\Autodesk\Autodesk Fusion 360\API\AddIns\`
    - macOS: `~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns/`
 3. **Create a new folder** called `FusionToGitHub`
-4. **Copy all files** into this folder:
+4. **Copy everything from the download's `src` folder** into it:
    - `Push_To_GitHub.py`
    - `Push_To_GitHub.manifest`
-   - `fusion_git_core.py`
+   - `AddInIcon.svg`
+   - `fusion_git_core.py` (required)
+   - `dialog_helpers.py` (required)
    - `push_cli.py`
-   - All documentation files
+   - `diagnostic.py`
+
+   ⚠️ The add-in will not load if `fusion_git_core.py` or
+   `dialog_helpers.py` are missing — copy the whole `src` folder contents.
 5. **Restart Fusion 360** completely
 
 ### Step 3: Enable the Add-in 🔧
@@ -62,7 +67,7 @@ Before installing, make sure you have:
 ### Step 4: First Time Setup 🎯
 
 1. **Click the "Push to GitHub" button** in Fusion 360
-2. **Select "+ Add new GitHub repo..."** from the dropdown
+2. **Select "🆕 Set up new GitHub repository..."** from the dropdown (already selected on first use)
 3. **Fill in the repository details:**
    - **Repository Name**: Your local name (auto-filled from URL if empty)
    - **GitHub URL**: `https://github.com/YOUR_USERNAME/YOUR_REPO_NAME`
@@ -142,7 +147,7 @@ A: The add-in is free. GitHub has free plans with unlimited public repositories.
 If something isn't working:
 
 1. **Check the logs**: Expand **Logging** and click **Open Log File…**
-2. **Run the tests**: Use `python test_runner.py` in the add-in folder
+2. **Run the tests**: from the downloaded project folder, run `python tests/test_runner.py`
 3. **Verify prerequisites**: Make sure Git and GitHub access work
 4. **Review troubleshooting**: See `TROUBLESHOOTING.md` for common issues
 

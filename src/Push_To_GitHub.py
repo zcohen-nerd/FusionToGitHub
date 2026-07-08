@@ -45,6 +45,9 @@ try:
         convert_github_url as _convert_github_url,
         default_path_for_new_repo as _default_path_for_new_repo,
         derive_repo_name_from_url as _derive_repo_name_from_url,
+        ensure_export_subfolder_exists,
+        expand_export_subfolder,
+        normalize_export_subfolder,
         setup_new_repository as _setup_new_repository,
         validate_repo_inputs as _validate_repo_inputs,
     )
@@ -65,6 +68,9 @@ except ImportError:
         convert_github_url as _convert_github_url,
         default_path_for_new_repo as _default_path_for_new_repo,
         derive_repo_name_from_url as _derive_repo_name_from_url,
+        ensure_export_subfolder_exists,
+        expand_export_subfolder,
+        normalize_export_subfolder,
         setup_new_repository as _setup_new_repository,
         validate_repo_inputs as _validate_repo_inputs,
     )
@@ -703,37 +709,6 @@ def _safe_base(name: str) -> str:
     return re.sub(r'[<>:"/\\|?*]+', '_', name)
 
 
-def normalize_export_subfolder(raw: str) -> str:
-    value = (raw or "").strip().replace("\\", "/")
-    if not value:
-        return ""
-    if value.startswith("/"):
-        raise ValueError("Export subfolder must be relative (no leading slash).")
-    parts = [segment.strip() for segment in value.split("/") if segment.strip()]
-    if not parts:
-        return ""
-    invalid = {"..", "."}
-    for segment in parts:
-        if segment in invalid:
-            raise ValueError("Export subfolder cannot contain '..' or '.' segments.")
-        if re.search(r'[<>:"\\|?*]', segment):
-            raise ValueError(f"Invalid characters in subfolder segment '{segment}'.")
-    return "/".join(parts)
-
-
-def ensure_export_subfolder_exists(repo_path: str, relative_subfolder: str) -> str:
-    if not relative_subfolder:
-        return repo_path
-    root = os.path.normpath(repo_path)
-    dest = os.path.normpath(os.path.join(root, relative_subfolder))
-    # Separator-aware containment check: a bare prefix test would accept
-    # sibling paths like "C:\repo-evil" for root "C:\repo".
-    if dest != root and not dest.startswith(root + os.sep):
-        raise ValueError("Export subfolder resolves outside the repository root.")
-    os.makedirs(dest, exist_ok=True)
-    return dest
-
-
 class FusionCommandGitUI:
     def __init__(self, ui_ref: Optional[adsk.core.UserInterface]):
         self._ui = ui_ref
@@ -1145,7 +1120,10 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                 try:
                     normalized = normalize_export_subfolder(raw_value)
                     if normalized:
-                        flow_status_input.text = f"✅ Exports will be copied to repo/{normalized}"
+                        hint = f"✅ Exports will be copied to repo/{normalized}"
+                        if "{filename}" in normalized or "{timestamp}" in normalized:
+                            hint += " (placeholders filled at export time)"
+                        flow_status_input.text = hint
                     else:
                         flow_status_input.text = ""
                     return normalized
@@ -1832,6 +1810,20 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                         raw_name = design.rootComponent.name
                         base_name = _safe_base(raw_name)
 
+                        # The saved subfolder is a template; fill the
+                        # {filename}/{timestamp} placeholders for this push.
+                        try:
+                            resolved_export_subfolder = expand_export_subfolder(
+                                normalized_export_subfolder, base_name
+                            )
+                        except ValueError as exc:
+                            current_ui_ref.messageBox(
+                                f"Export subfolder is invalid after filling placeholders:\n{exc}",
+                                CMD_NAME,
+                            )
+                            execute_args.executeFailed = True
+                            return
+
                         git_repo_path = os.path.expanduser(selected_repo_details["path"]).replace("/", os.sep)
                         if not os.path.isdir(os.path.join(git_repo_path, ".git")):
                             current_ui_ref.messageBox(
@@ -1890,7 +1882,7 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                                 # branch exists, so the stash/pull steps never
                                 # touch (or swallow) the exported files.
                                 destination_root = ensure_export_subfolder_exists(
-                                    git_repo_path, normalized_export_subfolder
+                                    git_repo_path, resolved_export_subfolder
                                 )
                                 final_paths = []
                                 for src in exported_files_paths:

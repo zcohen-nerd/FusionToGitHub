@@ -73,8 +73,8 @@ python -c "import os, subprocess, tempfile"
    - Try `where git` (Windows) or `which git` (macOS/Linux)
 
 4. **Manual Git path**:
-   - Edit `Push_To_GitHub.py`
-   - Update `GIT_EXE` variable with full path to git.exe
+   - Edit `fusion_git_core.py`
+   - Update the `GIT_EXE` fallback near the top with the full path to git.exe
 
 ### "Authentication failed" / "Permission denied"
 

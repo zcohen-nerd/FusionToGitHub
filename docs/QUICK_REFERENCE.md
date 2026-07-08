@@ -5,7 +5,7 @@
 | Action | Steps |
 |--------|-------|
 | **Open Add-in** | Click "Push to GitHub" button in toolbar |
-| **Add Repository** | Select "+ Add new GitHub repo..." → Fill details |
+| **Add Repository** | Select "🆕 Set up new GitHub repository..." → Fill details |
 | **Export Design** | Select repo → Edit Commit Message → Click "OK" |
 | **View Logs** | Expand "Logging" → Click "Open Log File…" |
 | **Manage Credentials** | Expand "Advanced" → "Use Stored Token" → "Manage Token…" |
@@ -42,8 +42,10 @@
 |---------|---------|--------------|
 | `exports/` | `exports/Bracket.step` | All exports together |
 | `{filename}/` | `Bracket/Bracket.step` | Per-design folders |
-| `{format}/` | `step/Bracket.step` | By file format |
-| `versions/v{timestamp}/` | `versions/v20250930/Bracket.step` | By version |
+| `versions/v{timestamp}/` | `versions/v20250930-143022/Bracket.step` | By version |
+
+Supported placeholders: `{filename}` (design name) and `{timestamp}`
+(date/time of the push).
 
 ---
 
