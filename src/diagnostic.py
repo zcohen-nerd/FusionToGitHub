@@ -4,6 +4,7 @@ Run this to help diagnose why the add-in might be crashing silently.
 """
 
 import os
+import shutil
 import sys
 
 print("=" * 70)
@@ -15,7 +16,6 @@ print(f"\n1. Python Version: {sys.version}")
 print(f"   Python Executable: {sys.executable}")
 
 # 2. Check if Git is available
-import shutil
 git_exe = shutil.which("git")
 if git_exe:
     print(f"\n2. Git Found: {git_exe}")
@@ -77,7 +77,7 @@ try:
     with open(main_file, 'r', encoding='utf-8') as f:
         code = f.read()
     compile(code, main_file, 'exec')
-    print(f"   ✓ No syntax errors in Push_To_GitHub.py")
+    print("   ✓ No syntax errors in Push_To_GitHub.py")
 except SyntaxError as e:
     print(f"   ✗ Syntax Error: {e}")
     print(f"      Line {e.lineno}: {e.text}")

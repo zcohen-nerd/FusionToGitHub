@@ -184,9 +184,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         if snapshot_dir:
             shutil.rmtree(snapshot_dir, ignore_errors=True)
 
-    if not result:
-        logger.error("Git pipeline aborted or failed. See output above for details.")
+    if result is None:
+        logger.error("Git pipeline failed. See output above for details.")
         return 1
+    if result.get("cancelled"):
+        sys.stdout.write("Push cancelled by user; nothing was pushed.\n")
+        return 3
 
     summary = [
         "Push completed via CLI harness:",

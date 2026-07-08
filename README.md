@@ -64,8 +64,6 @@ FusionToGitHub/
 │   ├── TESTING.md               # Systematic test plan
 │   ├── MANUAL_TESTS.md          # Manual test checklist
 │   └── TEST_FRAMEWORK_SUMMARY.md # Testing overview
-├── assets/                       # Assets and icons
-│   └── AddInIcon.svg             # Add-in icon
 ├── README.md                     # This file
 ├── LICENSE                       # MIT license
 ├── requirements.txt              # Python dependencies (empty by design)

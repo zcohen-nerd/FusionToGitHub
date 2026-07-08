@@ -18,7 +18,6 @@ Categories:
 """
 
 import argparse
-import importlib.util
 import logging
 import os
 import shutil
@@ -27,7 +26,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 
 class _PipelineTestUI:
@@ -748,11 +747,12 @@ class TestRunner:
                     ok = False
                     details.append(f"expected 3 commits on my-export, got {commit_count}")
 
-            # Declining the reuse prompt must cancel cleanly.
+            # Declining the reuse prompt must cancel cleanly (and be
+            # reported as a cancellation, not a failure).
             result3, ui3 = run_push("EXPORT v3", confirm_answer=False)
-            if result3 is not None:
+            if not (result3 and result3.get("cancelled")):
                 ok = False
-                details.append("declined reuse should return None")
+                details.append(f"declined reuse should report cancelled, got {result3!r}")
             if ui3.errors:
                 ok = False
                 details.append(f"decline should not raise errors: {ui3.errors}")
@@ -934,7 +934,7 @@ def main():
     
     runner = TestRunner(verbose=args.verbose)
     
-    print(f"FusionToGitHub V7.7 - Automated Test Runner")
+    print("FusionToGitHub V7.7 - Automated Test Runner")
     print(f"Running category: {args.category}")
     print(f"Working directory: {os.getcwd()}")
     

@@ -172,6 +172,9 @@ def handle_git_operations(
     their absolute paths (which replace *file_abs_paths_to_add*). Keeping the
     exports out of the tree until after the stash/pull steps guarantees they
     are committed exactly as exported and never swallowed by the auto-stash.
+
+    Returns a result dict on success, ``{"cancelled": True}`` when the user
+    declined a confirmation prompt, and ``None`` on failure.
     """
     our_stash_msg = "fusion_git_addin_autostash"
     original_branch: Optional[str] = None
@@ -189,12 +192,39 @@ def handle_git_operations(
             ui.error("No 'origin' remote found in this repo.")
             if logger:
                 logger.error("No 'origin' remote in %s", repo_path)
-            return {"cancelled": True}
+            return {"failed": True}
 
         head_proc = git_run(repo_path, "symbolic-ref", "--short", "-q", "HEAD", check=False, env=git_env)
         detached = head_proc.returncode != 0
         if not detached:
             original_branch = (head_proc.stdout or "").strip()
+
+        # A repository with no commits yet (fresh init/clone of an empty
+        # remote) has an unborn HEAD: nothing is tracked, so there is
+        # nothing to stash, and several git commands behave differently.
+        unborn = (
+            git_run(repo_path, "rev-parse", "--verify", "-q", "HEAD", check=False, env=git_env).returncode != 0
+        )
+
+        # Stash before any branch switching: leaving a detached HEAD (below)
+        # with a dirty working tree would otherwise fail or lose changes.
+        if unborn:
+            if logger:
+                logger.info("Repository has no commits yet; skipping the auto-stash step.")
+        else:
+            status = git_output(repo_path, "status", "--porcelain", env=git_env)
+            if status.strip():
+                if not ui.confirm(
+                    "Local changes detected. We'll stash them temporarily before pushing.\n"
+                    "Continue and auto-stash these changes?"
+                ):
+                    if logger:
+                        logger.info("User cancelled due to dirty working tree.")
+                    return {"cancelled": True}
+                git_run(repo_path, "stash", "push", "-u", "-m", our_stash_msg, env=git_env)
+                stashed = True
+                if logger:
+                    logger.info("Stashed local changes.")
 
         if detached:
             try:
@@ -220,36 +250,11 @@ def handle_git_operations(
                 ui.error("Unable to determine default branch while in detached HEAD.")
                 if logger:
                     logger.error("Cannot determine default branch")
-                return {"cancelled": True}
+                return {"failed": True}
             git_run(repo_path, "checkout", default_branch, env=git_env)
             original_branch = default_branch
             if logger:
                 logger.info("Detached HEAD → switched to '%s'", default_branch)
-
-        # A repository with no commits yet (fresh init/clone of an empty
-        # remote) has an unborn HEAD: nothing is tracked, so there is
-        # nothing to stash, and several git commands behave differently.
-        unborn = (
-            git_run(repo_path, "rev-parse", "--verify", "-q", "HEAD", check=False, env=git_env).returncode != 0
-        )
-
-        if unborn:
-            if logger:
-                logger.info("Repository has no commits yet; skipping the auto-stash step.")
-        else:
-            status = git_output(repo_path, "status", "--porcelain", env=git_env)
-            if status.strip():
-                if not ui.confirm(
-                    "Local changes detected. We'll stash them temporarily before pushing.\n"
-                    "Continue and auto-stash these changes?"
-                ):
-                    if logger:
-                        logger.info("User cancelled due to dirty working tree.")
-                    return {"cancelled": True}
-                git_run(repo_path, "stash", "push", "-u", "-m", our_stash_msg, env=git_env)
-                stashed = True
-                if logger:
-                    logger.info("Stashed local changes.")
 
         if not skip_pull:
             try:
@@ -389,7 +394,7 @@ def handle_git_operations(
             ui.error(msg)
             if logger:
                 logger.error(msg)
-            return {"cancelled": True}
+            return {"failed": True}
 
         rels = ["CHANGELOG.md"]
         for p in files_to_commit:
@@ -420,7 +425,7 @@ def handle_git_operations(
                 result = _perform(env_map)
         else:
             result = _perform(None)
-        if result and result.get("cancelled"):
+        if result and result.get("failed"):
             return None
         return result
     except Exception as exc:
