@@ -38,7 +38,7 @@ FusionToGitHub integrates Autodesk Fusion 360 with GitHub to provide professiona
 The add-in dialog has these sections:
 
 #### Repository
-- **Select Repository** dropdown: choose a saved repo or **"+ Add new GitHub repo..."**
+- **Select Repository** dropdown: choose a saved repo or **"🆕 Set up new GitHub repository..."**
 - For new repos: **Repository Name**, **GitHub URL**, **Local Folder**, and validation status
 - For existing repos: setup-only fields are hidden for a cleaner flow
 
@@ -98,21 +98,18 @@ Access via the "Logging" section in the dialog.
 
 ### Changelog Generation
 
-When enabled, the add-in maintains a `CHANGELOG.md` file:
+Every push updates a `CHANGELOG.md` file at the repository root, newest
+entry first:
 
 ```markdown
-# Design History
+# Changelog
 
-## 2025-09-30 14:30:22 - Branch: features/Bracket_V2-20250930-143022
-**Commit**: Updated bracket with reinforcement ribs
-**Files**: 
-- Bracket_V2.f3d
-- Bracket_V2.step
-
-## 2025-09-29 09:15:10 - Branch: features/Bracket_V1-20250929-091510
-**Commit**: Initial bracket design
-**Files**:
-- Bracket_V1.f3d
+## 2025-09-30 14:30:22 - Bracket_V2
+- **Branch:** `features/Bracket_V2-20250930-143022`
+- **Commit Message:** "Updated bracket with reinforcement ribs"
+- **Files Updated:**
+  - `Bracket_V2.f3d`
+  - `Bracket_V2.step`
 ```
 
 ---
@@ -121,7 +118,7 @@ When enabled, the add-in maintains a `CHANGELOG.md` file:
 
 ### Adding New Repositories
 
-1. **Select "+ Add new GitHub repo..."** from dropdown
+1. **Select "🆕 Set up new GitHub repository..."** from the dropdown
 2. **Fill in details**:
    - **GitHub URL**: Full repository URL (HTTPS or SSH)
    - **Repository Name**: Local config name (can auto-fill from URL)
@@ -205,14 +202,14 @@ Organize your exports using subfolder patterns:
 - `step-files/` - Format-specific organization
 - `versions/v1.0/` - Version-based organization
 
-**Dynamic Folders** (using placeholders):
+**Dynamic Folders** (using placeholders — `{filename}` and `{timestamp}`
+are filled in at export time):
 - `{filename}/` - Separate folder per design
 - `exports/{timestamp}/` - Time-based organization
-- `formats/{format}/` - Organize by file format
 
 **Nested Organization**:
 - `projects/{filename}/exports/`
-- `releases/v{timestamp}/{format}/`
+- `releases/v{timestamp}/`
 - `work/{filename}/iterations/`
 
 ---
@@ -356,11 +353,11 @@ If you want to continue work on an existing branch:
 
 **Built-in Diagnostics**:
 1. **Open Log File…**: Click in the Logging group
-2. **Run Tests**: Execute `python test_runner.py`
+2. **Run Tests**: Execute `python tests/test_runner.py` from the project folder
 3. **Check Git Status**: Verify repository state
 
 **Log File Locations**:
-- **Windows**: `%APPDATA%/.PushToGitHub_AddIn_Data/PushToGitHub.log`
+- **Windows**: `%USERPROFILE%\.PushToGitHub_AddIn_Data\PushToGitHub.log`
 - **macOS**: `~/.PushToGitHub_AddIn_Data/PushToGitHub.log`
 
 **Community Support**:

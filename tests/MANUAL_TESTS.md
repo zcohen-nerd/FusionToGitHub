@@ -21,7 +21,7 @@ This checklist provides a streamlined set of manual tests to verify core functio
 - [ ] **If fails**: Check git installation and PATH
 
 #### Test 2: Repository Configuration
-- [ ] **Step**: Select "+ Add new GitHub repo..." 
+- [ ] **Step**: Select "🆕 Set up new GitHub repository..." 
 - [ ] **Step**: Enter Repository Name: `test-repo` (or leave blank to auto-fill)
 - [ ] **Step**: Enter GitHub URL: `https://github.com/YOUR_USERNAME/test-repo`
 - [ ] **Step**: Set local folder: `C:\temp\test-fusion-repo`
