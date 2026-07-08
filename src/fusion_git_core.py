@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Any, Dict, Optional, Protocol, Sequence
+from typing import Any, Callable, Dict, Optional, Protocol, Sequence
 
 VERSION = "V7.7"
 IS_WINDOWS = os.name == "nt"
@@ -86,6 +86,12 @@ def git_available() -> bool:
 
 @contextmanager
 def git_askpass_env(username: str, token: str):
+    """Yield env vars that let git authenticate through a temp askpass script.
+
+    The script itself contains no credentials: it echoes environment
+    variables that exist only in the git subprocess environment, so the
+    token is never written to disk (and needs no shell escaping).
+    """
     if not token:
         yield {}
         return
@@ -96,36 +102,30 @@ def git_askpass_env(username: str, token: str):
         "askpass.bat" if IS_WINDOWS else "askpass.sh",
     )
 
-    def _escape_bat(value: str) -> str:
-        """Escape a value for safe embedding in a Windows batch echo."""
-        s = value.replace("^", "^^")
-        for ch in ("&", "|", "<", ">", "(", ")"):
-            s = s.replace(ch, f"^{ch}")
-        s = s.replace("%", "%%")
-        return s
-
-    escaped_username = _escape_bat(username or "")
-    escaped_token = _escape_bat(token or "")
-    username_sh = (username or "").replace("'", "'\"'\"'")
-    token_sh = (token or "").replace("'", "'\"'\"'")
-
     if IS_WINDOWS:
+        # Delayed expansion (!VAR!) keeps special characters in the values
+        # from being re-parsed by cmd; 'if defined' avoids the literal
+        # '!VAR!' output cmd produces for undefined delayed variables.
         script_contents = (
             "@echo off\n"
-            "set PROMPT=%*\n"
-            'echo %PROMPT% | findstr /I "Username" >nul\n'
-            f"if %errorlevel%==0 (\n    echo {escaped_username}\n) else (\n    echo {escaped_token}\n)\n"
+            "setlocal EnableDelayedExpansion\n"
+            'echo %* | findstr /I "Username" >nul\n'
+            "if %errorlevel%==0 (\n"
+            "    if defined FUSION_GIT_ASKPASS_USERNAME (\n"
+            "        echo(!FUSION_GIT_ASKPASS_USERNAME!\n"
+            "    ) else (\n"
+            "        echo(\n"
+            "    )\n"
+            ") else (\n"
+            "    echo(!FUSION_GIT_ASKPASS_TOKEN!\n"
+            ")\n"
         )
     else:
         script_contents = (
             "#!/bin/sh\n"
-            'prompt="$1"\n'
-            'case "$prompt" in\n'
-            f"  *Username* ) printf '%s\\n' '{username_sh}' ;;\n"
-            f"  *username* ) printf '%s\\n' '{username_sh}' ;;\n"
-            f"  *Password* ) printf '%s\\n' '{token_sh}' ;;\n"
-            f"  *password* ) printf '%s\\n' '{token_sh}' ;;\n"
-            f"  * ) printf '%s\\n' '{token_sh}' ;;\n"
+            'case "$1" in\n'
+            "  *[Uu]sername* ) printf '%s\\n' \"$FUSION_GIT_ASKPASS_USERNAME\" ;;\n"
+            "  * ) printf '%s\\n' \"$FUSION_GIT_ASKPASS_TOKEN\" ;;\n"
             "esac\n"
         )
 
@@ -137,6 +137,8 @@ def git_askpass_env(username: str, token: str):
     env_map = {
         "GIT_ASKPASS": script_path,
         "GIT_TERMINAL_PROMPT": "0",
+        "FUSION_GIT_ASKPASS_USERNAME": username or "",
+        "FUSION_GIT_ASKPASS_TOKEN": token,
     }
 
     try:
@@ -161,7 +163,16 @@ def handle_git_operations(
     skip_pull: bool = False,
     pat_credentials: Optional[Dict[str, str]] = None,
     logger: Optional[logging.Logger] = None,
+    materialize_files: Optional[Callable[[], Sequence[str]]] = None,
 ) -> Optional[Dict[str, Any]]:
+    """Run the stash → pull → branch → commit → push pipeline.
+
+    When *materialize_files* is given, it is invoked after the export branch
+    has been created and must place the files into the working tree, returning
+    their absolute paths (which replace *file_abs_paths_to_add*). Keeping the
+    exports out of the tree until after the stash/pull steps guarantees they
+    are committed exactly as exported and never swallowed by the auto-stash.
+    """
     our_stash_msg = "fusion_git_addin_autostash"
     original_branch: Optional[str] = None
     stashed = False
@@ -180,10 +191,10 @@ def handle_git_operations(
                 logger.error("No 'origin' remote in %s", repo_path)
             return {"cancelled": True}
 
-        head = git_output(repo_path, "rev-parse", "--abbrev-ref", "HEAD", env=git_env)
-        detached = head.strip() == "HEAD"
+        head_proc = git_run(repo_path, "symbolic-ref", "--short", "-q", "HEAD", check=False, env=git_env)
+        detached = head_proc.returncode != 0
         if not detached:
-            original_branch = head.strip()
+            original_branch = (head_proc.stdout or "").strip()
 
         if detached:
             try:
@@ -215,35 +226,60 @@ def handle_git_operations(
             if logger:
                 logger.info("Detached HEAD → switched to '%s'", default_branch)
 
-        status = git_output(repo_path, "status", "--porcelain", env=git_env)
-        if status.strip():
-            if not ui.confirm(
-                "Local changes detected. We'll stash them temporarily before pushing.\n"
-                "Continue and auto-stash these changes?"
-            ):
-                if logger:
-                    logger.info("User cancelled due to dirty working tree.")
-                return {"cancelled": True}
-            git_run(repo_path, "stash", "push", "-u", "-m", our_stash_msg, env=git_env)
-            stashed = True
+        # A repository with no commits yet (fresh init/clone of an empty
+        # remote) has an unborn HEAD: nothing is tracked, so there is
+        # nothing to stash, and several git commands behave differently.
+        unborn = (
+            git_run(repo_path, "rev-parse", "--verify", "-q", "HEAD", check=False, env=git_env).returncode != 0
+        )
+
+        if unborn:
             if logger:
-                logger.info("Stashed local changes.")
+                logger.info("Repository has no commits yet; skipping the auto-stash step.")
+        else:
+            status = git_output(repo_path, "status", "--porcelain", env=git_env)
+            if status.strip():
+                if not ui.confirm(
+                    "Local changes detected. We'll stash them temporarily before pushing.\n"
+                    "Continue and auto-stash these changes?"
+                ):
+                    if logger:
+                        logger.info("User cancelled due to dirty working tree.")
+                    return {"cancelled": True}
+                git_run(repo_path, "stash", "push", "-u", "-m", our_stash_msg, env=git_env)
+                stashed = True
+                if logger:
+                    logger.info("Stashed local changes.")
 
         if not skip_pull:
             try:
                 git_run(repo_path, "pull", "--rebase", "origin", original_branch, env=git_env)
             except Exception as pull_exc:
-                pull_failure_details = str(pull_exc)
-                if ui.confirm(
+                # A conflicted rebase must never leak out of the pipeline:
+                # abort it so the repository is back in its pre-pull state
+                # before we decide what to do next.
+                git_run(repo_path, "rebase", "--abort", check=False, env=git_env)
+                details = str(pull_exc)
+                if "couldn't find remote ref" in details:
+                    # Brand-new/empty remote: there is simply nothing to
+                    # pull yet, so continue with a regular (non-force) push.
+                    if logger:
+                        logger.info(
+                            "Remote 'origin' has no branch '%s' yet; skipping pull.",
+                            original_branch,
+                        )
+                elif ui.confirm(
                     "git pull --rebase failed.\n\n"
-                    f"Details:\n{pull_failure_details}\n\n"
+                    f"Details:\n{details}\n\n"
                     "Would you like to skip pulling and force-push this export instead?"
                 ):
+                    pull_failure_details = details
                     skip_pull = True
                     used_force_push = True
                     if logger:
                         logger.warning("Pull failed; proceeding with force push.")
                 else:
+                    pull_failure_details = details
                     raise
 
         if skip_pull:
@@ -254,14 +290,55 @@ def handle_git_operations(
             design_basename_for_branch,
         )
         branch_name_final = default_branch_name
+        reused_branch = False
+
+        def _local_branch_exists(name: str) -> bool:
+            return (
+                git_run(
+                    repo_path, "rev-parse", "--verify", "-q", f"refs/heads/{name}", check=False, env=git_env
+                ).returncode
+                == 0
+            )
+
         if branch_override:
             override_clean = sanitize_branch_name(branch_override)
             if not override_clean:
                 ui.error("Provided branch name is invalid after sanitization.")
                 raise RuntimeError("Invalid branch name override.")
             branch_name_final = override_clean
+            if _local_branch_exists(branch_name_final):
+                # The user named this branch explicitly; reusing it (appending
+                # a new commit) is the likely intent, but confirm first.
+                if not ui.confirm(
+                    f"Branch '{branch_name_final}' already exists.\n\n"
+                    "Add this export as a new commit on the existing branch?"
+                ):
+                    if logger:
+                        logger.info("User declined to reuse existing branch '%s'.", branch_name_final)
+                    return {"cancelled": True}
+                reused_branch = True
+        else:
+            # Template-generated names can collide (e.g. two exports within
+            # the same second); pick a unique name instead of failing.
+            candidate = branch_name_final
+            suffix = 2
+            while _local_branch_exists(candidate):
+                candidate = f"{branch_name_final}-{suffix}"
+                suffix += 1
+            if candidate != branch_name_final and logger:
+                logger.info("Branch '%s' already exists; using '%s' instead.", branch_name_final, candidate)
+            branch_name_final = candidate
 
-        git_run(repo_path, "checkout", "-b", branch_name_final, env=git_env)
+        if reused_branch:
+            git_run(repo_path, "checkout", branch_name_final, env=git_env)
+        else:
+            git_run(repo_path, "checkout", "-b", branch_name_final, env=git_env)
+
+        # Only now — with the stash/pull steps done and the export branch
+        # checked out — do the export files enter the working tree.
+        files_to_commit = [os.path.normpath(p) for p in (file_abs_paths_to_add or [])]
+        if materialize_files is not None:
+            files_to_commit = [os.path.normpath(p) for p in (materialize_files() or [])]
 
         changelog_file_path = os.path.join(repo_path, "CHANGELOG.md")
         log_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -277,9 +354,9 @@ def handle_git_operations(
             f"- **Branch:** `{branch_name_final}`",
             f'- **Commit Message:** "{commit_msg}"',
         ]
-        if file_abs_paths_to_add:
+        if files_to_commit:
             entry_lines.append("- **Files Updated:**")
-            for f in file_abs_paths_to_add:
+            for f in files_to_commit:
                 try:
                     rel_display = os.path.relpath(f, repo_path)
                 except Exception:
@@ -299,9 +376,7 @@ def handle_git_operations(
             fw.write("\n".join(entry_lines) + "\n")
             fw.write(existing)
 
-        files_abs = [os.path.join(repo_path, "CHANGELOG.md")] + [
-            os.path.normpath(p) for p in (file_abs_paths_to_add or [])
-        ]
+        files_abs = [os.path.join(repo_path, "CHANGELOG.md")] + files_to_commit
         missing = [p for p in files_abs if not os.path.exists(p)]
         if missing:
             try:
@@ -317,8 +392,8 @@ def handle_git_operations(
             return {"cancelled": True}
 
         rels = ["CHANGELOG.md"]
-        for p in file_abs_paths_to_add or []:
-            rels.append(os.path.relpath(os.path.normpath(p), repo_path))
+        for p in files_to_commit:
+            rels.append(os.path.relpath(p, repo_path))
 
         git_run(repo_path, "add", *rels, env=git_env)
         git_run(repo_path, "commit", "-m", commit_msg, env=git_env)
@@ -335,6 +410,7 @@ def handle_git_operations(
             "force_push": used_force_push,
             "timestamp": timestamp_str,
             "pull_failed": pull_failure_details,
+            "reused_branch": reused_branch,
         }
 
     try:
@@ -354,15 +430,71 @@ def handle_git_operations(
             logger.error(msg, exc_info=True)
         return None
     finally:
+        restore_ok = False
         try:
             if original_branch:
-                git_run(repo_path, "checkout", original_branch, check=False)
+                branch_exists = (
+                    git_run(
+                        repo_path, "rev-parse", "--verify", "-q", f"refs/heads/{original_branch}", check=False
+                    ).returncode
+                    == 0
+                )
+                if branch_exists:
+                    restore_proc = git_run(repo_path, "checkout", original_branch, check=False)
+                    restore_ok = restore_proc.returncode == 0
+                    if not restore_ok:
+                        msg = (
+                            f"Could not switch back to branch '{original_branch}'.\n"
+                            f"The repository is still on '{branch_name_final or 'the export branch'}'.\n"
+                            f"Details:\n{restore_proc.stderr or restore_proc.stdout}"
+                        )
+                        ui.warn(msg)
+                        if logger:
+                            logger.warning(msg)
+                elif logger:
+                    # Original branch had no commits (brand-new repository):
+                    # there is no ref to return to, so stay on the export branch.
+                    logger.info(
+                        "Original branch '%s' has no commits; staying on '%s'.",
+                        original_branch,
+                        branch_name_final,
+                    )
         except Exception:
             if logger:
                 logger.warning("Failed to restore branch '%s'", original_branch, exc_info=True)
         if stashed:
             try:
-                git_run(repo_path, "stash", "pop", "stash@{0}", check=False)
+                stash_ref = None
+                stash_list = git_run(repo_path, "stash", "list", check=False)
+                for line in (stash_list.stdout or "").splitlines():
+                    if our_stash_msg in line:
+                        stash_ref = line.split(":", 1)[0].strip()
+                        break
+                if stash_ref is None:
+                    if logger:
+                        logger.warning("Auto-stash entry not found; nothing to restore.")
+                elif not restore_ok:
+                    msg = (
+                        f"Your local changes were auto-stashed but could not be restored because the "
+                        f"original branch was not restored. They remain stashed as '{stash_ref}' "
+                        f"({our_stash_msg}). Run 'git stash pop {stash_ref}' once the repository is back "
+                        f"on '{original_branch}'."
+                    )
+                    ui.warn(msg)
+                    if logger:
+                        logger.warning(msg)
+                else:
+                    pop_proc = git_run(repo_path, "stash", "pop", stash_ref, check=False)
+                    if pop_proc.returncode != 0:
+                        msg = (
+                            f"Your auto-stashed local changes could not be restored automatically and "
+                            f"remain stashed as '{stash_ref}' ({our_stash_msg}).\n"
+                            f"Run 'git stash pop {stash_ref}' to recover them.\n"
+                            f"Details:\n{pop_proc.stderr or pop_proc.stdout}"
+                        )
+                        ui.warn(msg)
+                        if logger:
+                            logger.warning(msg)
             except Exception:
                 if logger:
                     logger.warning("Auto-stash pop failed; original changes remain stashed.", exc_info=True)

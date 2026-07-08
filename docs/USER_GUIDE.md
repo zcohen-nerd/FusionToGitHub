@@ -20,7 +20,7 @@ FusionToGitHub integrates Autodesk Fusion 360 with GitHub to provide professiona
 - **Automatic Backups**: Never lose design work again
 - **Version History**: Track every change with timestamps
 - **Team Collaboration**: Share designs and manage contributions
-- **Multiple Formats**: Export to F3D, STEP, STL, DXF, and more
+- **Multiple Formats**: Export to F3D, STEP, STL, IGES, and SAT
 - **Professional Workflow**: Branch-based development like software teams
 
 ---
@@ -79,6 +79,11 @@ Use **Branch Name Override** in the **Advanced** group when you want an explicit
 1. Enter a branch name in **Branch Name Override**
 2. Click **OK**
 3. The add-in sanitizes unsupported characters automatically
+
+Leave the field blank to auto-generate a branch name from the branch
+template. If the override names a branch that already exists, the add-in
+asks for confirmation and then adds the export as a new commit on that
+branch.
 
 ### Log Level Controls
 
@@ -183,10 +188,13 @@ The add-in validates repositories in real-time:
 - **Contains**: 3D geometry, curves, surfaces
 - **Use when**: Older CAD software compatibility
 
-#### DXF (.dxf)
-- **Best for**: 2D drawings, laser cutting
-- **Contains**: 2D sketch geometry
-- **Use when**: Manufacturing 2D parts
+#### SAT (.sat)
+- **Best for**: ACIS-based CAD systems
+- **Contains**: 3D solid geometry
+- **Use when**: Exchanging solids with ACIS-kernel tools
+
+> **Note**: DWG/DXF export is not available — Fusion's design export API
+> does not support those formats. 2D drawing export is on the roadmap.
 
 ### Export Subfolders
 

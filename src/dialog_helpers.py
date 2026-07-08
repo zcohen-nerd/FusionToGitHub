@@ -11,36 +11,53 @@ import re
 from typing import Optional
 
 
+# Matches GitHub browser URLs (optionally scheme-less), capturing owner and
+# repo while tolerating extra path segments (/tree/..., /blob/...), query
+# strings, and fragments.
+_GITHUB_WEB_URL_RE = re.compile(
+    r"^(?:https://)?(?:www\.)?github\.com/([^/?#]+)/([^/?#]+?)(?:\.git)?(?:[/?#].*)?$"
+)
+
+
 def convert_github_url(url: str) -> str:
-    """Convert any GitHub URL format to the proper Git clone URL.
+    """Convert a GitHub browser URL to the canonical Git clone URL.
 
-    Handles browser URLs, trailing slashes, query params, and fragment
-    identifiers.  Returns the URL unchanged if it already ends with
-    ``.git`` or uses a recognised scheme.
+    Handles trailing slashes, query params, fragments, extra path segments
+    such as ``/tree/main`` or ``/blob/...``, and scheme-less forms like
+    ``github.com/user/repo``.  Anything unrecognised — including partially
+    typed values — is returned unchanged rather than guessed at.
     """
-    if not url.strip():
+    url = (url or "").strip()
+    if not url:
         return url
-
-    url = url.strip()
 
     # Already a proper Git URL – keep as-is
     if url.endswith(".git"):
         return url
 
-    # Convert GitHub web URLs to Git clone URLs
-    # Pattern: https://github.com/user/repo or https://github.com/user/repo/
-    web_pattern = r"https://github\.com/([^/]+)/([^/]+)/?(?:\?.*)?(?:#.*)?$"
-    match = re.match(web_pattern, url)
+    match = _GITHUB_WEB_URL_RE.match(url)
     if match:
         user, repo = match.groups()
         return f"https://github.com/{user}/{repo}.git"
 
-    # If it's already a valid Git URL format, keep it
-    if re.match(r"^(https://|git@|ssh://).+", url):
-        return url
+    return url
 
-    # None of the recognised patterns matched; append .git
-    return url + ".git"
+
+def derive_repo_name_from_url(url: str) -> str:
+    """Best-effort repository name from a Git URL; '' when none can be found.
+
+    Works for https URLs and scp-like forms (``git@host:user/repo.git``).
+    """
+    candidate = (url or "").strip().rstrip("/")
+    if not candidate:
+        return ""
+    if candidate.endswith(".git"):
+        candidate = candidate[: -len(".git")].rstrip("/")
+    if "/" in candidate:
+        candidate = candidate.rsplit("/", 1)[-1]
+    if ":" in candidate:
+        candidate = candidate.rsplit(":", 1)[-1]
+    return candidate
 
 
 def validate_repo_inputs(
@@ -173,43 +190,75 @@ def setup_new_repository(
     *,
     logger=None,
 ) -> Optional[str]:
-    """Initialise a local Git repo and configure ``origin``.
+    """Prepare a local Git repo connected to ``origin``.
+
+    When *git_url* is provided and *local_path* is missing or empty, the
+    remote is cloned so the local repository starts with the remote's
+    history. Otherwise the folder is initialised in place and ``origin``
+    is configured. Either way the repository ends up with at least one
+    commit, because later branch/stash operations need a born HEAD.
 
     *git_fn* must be a callable with the same signature as
     ``_git(repo_path, *args, check=…)``.
 
     Returns ``None`` on success or an error message string on failure.
     """
-    if not os.path.exists(local_path):
-        os.makedirs(local_path, exist_ok=True)
-
     git_dir_path = os.path.join(local_path, ".git")
-    needs_init = not os.path.isdir(git_dir_path)
+    has_git_dir = os.path.isdir(git_dir_path)
+    dir_is_empty = not os.path.exists(local_path) or not os.listdir(local_path)
 
-    if needs_init:
+    if git_url and dir_is_empty and not has_git_dir:
+        parent_dir = os.path.dirname(local_path) or "."
+        os.makedirs(parent_dir, exist_ok=True)
         try:
-            git_fn(local_path, "init")
+            git_fn(parent_dir, "clone", git_url, local_path)
             if logger:
-                logger.info("Initialized Git repository in %s", local_path)
+                logger.info("Cloned %s into %s", git_url, local_path)
         except Exception as exc:
-            return f"Failed to initialize Git repository:\n{exc}"
+            return f"Failed to clone repository:\n{exc}"
+    else:
+        if not os.path.exists(local_path):
+            os.makedirs(local_path, exist_ok=True)
 
-    if git_url:
+        if not has_git_dir:
+            try:
+                git_fn(local_path, "init")
+                if logger:
+                    logger.info("Initialized Git repository in %s", local_path)
+            except Exception as exc:
+                return f"Failed to initialize Git repository:\n{exc}"
+
+        if git_url:
+            try:
+                result = git_fn(
+                    local_path, "remote", "get-url",
+                    "origin", check=False,
+                )
+                if result.returncode == 0:
+                    git_fn(local_path, "remote", "set-url", "origin", git_url)
+                    if logger:
+                        logger.info("Updated remote 'origin' to %s", git_url)
+                else:
+                    git_fn(local_path, "remote", "add", "origin", git_url)
+                    if logger:
+                        logger.info("Added remote 'origin': %s", git_url)
+            except Exception as exc:
+                return f"Failed to configure remote:\n{exc}"
+
+    # A repo with no commits (fresh init, or clone of an empty remote) has an
+    # unborn HEAD; give it a root commit so the push pipeline can stash,
+    # branch, and return to this branch reliably.
+    head_check = git_fn(local_path, "rev-parse", "--verify", "-q", "HEAD", check=False)
+    if head_check.returncode != 0:
         try:
-            result = git_fn(
-                local_path, "remote", "get-url",
-                "origin", check=False,
-            )
-            if result.returncode == 0:
-                git_fn(local_path, "remote", "set-url", "origin", git_url)
-                if logger:
-                    logger.info("Updated remote 'origin' to %s", git_url)
-            else:
-                git_fn(local_path, "remote", "add", "origin", git_url)
-                if logger:
-                    logger.info("Added remote 'origin': %s", git_url)
+            git_fn(local_path, "commit", "--allow-empty", "-m", "Initialize repository")
+            if logger:
+                logger.info("Created initial empty commit in %s", local_path)
         except Exception as exc:
-            return f"Failed to configure remote:\n{exc}"
+            return (
+                "Failed to create the repository's initial commit. Make sure git "
+                f"user.name and user.email are configured.\n{exc}"
+            )
 
     return None
 
@@ -217,6 +266,7 @@ def setup_new_repository(
 __all__ = [
     "convert_github_url",
     "default_path_for_new_repo",
+    "derive_repo_name_from_url",
     "setup_new_repository",
     "validate_repo_inputs",
 ]

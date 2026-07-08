@@ -32,7 +32,7 @@ Full documentation suite organized by user type and task.
 
 ### Key Features
 - ✅ **One-click export** to GitHub repositories
-- ✅ **Multiple export formats** (F3D, STEP, STL, DXF, IGES)
+- ✅ **Multiple export formats** (F3D, STEP, STL, IGES, SAT)
 - ✅ **Automatic branching** with customizable naming
 - ✅ **Secure credential storage** via Windows Credential Manager
 - ✅ **Professional Git workflow** with stash/pull/push

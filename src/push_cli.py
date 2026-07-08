@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -142,19 +144,45 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.pat_token:
         pat_credentials = {"username": args.pat_username or "", "token": args.pat_token}
 
+    # Snapshot the files now and let the pipeline re-materialize them after
+    # the export branch is created. Otherwise the pipeline's auto-stash would
+    # sweep away untracked/modified files before they can be committed.
+    snapshot_dir = None
+    materialize = None
+    if files_to_add:
+        snapshot_dir = tempfile.mkdtemp(prefix="fusion_cli_snapshot_")
+        snapshot_map = {}
+        for index, dest_path in enumerate(files_to_add):
+            snap_path = os.path.join(snapshot_dir, f"{index}_{os.path.basename(dest_path)}")
+            shutil.copy2(dest_path, snap_path)
+            snapshot_map[dest_path] = snap_path
+
+        def materialize() -> list[str]:
+            for dest_path, snap_path in snapshot_map.items():
+                dest_dir = os.path.dirname(dest_path)
+                if dest_dir:
+                    os.makedirs(dest_dir, exist_ok=True)
+                shutil.copy2(snap_path, dest_path)
+            return list(snapshot_map)
+
     logger.info("FusionToGitHub CLI harness %s", VERSION)
-    result = handle_git_operations(
-        str(repo_path),
-        files_to_add,
-        args.commit_template,
-        args.branch_template,
-        ui,
-        args.design_name,
-        branch_override=args.branch_override,
-        skip_pull=args.skip_pull,
-        pat_credentials=pat_credentials,
-        logger=logger,
-    )
+    try:
+        result = handle_git_operations(
+            str(repo_path),
+            [],
+            args.commit_template,
+            args.branch_template,
+            ui,
+            args.design_name,
+            branch_override=args.branch_override,
+            skip_pull=args.skip_pull,
+            pat_credentials=pat_credentials,
+            logger=logger,
+            materialize_files=materialize,
+        )
+    finally:
+        if snapshot_dir:
+            shutil.rmtree(snapshot_dir, ignore_errors=True)
 
     if not result:
         logger.error("Git pipeline aborted or failed. See output above for details.")
@@ -164,6 +192,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         "Push completed via CLI harness:",
         f"  • Branch: {result.get('branch')}",
     ]
+    if result.get("reused_branch"):
+        summary.append("  • Added a new commit to the existing branch")
     if result.get("force_push"):
         summary.append("  • Force push was used (--force-with-lease)")
     if result.get("stashed"):
