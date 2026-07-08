@@ -13,10 +13,12 @@
    ```
    FusionToGitHub/                   # Create this folder
    ├── Push_To_GitHub.py            # Main add-in file
-   ├── Push_To_GitHub.manifest      # Add-in manifest  
+   ├── Push_To_GitHub.manifest      # Add-in manifest
+   ├── AddInIcon.svg                # Add-in icon (referenced by manifest)
    ├── fusion_git_core.py           # Core git operations (REQUIRED)
    ├── dialog_helpers.py            # Dialog/setup helpers (REQUIRED)
-   └── push_cli.py                  # CLI harness (optional)
+   ├── push_cli.py                  # CLI harness (optional)
+   └── diagnostic.py                # Diagnostic script (optional)
    ```
    
    **All files must be in the same directory** for proper module imports.
@@ -45,7 +47,6 @@ FusionToGitHub/
 ├── src/                          # Source code (copy to Fusion)
 ├── docs/                         # Complete documentation
 ├── tests/                        # Testing framework
-├── assets/                       # Icons and assets
 └── README.md                     # Project overview
 ```
 
