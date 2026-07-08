@@ -197,6 +197,7 @@ class TestRunner:
                 ("https://github.com/user/repo/blob/main/f.py", "https://github.com/user/repo.git"),
                 ("https://www.github.com/user/repo", "https://github.com/user/repo.git"),
                 ("github.com/user/repo", "https://github.com/user/repo.git"),
+                ("github.com/user/repo.git", "https://github.com/user/repo.git"),
                 ("https://github.com/user/repo.git", "https://github.com/user/repo.git"),
                 ("git@github.com:user/repo.git", "git@github.com:user/repo.git"),
                 ("https://gitlab.com/user/repo", "https://gitlab.com/user/repo"),
@@ -892,6 +893,76 @@ class TestRunner:
         finally:
             self._cleanup_dir(base_dir)
 
+    def test_pipeline_reused_branch_sync(self):
+        """T_PIPE_08: a reused override branch is synced with origin first."""
+        self.log_test_start("T_PIPE_08", "Pipeline: reused branch syncs with origin")
+        base_dir = tempfile.mkdtemp(prefix="fusion_pipe8_")
+        try:
+            from fusion_git_core import git_run, handle_git_operations
+
+            origin, work, branch = self._make_seeded_remote(base_dir)
+            export_path = os.path.join(work, "model.step")
+
+            def run_push(content):
+                ui = _PipelineTestUI()
+                result = handle_git_operations(
+                    work,
+                    [],
+                    "Design update: {filename}",
+                    "fusion-export/{filename}-{timestamp}",
+                    ui,
+                    "TestDesign",
+                    branch_override="my-export",
+                    materialize_files=self._write_file_materializer(export_path, content),
+                )
+                return result, ui
+
+            ok = True
+            details = []
+
+            result1, ui1 = run_push("EXPORT v1")
+            if not result1:
+                ok = False
+                details.append(f"first push failed: {ui1.errors}")
+
+            # Another machine adds a commit to the same branch on origin,
+            # leaving the local my-export behind.
+            other = os.path.join(base_dir, "other")
+            git_run(base_dir, "clone", "--branch", "my-export", origin, other)
+            with open(os.path.join(other, "notes.txt"), "w", encoding="utf-8") as fh:
+                fh.write("added elsewhere\n")
+            git_run(other, "add", "notes.txt")
+            git_run(other, "commit", "-m", "remote-side commit")
+            git_run(other, "push", "origin", "my-export")
+
+            result2, ui2 = run_push("EXPORT v2")
+            if not result2 or result2.get("cancelled"):
+                ok = False
+                details.append(f"second push failed (sync regression): {ui2.errors}")
+            else:
+                if result2.get("force_push"):
+                    ok = False
+                    details.append("sync should avoid force push")
+                pushed = git_run(origin, "show", "my-export:model.step", check=False)
+                if pushed.returncode != 0 or pushed.stdout.strip() != "EXPORT v2":
+                    ok = False
+                    details.append(f"pushed content wrong: {pushed.stdout!r}")
+                # Remote-side commit must survive the reuse push.
+                notes = git_run(origin, "show", "my-export:notes.txt", check=False)
+                if notes.returncode != 0 or notes.stdout.strip() != "added elsewhere":
+                    ok = False
+                    details.append("remote-side commit was lost")
+
+            self.record_result(
+                "T_PIPE_08", "Pipeline: reused branch syncs with origin", ok, "; ".join(details)
+            )
+        except Exception as e:
+            self.record_result(
+                "T_PIPE_08", "Pipeline: reused branch syncs with origin", False, str(e)
+            )
+        finally:
+            self._cleanup_dir(base_dir)
+
     def run_pipeline_tests(self):
         """Run git pipeline integration tests."""
         print("\n=== Pipeline Integration Tests ===")
@@ -914,6 +985,7 @@ class TestRunner:
             self.test_pipeline_cli_end_to_end()
             self.test_pipeline_branch_override_reuse()
             self.test_pipeline_template_branch_uniquify()
+            self.test_pipeline_reused_branch_sync()
         finally:
             for key, value in saved.items():
                 if value is None:

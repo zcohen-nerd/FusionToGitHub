@@ -32,10 +32,8 @@ def convert_github_url(url: str) -> str:
     if not url:
         return url
 
-    # Already a proper Git URL – keep as-is
-    if url.endswith(".git"):
-        return url
-
+    # The pattern tolerates an existing .git suffix, so complete clone URLs
+    # come back unchanged while scheme-less ones still gain https://.
     match = _GITHUB_WEB_URL_RE.match(url)
     if match:
         user, repo = match.groups()
