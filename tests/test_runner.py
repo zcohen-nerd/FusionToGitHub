@@ -261,12 +261,21 @@ class TestRunner:
                     base_cmd + ["Password for 'https://github.com':"],
                     capture_output=True, text=True, env=run_env,
                 ).stdout.strip()
+                # A password prompt whose URL contains the word "username"
+                # must still yield the token (anchored prompt matching).
+                out_tricky = subprocess.run(
+                    base_cmd + ["Password for 'https://myusername@github.com':"],
+                    capture_output=True, text=True, env=run_env,
+                ).stdout.strip()
                 if out_user != username:
                     ok = False
                     details.append(f"username echo wrong: {out_user!r}")
                 if out_token != token:
                     ok = False
                     details.append(f"token echo wrong: {out_token!r}")
+                if out_tricky != token:
+                    ok = False
+                    details.append(f"username-in-URL password prompt returned {out_tricky!r}")
 
             if os.path.exists(script_path):
                 ok = False

@@ -551,6 +551,71 @@ def check_git_available(
     return False
 
 
+def ensure_git_identity(
+    target_ui_ref: adsk.core.UserInterface,
+    repo_path: Optional[str] = None,
+) -> bool:
+    """Make sure git can create commits (user.name and user.email are set).
+
+    First-time Git installs have no identity configured, and the resulting
+    "Please tell me who you are" failure is unactionable for non-developers.
+    Prompt for the missing values and store them in the global git config.
+    Returns False only if the user cancelled.
+    """
+    probe_cwd = repo_path if repo_path and os.path.isdir(repo_path) else os.path.expanduser("~")
+
+    def _config_value(key: str) -> str:
+        proc = _git(probe_cwd, "config", key, check=False)
+        return (proc.stdout or "").strip() if proc.returncode == 0 else ""
+
+    try:
+        name_val = _config_value("user.name")
+        email_val = _config_value("user.email")
+        if name_val and email_val:
+            return True
+
+        if not name_val:
+            default_name = os.environ.get("USERNAME") or os.environ.get("USER") or ""
+            name_val, cancelled = target_ui_ref.inputBox(
+                "Git labels every snapshot with a name.\n"
+                "Enter your name (saved once in your Git settings):",
+                CMD_NAME,
+                default_name,
+            )
+            if cancelled or not name_val.strip():
+                target_ui_ref.messageBox(
+                    "A name is required so Git can record who made each snapshot.\n"
+                    "Push cancelled.",
+                    CMD_NAME,
+                )
+                return False
+        if not email_val:
+            email_val, cancelled = target_ui_ref.inputBox(
+                "Enter your email address (only used to label your snapshots):",
+                CMD_NAME,
+                "",
+            )
+            if cancelled or not email_val.strip():
+                target_ui_ref.messageBox(
+                    "An email address is required so Git can record who made each snapshot.\n"
+                    "Push cancelled.",
+                    CMD_NAME,
+                )
+                return False
+
+        _git(probe_cwd, "config", "--global", "user.name", name_val.strip())
+        _git(probe_cwd, "config", "--global", "user.email", email_val.strip())
+        if logger:
+            logger.info("Configured global git identity for first-time use.")
+        return True
+    except Exception:
+        if logger:
+            logger.exception("Failed to verify or configure git identity")
+        # Don't block the push on a failed pre-check: if the identity really
+        # is missing, the commit step will surface its own error.
+        return True
+
+
 def load_config() -> dict:
     global logger, ui
     if not os.path.exists(CONFIG_PATH):
@@ -1411,7 +1476,11 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                         sync_format_settings_rows()
                     elif input_id == "branchPreview":
                         preview_input = inputs.itemById("branchPreview")
-                        if preview_input:
+                        # Blank means "no override" — never sanitize an empty
+                        # value, because sanitize_branch_name() would fill in
+                        # its "fusion-export" fallback and silently turn every
+                        # push into an explicit branch override.
+                        if preview_input and preview_input.value.strip():
                             sanitized = sanitize_branch_name(preview_input.value)
                             if sanitized != preview_input.value:
                                 preview_input.value = sanitized
@@ -1554,6 +1623,16 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                         default_message_tpl_val = cmd_inputs.itemById("defaultMessageConfig").value.strip() or "Design update: {filename}"
                         branch_format_tpl_val = cmd_inputs.itemById("branchFormatConfig").value.strip() or "fusion-export/{filename}-{timestamp}"
 
+                        # Git checks come before any repo setup: the setup and
+                        # push steps both create commits, which need a working
+                        # git and a configured identity.
+                        if not check_git_available(current_ui_ref):
+                            execute_args.executeFailed = True
+                            return
+                        if not ensure_git_identity(current_ui_ref, normalized_repo_path or None):
+                            execute_args.executeFailed = True
+                            return
+
                         # ADD NEW
                         if selected_action == ADD_NEW_OPTION:
                             repo_name_to_add = cmd_inputs.itemById("newRepoName").value.strip()
@@ -1576,14 +1655,6 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                                 )
                                 execute_args.executeFailed = True
                                 return
-                            if repo_name_to_add in current_config:
-                                current_ui_ref.messageBox(
-                                    f"Repo '{repo_name_to_add}' already exists.",
-                                    CMD_NAME,
-                                )
-                                execute_args.executeFailed = True
-                                return
-
                             local_path = normalized_repo_path or os.path.join(REPO_BASE_DIR, repo_name_to_add)
                             if auto_path_state.get("auto", True):
                                 # The auto path tracks the repo name; recompute in
@@ -1591,6 +1662,36 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                                 local_path = _default_path_for_new_repo(
                                     repo_name_to_add, REPO_BASE_DIR, _safe_base
                                 )
+
+                            existing_entry = current_config.get(repo_name_to_add)
+                            if existing_entry is not None:
+                                stored_path = os.path.normcase(
+                                    os.path.normpath(os.path.expanduser(existing_entry.get("path") or ""))
+                                )
+                                candidate_path = os.path.normcase(os.path.normpath(local_path))
+                                same_repo = (
+                                    stored_path == candidate_path
+                                    and (existing_entry.get("url") or "") == (git_url or "")
+                                )
+                                if not same_repo:
+                                    current_ui_ref.messageBox(
+                                        f"Repo '{repo_name_to_add}' already exists with a different "
+                                        "URL or folder. Pick a different name, or select the saved "
+                                        "repository from the dropdown instead.",
+                                        CMD_NAME,
+                                    )
+                                    execute_args.executeFailed = True
+                                    return
+                                # Same name, URL, and folder: a re-submit of the same
+                                # setup (e.g. retrying after a failed push while the
+                                # dialog stayed open). Continue instead of erroring —
+                                # the setup steps below are idempotent.
+                                if logger:
+                                    logger.info(
+                                        "Repository '%s' already configured with matching settings; continuing.",
+                                        repo_name_to_add,
+                                    )
+
                             parent_dir = os.path.dirname(local_path)
                             if parent_dir and not os.path.exists(parent_dir):
                                 os.makedirs(parent_dir, exist_ok=True)
@@ -1722,9 +1823,6 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                                 execute_args.executeFailed = True
                                 return
 
-                        if not check_git_available(current_ui_ref):
-                            execute_args.executeFailed = True
-                            return
                         design = get_fusion_design()
                         if not design:
                             current_ui_ref.messageBox("No active Fusion design.", CMD_NAME)

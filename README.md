@@ -91,7 +91,9 @@ You only do this once per project.
 
 The add-in sets everything up **and pushes your first backup right away**. From now on, your project appears in the dropdown, ready to use.
 
-> The first time you push, a window may pop up asking you to **sign in to GitHub** — that's normal. Follow the prompts once and it remembers you.
+> **Two one-time questions may pop up on your first push — both are normal:**
+> 1. The add-in may ask for **your name and email**. Git stamps every snapshot with them, like signing your work. Type them once and you're done.
+> 2. A window may ask you to **sign in to GitHub**. Follow the prompts once and it remembers you.
 
 ---
 

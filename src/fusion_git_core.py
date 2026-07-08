@@ -103,14 +103,18 @@ def git_askpass_env(username: str, token: str):
     )
 
     if IS_WINDOWS:
-        # Delayed expansion (!VAR!) keeps special characters in the values
-        # from being re-parsed by cmd; 'if defined' avoids the literal
-        # '!VAR!' output cmd produces for undefined delayed variables.
+        # The prompt kind is decided by an anchored prefix test, not a
+        # substring search: a password prompt like
+        # "Password for 'https://myusername@github.com':" contains the word
+        # "username" and must still yield the token. Delayed expansion
+        # (!VAR!) keeps special characters in the values from being
+        # re-parsed by cmd; 'if defined' avoids the literal '!VAR!' output
+        # cmd produces for undefined delayed variables.
         script_contents = (
             "@echo off\n"
             "setlocal EnableDelayedExpansion\n"
-            'echo %* | findstr /I "Username" >nul\n'
-            "if %errorlevel%==0 (\n"
+            'set "PROMPT_ARG=%~1"\n'
+            'if /I "!PROMPT_ARG:~0,12!"=="Username for" (\n'
             "    if defined FUSION_GIT_ASKPASS_USERNAME (\n"
             "        echo(!FUSION_GIT_ASKPASS_USERNAME!\n"
             "    ) else (\n"
@@ -121,10 +125,11 @@ def git_askpass_env(username: str, token: str):
             ")\n"
         )
     else:
+        # Same anchored prefix test as the Windows script (see above).
         script_contents = (
             "#!/bin/sh\n"
             'case "$1" in\n'
-            "  *[Uu]sername* ) printf '%s\\n' \"$FUSION_GIT_ASKPASS_USERNAME\" ;;\n"
+            "  [Uu]\"sername for \"* ) printf '%s\\n' \"$FUSION_GIT_ASKPASS_USERNAME\" ;;\n"
             "  * ) printf '%s\\n' \"$FUSION_GIT_ASKPASS_TOKEN\" ;;\n"
             "esac\n"
         )
