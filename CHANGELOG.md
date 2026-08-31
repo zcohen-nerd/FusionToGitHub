@@ -14,12 +14,12 @@ The add-in now reports **one** version everywhere it is visible — the runtime
 UI/log load banner, the docs, and the Git tag all read `0.3.1`.
 
 - **Version consolidation.** Earlier `main` carried an internal `V7.7` label
-  that never matched the public `0.3` tag/release, and the two `0.3` and
-  `0.3.1` tag snapshots created before this release contained inconsistent
-  internal metadata. All product/test/doc references to the old label are
-  removed; a new `T_VERSION` test enforces cross-surface consistency.
-  **The immutable `0.3` and `0.3.1` tags are not moved or rewritten** — this
-  release is the first internally consistent one, cut from the matching commit.
+  that never matched the public `0.3` tag/release; the `0.3` tag snapshot's
+  runtime and manifest also disagreed with parts of its own documentation. All
+  product/test/doc references to the old label are removed and a new `T_VERSION`
+  test enforces cross-surface consistency. **The immutable `0.3` tag is not
+  moved or rewritten** — `0.3.1` is the first internally consistent release,
+  cut from the commit where every surface agrees.
 - **`push_cli.py --version`** added.
 - **README** — the "keeps every version forever / nothing is ever overwritten"
   language is rephrased: a successful push creates Git history, and this add-in
