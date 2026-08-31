@@ -173,10 +173,10 @@ Automated test execution for rapid feedback.
 #### **👥 Team Leaders (Managing Teams)**
 1. **[TEAM_GUIDE.md](TEAM_GUIDE.md)** - Team setup and workflows
 2. **[USER_GUIDE.md](USER_GUIDE.md)** - Complete feature understanding
-3. **[MANUAL_TESTS.md](MANUAL_TESTS.md)** - Validation procedures
+3. **[MANUAL_TESTS.md](../tests/MANUAL_TESTS.md)** - Validation procedures
 
 #### **🔧 Technical Users (QA/Development)**
-1. **[TESTING.md](TESTING.md)** - Comprehensive test procedures
+1. **[TESTING.md](../tests/TESTING.md)** - Comprehensive test procedures
 2. **[../tests/test_runner.py](../tests/test_runner.py)** - Automated testing
 3. **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Deep diagnostics
 
@@ -192,15 +192,15 @@ Automated test execution for rapid feedback.
 
 #### **🚨 Problem Resolution**
 - **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Comprehensive problem solving
-- **[MANUAL_TESTS.md](MANUAL_TESTS.md)** - Validation testing
+- **[MANUAL_TESTS.md](../tests/MANUAL_TESTS.md)** - Validation testing
 
 #### **👥 Team Collaboration**
 - **[TEAM_GUIDE.md](TEAM_GUIDE.md)** - Complete team workflows
 - **[USER_GUIDE.md](USER_GUIDE.md)** - Collaboration features
 
 #### **✅ Quality Assurance**
-- **[TESTING.md](TESTING.md)** - Systematic test plan
-- **[MANUAL_TESTS.md](MANUAL_TESTS.md)** - Quick validation
+- **[TESTING.md](../tests/TESTING.md)** - Systematic test plan
+- **[MANUAL_TESTS.md](../tests/MANUAL_TESTS.md)** - Quick validation
 - **[../tests/test_runner.py](../tests/test_runner.py)** - Automated testing
 
 ---
@@ -217,8 +217,8 @@ Automated test execution for rapid feedback.
 | **Fix a problem** | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Variable |
 | **Set up team collaboration** | [TEAM_GUIDE.md](TEAM_GUIDE.md) | 45 min |
 | **Quick command lookup** | [QUICK_REFERENCE.md](QUICK_REFERENCE.md) | 5 min |
-| **Test functionality** | [MANUAL_TESTS.md](MANUAL_TESTS.md) | 10-60 min |
-| **Validate completely** | [TESTING.md](TESTING.md) | 2-3 hours |
+| **Test functionality** | [MANUAL_TESTS.md](../tests/MANUAL_TESTS.md) | 10-60 min |
+| **Validate completely** | [TESTING.md](../tests/TESTING.md) | 2-3 hours |
 
 ---
 

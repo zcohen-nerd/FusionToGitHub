@@ -20,7 +20,7 @@ This document summarizes the comprehensive testing framework created for the Fus
 
 ### 2. **MANUAL_TESTS.md** - Fusion 360 Manual Checklist
 - **Purpose**: Streamlined manual testing within Fusion 360 environment
-- **Scope**: 16 focused tests covering core functionality through integration
+- **Scope**: 18 focused tests covering core functionality through integration
 - **Time Investment**: 3-minute smoke test to 60-minute comprehensive suite
 - **Target Audience**: End users, quick validation, acceptance testing
 
@@ -32,7 +32,7 @@ This document summarizes the comprehensive testing framework created for the Fus
 
 ### 3. **test_runner.py** - Automated Test Execution
 - **Purpose**: Automated validation of programmatically testable components
-- **Scope**: 17 automated tests covering environment, modules, git
+- **Scope**: 18 automated tests covering environment, modules, git
   operations, and end-to-end pipeline scenarios against local repositories
 - **Execution Time**: under a minute for the complete suite
 - **Target Audience**: Developers, CI/CD integration, rapid feedback
@@ -98,8 +98,8 @@ fi
 ## Quality Metrics
 
 ### Automated Test Results (Last Run)
-- **Tests Executed**: 17
-- **Pass Rate**: 100% (17/17)
+- **Tests Executed**: 18
+- **Pass Rate**: 100% (18/18)
 - **Execution Time**: under a minute
 - **Environment**: CI matrix — Ubuntu & Windows, Python 3.10–3.12
 

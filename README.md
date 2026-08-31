@@ -149,6 +149,71 @@ The add-in explains problems in plain messages, keeps your work safe, and never 
 
 ---
 
+## Security & your GitHub credentials
+
+Short version:
+
+- **By default**, the add-in doesn't touch your credentials at all — it runs
+  `git`, and Git's own Credential Manager handles the one-time browser sign-in.
+- **Optionally (Windows)**, you can store a Personal Access Token via
+  **Manage Token…**; it goes into Windows Credential Manager and is passed to
+  Git through a throwaway helper that never writes it to disk.
+- Prefer a **fine-grained token** limited to the one repository, with
+  **Contents: Read and write** and nothing else.
+- **Never** put a token in a repo file, a remote URL, a commit message, a
+  screenshot, or a bug report. If one leaks, revoke it on GitHub right away.
+
+Full details — exactly what is stored where, how to delete vs. revoke a token,
+and how to report a security problem — are in **[SECURITY.md](SECURITY.md)**.
+
+---
+
+## Status, supported versions, and known limits
+
+- **Release:** the tagged GitHub release is **`0.3`** (March 2025). `main` is
+  substantially ahead of it — reliability and credential-handling were
+  overhauled since (the code identifies internally as `V7.7`). Until a newer
+  release is cut, install from `main` (Download ZIP / clone). See
+  [`docs/RELEASE_NOTES_DRAFT.md`](docs/RELEASE_NOTES_DRAFT.md) for what changed.
+- **Operating system:** Windows or macOS. The optional **stored-token** feature
+  is **Windows-only**; on macOS you rely on Git Credential Manager's browser
+  sign-in.
+- **Autodesk Fusion:** current Fusion, any recent version — it uses the stable
+  design-export API (F3D / STEP / STL / IGES / SAT). DWG/DXF are intentionally
+  not offered; Fusion's export API does not produce them.
+- **Git:** a recent Git (2.20+) with **Git Credential Manager** enabled — the
+  default in modern Git for Windows / macOS installers. `git` must be on `PATH`
+  (or at the Windows fallback `C:\Program Files\Git\bin\git.exe`).
+- **You create the GitHub repository yourself** on github.com; the add-in never
+  creates one via the API.
+- **Every push makes a new branch** (`fusion-export/<design>-<timestamp>`); it
+  never pushes straight to `main`. Merging snapshots into `main` is a manual
+  step — see the [Team Guide](docs/TEAM_GUIDE.md).
+- **Backups:** this backs up *exported* CAD files to a Git branch. It is a
+  complement to, not a replacement for, Fusion's own cloud version history.
+  Keep both. Uncommitted changes in the target local repo are auto-stashed and
+  restored; if a restore fails, the add-in tells you how to recover them.
+- **History grows:** every version of every export is kept forever, and CAD
+  files are binary — a long-lived backup repo can get large (there is no Git
+  LFS integration).
+- **Automated tests:** 18, run in CI on Ubuntu + Windows across Python
+  3.10–3.12 (`python tests/test_runner.py`). The Fusion UI itself is verified
+  by the manual checklist in [`tests/MANUAL_TESTS.md`](tests/MANUAL_TESTS.md).
+
+### First success, end to end
+
+1. Create an (empty) repo on [github.com/new](https://github.com/new) — Private
+   is fine — and copy its URL.
+2. Install the add-in (above) and click **Push to GitHub** in Fusion.
+3. Leave the dropdown on **"Set up new GitHub repository…"**, paste the URL,
+   pick a local folder, click **OK**.
+4. Answer the two one-time prompts if they appear (your Git name/email, then a
+   GitHub sign-in window).
+5. The first backup pushes automatically. After that: open a design → click the
+   button → type a note → **OK**.
+
+---
+
 ## More documentation
 
 | Guide | What's in it |
@@ -171,7 +236,7 @@ The add-in explains problems in plain messages, keeps your work safe, and never 
 - **Export Subfolder** — keep exports organized in a folder inside the repository (e.g. `exports/`)
 - **Branch Name Override** — push to a specific branch name of your choosing; if the branch already exists, the add-in asks and then adds the new version to it
 - **Force Push (skip pull)** — for when your local copy and GitHub disagree and you want your version to win
-- **Use Stored Token** (Windows) — store a GitHub Personal Access Token in Windows Credential Manager so you're never asked to sign in; set it up via **Manage Token…** in the Advanced section
+- **Use Stored Token** (Windows only) — store a GitHub Personal Access Token in Windows Credential Manager so you're never asked to sign in; set it up via **Manage Token…** in the Advanced section. Prefer a **fine-grained** token scoped to just this repo with **Contents: Read and write** — see [SECURITY.md](SECURITY.md).
 - **Log Level** — turn on DEBUG logging when investigating a problem
 
 </details>
@@ -181,7 +246,7 @@ The add-in explains problems in plain messages, keeps your work safe, and never 
 
 **Project layout**: the add-in lives in [`src/`](src) (`Push_To_GitHub.py` is the Fusion UI; `fusion_git_core.py` and `dialog_helpers.py` are Fusion-free modules), docs in [`docs/`](docs), tests in [`tests/`](tests).
 
-**Testing** — 16 automated tests, including end-to-end git pipeline tests against local repositories:
+**Testing** — 18 automated tests, including end-to-end git pipeline tests against local repositories:
 
 ```
 python tests/test_runner.py

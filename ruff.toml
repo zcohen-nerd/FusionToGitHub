@@ -1,0 +1,16 @@
+# Ruff configuration for FusionToGitHub.
+#
+# CI installs ruff unpinned (`pip install ruff`). Newer ruff releases enable
+# additional style/modernization rules by default, which would turn a green
+# lint job red without any code change. This pins the rule set to the classic
+# default (real bugs only: pyflakes + syntax/runtime pycodestyle) so
+# `ruff check` is deterministic across ruff versions.
+#
+# The source is clean under this set. Broader style cleanup (pep604 typing,
+# import sorting, etc.) can be adopted later as its own change.
+
+target-version = "py310"
+line-length = 100
+
+[lint]
+select = ["E4", "E7", "E9", "F"]

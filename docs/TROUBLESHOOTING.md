@@ -44,7 +44,7 @@ python -c "import os, subprocess, tempfile"
 ```
 
 **Solutions**:
-1. **Python compatibility**: Ensure Python 3.8+ is installed
+1. **Python compatibility**: the add-in runs inside Fusion's bundled Python — you do not install Python for it. The optional CLI harness and the test suite need Python 3.10+.
 2. **Module issues**: All required modules are built-in to Python
 3. **File corruption**: Re-download and reinstall add-in files
 
@@ -80,20 +80,25 @@ python -c "import os, subprocess, tempfile"
 
 **Symptoms**: Can't push to GitHub, authentication errors
 
-**Check Personal Access Token**:
-1. **Verify PAT is valid**:
-   - Go to GitHub → Settings → Developer settings → Personal access tokens
-   - Check token hasn't expired
-   - Ensure `repo` scope is selected
+**Check your token** (see [SECURITY.md](../SECURITY.md) for the full guidance):
+1. **Verify the token is valid**:
+   - GitHub → Settings → Developer settings → Personal access tokens
+   - Check it hasn't expired
+   - Fine-grained token: it must include the target repo with **Contents:
+     Read and write**. Classic token: it must have the **`repo`** scope.
 
-2. **Test PAT manually**:
+2. **Test access without embedding the token in a URL** (never put a token in a
+   remote URL — it gets written to `.git/config`):
    ```bash
-   git clone https://YOUR_TOKEN@github.com/username/repository.git
+   cd "C:\path\to\your\local\repo"
+   git ls-remote origin
    ```
+   If that prompts for a sign-in and succeeds, Git's Credential Manager is
+   working. If it fails, the token/permissions are the problem.
 
 3. **Re-enter credentials**:
-   - In add-in dialog (**Advanced**): "Manage Token…"
-   - Enter fresh token
+   - In the add-in dialog (**Advanced**): "Manage Token…"
+   - Enter a fresh token
    - Retry the export/push
 
 4. **Check repository access**:
@@ -251,10 +256,10 @@ python -c "import os, subprocess, tempfile"
 **Symptoms**: Authentication works but operations fail
 
 **Solutions**:
-1. **Check PAT scopes**:
-   - Go to GitHub → Settings → Developer settings
-   - Edit your token
-   - Ensure `repo` scope is selected
+1. **Check token permissions** (details in [SECURITY.md](../SECURITY.md)):
+   - GitHub → Settings → Developer settings → your token
+   - Fine-grained: the repo is listed, with **Contents: Read and write**
+   - Classic: the **`repo`** scope is selected
 
 2. **Organization permissions**:
    - For org repositories, check org settings

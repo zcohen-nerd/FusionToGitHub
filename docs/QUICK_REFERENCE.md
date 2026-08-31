@@ -49,19 +49,23 @@ Supported placeholders: `{filename}` (design name) and `{timestamp}`
 
 ---
 
-## 🔐 Personal Access Token (PAT) Setup
+## 🔐 Personal Access Token (PAT) Setup — optional, Windows only
 
-### Quick Setup
-1. GitHub → Settings → Developer settings → Personal access tokens
-2. Generate new token (classic)
-3. Select scope: **repo** (Full control of private repositories)
-4. Copy token
-5. In add-in: Advanced → "Use Stored Token" → "Manage Token…" → Paste token
+Most people never set this up: the first push opens a browser sign-in and Git
+remembers you. Full guidance: [SECURITY.md](../SECURITY.md).
 
-### PAT Permissions Needed
-- ✅ **repo** - Access repositories
-- ✅ **workflow** - Update GitHub Actions (if used)
-- ❌ **admin** - Not needed for basic use
+### Quick setup (fine-grained token — preferred)
+1. GitHub → Settings → Developer settings → **Fine-grained tokens** → Generate
+2. **Repository access:** only the repo you back up
+3. **Permissions:** **Contents → Read and write** (only)
+4. Copy the token
+5. In add-in: Advanced → "Use Stored Token" → "Manage Token…" → paste token
+
+### Permissions needed
+- ✅ **Contents: Read and write** — the only thing a push needs
+- ❌ Administration, Workflows, Secrets, account/org permissions — **not used**
+- Classic-token fallback (only if your org blocks fine-grained): **`repo`** scope
+  — broad; grants access to all your repos
 
 ---
 

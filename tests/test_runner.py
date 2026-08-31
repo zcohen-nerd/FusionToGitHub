@@ -237,8 +237,10 @@ class TestRunner:
         try:
             from fusion_git_core import IS_WINDOWS, git_askpass_env
 
-            username = "user@example.com"
-            token = "ghp_SecretToken123&x%y"
+            username = "test-fixture-user@example.invalid"
+            # Deliberately NOT shaped like a real GitHub token (no ghp_/github_pat_
+            # prefix). The "&x%y" keeps the shell/cmd metacharacter coverage.
+            token = "EXAMPLE-not-a-real-token-&x%y"  # noqa: S105 - test fixture, not a credential
             ok = True
             details = []
             with git_askpass_env(username, token) as env_map:

@@ -45,18 +45,25 @@ Should display: `git version 2.x.x`
 2. Sign up for free account (or use existing account)
 3. Verify your email address
 
-### Generate Personal Access Token (PAT)
+### Generate a Personal Access Token (optional, Windows only)
 
-1. **Login to GitHub** → Click profile picture → **Settings**
-2. **Developer settings** (bottom of left sidebar)
-3. **Personal access tokens** → **Tokens (classic)**
-4. **Generate new token (classic)**
-5. **Configure token**:
-   - **Note**: "FusionToGitHub Add-in"
-   - **Expiration**: Choose appropriate duration (90 days recommended)
-   - **Scopes**: Select **repo** (Full control of private repositories)
-6. **Generate token** and **copy immediately** (you won't see it again!)
-7. **Save token securely** (password manager recommended)
+You usually don't need this — on the first push, Git's Credential Manager opens
+a browser sign-in and remembers you. A stored token is only for the Windows
+"Use Stored Token" option. **[SECURITY.md](../SECURITY.md) is the authoritative
+guide**; in brief:
+
+1. **GitHub** → profile picture → **Settings** → **Developer settings**
+2. **Personal access tokens → Fine-grained tokens → Generate new token**
+   *(preferred)*
+3. **Configure**:
+   - **Repository access**: *Only select repositories* → pick the repo you back up
+   - **Permissions**: **Contents → Read and write** (nothing else)
+   - **Expiration**: the shortest that is practical; renew it
+4. **Generate** and **copy immediately** (you won't see it again).
+5. If your organization blocks fine-grained tokens, use a **classic** token with
+   the **`repo`** scope instead — note this grants access to *all* your repos.
+6. Do not save the token in a file inside a repo. The add-in's Manage Token…
+   dialog stores it in Windows Credential Manager for you.
 
 ---
 
@@ -247,8 +254,9 @@ git clone https://github.com/YOUR_USERNAME/fusion-test-repo.git
 
 ### Authentication fails
 
-**Check**: Personal Access Token validity and permissions
-**Solution**: Generate new PAT with `repo` scope
+**Check**: token validity and permissions ([SECURITY.md](../SECURITY.md))
+**Solution**: issue a fresh fine-grained token with **Contents: Read and write**
+on the repo (or a classic token with `repo` scope)
 
 ### Connection test fails
 
