@@ -5,7 +5,7 @@
 	"description":	{
 		"":	"Integrates Fusion with GitHub, allowing users to push designs to repositories."
 	},
-	"version":	"7.7",
+	"version":	"0.3",
 	"runOnStartup":	true,
 	"supportedOS":	"windows|mac",
 	"editEnabled":	true,

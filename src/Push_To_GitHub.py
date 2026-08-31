@@ -1,6 +1,6 @@
-"""Push to GitHub (ZAC) — V7.7
+"""Push to GitHub (ZAC) — 0.3
 Export → changelog → branch → commit → push.
-V7.7 formalizes dependency packaging and adds an offline CLI harness.
+This release formalizes dependency packaging and adds an offline CLI harness.
 """
 
 from __future__ import annotations

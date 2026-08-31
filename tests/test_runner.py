@@ -126,7 +126,7 @@ class TestRunner:
         self.log_test_start("T004", "fusion_git_core module import")
         try:
             import fusion_git_core
-            version_ok = fusion_git_core.VERSION == "V7.7"
+            version_ok = fusion_git_core.VERSION == "0.3"
             msg = f"Version: {fusion_git_core.VERSION}"
             self.record_result("T004", "fusion_git_core module import", version_ok, msg)
         except Exception as e:
@@ -438,7 +438,7 @@ class TestRunner:
             import push_cli  # noqa: F401
             # Check that push_cli can import fusion_git_core and get VERSION
             from fusion_git_core import VERSION
-            version_ok = VERSION == "V7.7"
+            version_ok = VERSION == "0.3"
         except Exception:
             version_ok = False
         finally:
