@@ -1,8 +1,8 @@
 # Fusion to GitHub — Automatic Design Backups
 
-**Back up your Fusion 360 designs to the cloud with one click — with a complete history of every version you ever saved.**
+**Back up your Fusion 360 designs to GitHub with one click, keeping a full version history in Git.**
 
-This is a free add-in for Autodesk Fusion 360. Every time you click its button, it saves your design to [GitHub](https://github.com) — a free online storage service that keeps *every* version of your files forever. If you ever break a design, lose a file, or just want to see what a part looked like three weeks ago, you can always get it back.
+This is a free add-in for Autodesk Fusion 360. Every time you click its button, it saves your design to [GitHub](https://github.com) as a new commit. As long as the repository stays intact, you can go back to any earlier version — if you break a design, lose a file, or just want to see what a part looked like three weeks ago. (Git history is durable but not immutable; see [Known limits](#status-supported-versions-and-known-limits).)
 
 No programming knowledge required. If you can install Fusion 360, you can use this.
 
@@ -11,7 +11,7 @@ No programming knowledge required. If you can install Fusion 360, you can use th
 ## What it does
 
 - 💾 **One-click backup** — click a button in Fusion, type a short note, done
-- 🕐 **Full version history** — every backup is kept forever; nothing is ever overwritten
+- 🕐 **Full version history** — each backup is its own commit; the add-in never overwrites or deletes an earlier one
 - 📦 **Multiple file formats** — saves your design as F3D, STEP, STL, IGES, or SAT (you pick)
 - 📓 **Automatic logbook** — keeps a `CHANGELOG.md` file listing what changed and when
 - 👥 **Easy sharing** — send anyone a link to view or download your designs
@@ -114,7 +114,7 @@ Each backup gets its own **snapshot branch** with a name like `fusion-export/Bra
 2. Click the **branch dropdown** (it says `main` near the top-left)
 3. Pick any snapshot to view or download the files from that moment
 
-Nothing is ever overwritten — every backup stays available forever. (Teams that want to review and merge snapshots into `main` should read the [Team Guide](docs/TEAM_GUIDE.md).)
+The add-in never overwrites an earlier snapshot — each is its own commit, and they stay available as long as the repository does. (Teams that want to review and merge snapshots into `main` should read the [Team Guide](docs/TEAM_GUIDE.md).)
 
 ---
 
@@ -136,7 +136,7 @@ The default (F3D + STEP + STL) is a good all-round choice.
 
 ## If something goes wrong
 
-The add-in explains problems in plain messages, keeps your work safe, and never deletes anything. The three most common hiccups:
+The add-in explains problems in plain messages and keeps your work safe: it never deletes or overwrites an earlier backup. The three most common hiccups:
 
 | Problem | Fix |
 |---------|-----|
@@ -146,6 +146,78 @@ The add-in explains problems in plain messages, keeps your work safe, and never 
 
 - **See what happened**: expand **Logging** in the dialog and click **Open Log File…**
 - **More help**: the [Troubleshooting Guide](docs/TROUBLESHOOTING.md) covers everything else
+
+---
+
+## Security & your GitHub credentials
+
+Short version:
+
+- **By default**, the add-in doesn't touch your credentials at all — it runs
+  `git`, and Git's own Credential Manager handles the one-time browser sign-in.
+- **Optionally (Windows)**, you can store a Personal Access Token via
+  **Manage Token…**; it goes into Windows Credential Manager and is passed to
+  Git through a throwaway helper that never writes it to disk.
+- Prefer a **fine-grained token** limited to the one repository, with
+  **Contents: Read and write** and nothing else.
+- **Never** put a token in a repo file, a remote URL, a commit message, a
+  screenshot, or a bug report. If one leaks, revoke it on GitHub right away.
+
+Full details — exactly what is stored where, how to delete vs. revoke a token,
+and how to report a security problem — are in **[SECURITY.md](SECURITY.md)**.
+
+---
+
+## Status, supported versions, and known limits
+
+- **Version:** **`0.3.1`**. The runtime constant, the add-in manifest, the CLI
+  `--version`, the UI/log banner, the docs, and the Git tag all report the same
+  string, and a CI test (`tests/test_runner.py`, `T_VERSION`) fails the build if
+  they drift. `0.3.1` is a **corrective release**: earlier `main` carried an
+  internal version label that never matched the `0.3` tag. See
+  [`CHANGELOG.md`](CHANGELOG.md).
+- **Operating system:** Windows or macOS. The optional **stored-token** feature
+  is **Windows-only**; on macOS you rely on Git Credential Manager's browser
+  sign-in.
+- **Autodesk Fusion:** current Fusion, any recent version — it uses the stable
+  design-export API (F3D / STEP / STL / IGES / SAT). DWG/DXF are intentionally
+  not offered; Fusion's export API does not produce them.
+- **Git:** a recent Git (2.20+) with **Git Credential Manager** enabled — the
+  default in modern Git for Windows / macOS installers. `git` must be on `PATH`
+  (or at the Windows fallback `C:\Program Files\Git\bin\git.exe`).
+- **You create the GitHub repository yourself** on github.com; the add-in never
+  creates one via the API.
+- **Every push makes a new branch** (`fusion-export/<design>-<timestamp>`); it
+  never pushes straight to `main`. Merging snapshots into `main` is a manual
+  step — see the [Team Guide](docs/TEAM_GUIDE.md).
+- **Backups:** this backs up *exported* CAD files to a Git branch. It is a
+  complement to, not a replacement for, Fusion's own cloud version history.
+  Keep both. Uncommitted changes in the target local repo are auto-stashed and
+  restored; if a restore fails, the add-in tells you how to recover them.
+- **History is durable, not immutable.** A successful push creates Git history,
+  and this add-in never rewrites or deletes it. But Git history *can* be
+  altered: anyone with write access can force-push over a branch, delete a
+  branch, or delete the whole repository, and GitHub itself can have outages or
+  close an account. Treat this as a strong safety net, not a permanent archive —
+  keep an independent backup of anything you cannot afford to lose.
+- **History grows:** every export is kept as its own commit, and CAD
+  files are binary — a long-lived backup repo can get large (there is no Git
+  LFS integration).
+- **Automated tests:** 18, run in CI on Ubuntu + Windows across Python
+  3.10–3.12 (`python tests/test_runner.py`). The Fusion UI itself is verified
+  by the manual checklist in [`tests/MANUAL_TESTS.md`](tests/MANUAL_TESTS.md).
+
+### First success, end to end
+
+1. Create an (empty) repo on [github.com/new](https://github.com/new) — Private
+   is fine — and copy its URL.
+2. Install the add-in (above) and click **Push to GitHub** in Fusion.
+3. Leave the dropdown on **"Set up new GitHub repository…"**, paste the URL,
+   pick a local folder, click **OK**.
+4. Answer the two one-time prompts if they appear (your Git name/email, then a
+   GitHub sign-in window).
+5. The first backup pushes automatically. After that: open a design → click the
+   button → type a note → **OK**.
 
 ---
 
@@ -171,7 +243,7 @@ The add-in explains problems in plain messages, keeps your work safe, and never 
 - **Export Subfolder** — keep exports organized in a folder inside the repository (e.g. `exports/`)
 - **Branch Name Override** — push to a specific branch name of your choosing; if the branch already exists, the add-in asks and then adds the new version to it
 - **Force Push (skip pull)** — for when your local copy and GitHub disagree and you want your version to win
-- **Use Stored Token** (Windows) — store a GitHub Personal Access Token in Windows Credential Manager so you're never asked to sign in; set it up via **Manage Token…** in the Advanced section
+- **Use Stored Token** (Windows only) — store a GitHub Personal Access Token in Windows Credential Manager so you're never asked to sign in; set it up via **Manage Token…** in the Advanced section. Prefer a **fine-grained** token scoped to just this repo with **Contents: Read and write** — see [SECURITY.md](SECURITY.md).
 - **Log Level** — turn on DEBUG logging when investigating a problem
 
 </details>
@@ -181,7 +253,7 @@ The add-in explains problems in plain messages, keeps your work safe, and never 
 
 **Project layout**: the add-in lives in [`src/`](src) (`Push_To_GitHub.py` is the Fusion UI; `fusion_git_core.py` and `dialog_helpers.py` are Fusion-free modules), docs in [`docs/`](docs), tests in [`tests/`](tests).
 
-**Testing** — 16 automated tests, including end-to-end git pipeline tests against local repositories:
+**Testing** — 18 automated tests, including end-to-end git pipeline tests against local repositories:
 
 ```
 python tests/test_runner.py

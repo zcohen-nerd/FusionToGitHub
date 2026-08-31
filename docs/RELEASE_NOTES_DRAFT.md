@@ -46,11 +46,11 @@ covered by automated regression tests that run in CI on Windows and Linux.
 
 ### Docs & quality
 - README rewritten for non-programmer Fusion users.
-- 17 automated tests (including end-to-end git pipeline scenarios) run in
+- 18 automated tests (including end-to-end git pipeline scenarios) run in
   CI on Ubuntu and Windows across Python 3.10–3.12; lint is clean.
 
 ## Validation
-- `python tests/test_runner.py` → 17/17 pass.
+- `python tests/test_runner.py` → 18/18 pass.
 - `ruff check src/ tests/` → clean.
 - Manual smoke test inside Fusion 360 recommended before tagging
   (dialog open → toggle formats → push).

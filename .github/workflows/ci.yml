@@ -22,10 +22,32 @@ jobs:
           python-version: "3.11"
 
       - name: Install linter
-        run: pip install ruff
+        run: pip install ruff==0.16.5
 
       - name: Run ruff check
         run: ruff check src/ tests/ --output-format=github
+
+  docs:
+    name: Docs Integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # Verifies documentation links/anchors resolve; does not enforce prose style.
+      - name: Link, anchor, and image check
+        run: node .github/scripts/check-docs.mjs
+
+      - name: Guard against non-rendering blob image embeds
+        run: |
+          if grep -rEn '!\[[^]]*\]\(https://github\.com/[^)]*/blob/' --include='*.md' .; then
+            echo "::error::Image embed uses a github.com blob URL; use a relative path."
+            exit 1
+          fi
+          echo "No blob image embeds."
 
   test:
     name: Test

@@ -1,8 +1,8 @@
-# FusionToGitHub V7.7 - Systematic Test Plan
+# FusionToGitHub 0.3.1 - Systematic Test Plan
 
 ## Overview
 
-This document provides a comprehensive testing strategy for the FusionToGitHub V7.7 add-in to ensure all functionality works correctly across different scenarios and environments.
+This document provides a comprehensive testing strategy for the FusionToGitHub 0.3.1 add-in to ensure all functionality works correctly across different scenarios and environments.
 
 **Test Environment Requirements:**
 - Autodesk Fusion 360 (latest version)
@@ -36,7 +36,7 @@ This document provides a comprehensive testing strategy for the FusionToGitHub V
 #### 1.2 Core Module Tests
 - [ ] **T004**: Test fusion_git_core module independently
   - Command: `python -c "import fusion_git_core; print(fusion_git_core.VERSION)"`
-  - Expected: "V7.7" displayed
+  - Expected: "0.3.1" displayed
   - Validates: Core module loads correctly
 
 - [ ] **T005**: Test CLI harness functionality
@@ -432,7 +432,7 @@ Notes: [Additional observations]
 
 ## Success Criteria
 
-The FusionToGitHub V7.7 add-in is considered fully functional when:
+The FusionToGitHub 0.3.1 add-in is considered fully functional when:
 
 - **Core Functionality**: All T001-T035 tests pass
 - **Integration**: All T036-T040 tests pass  

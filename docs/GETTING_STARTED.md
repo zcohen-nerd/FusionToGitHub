@@ -1,4 +1,4 @@
-# Getting Started with FusionToGitHub V7.7
+# Getting Started with FusionToGitHub 0.3.1
 
 ## Welcome! 👋
 
@@ -30,11 +30,13 @@ Before installing, make sure you have:
    - Download from: https://git-scm.com/downloads
    - During installation, choose "Git from the command line and also from 3rd-party software"
 3. **GitHub account** (free at github.com)
-4. **GitHub authentication ready** *(optional — on Windows the first push
-   normally opens a browser sign-in, and that's all you need)*
-   - Only if you prefer a stored token: GitHub → Settings → Developer
-     settings → Personal access tokens → Tokens (classic) → "Generate new
-     token (classic)" with the `repo` scope, and save it securely
+4. **GitHub authentication ready** *(optional — the first push normally opens a
+   browser sign-in, and that's all you need)*
+   - Only if you prefer a stored token (Windows): GitHub → Settings → Developer
+     settings → **Fine-grained** personal access tokens → generate one for just
+     this repo with **Contents: Read and write**, and save it securely. Full
+     guidance and the classic-token fallback are in
+     [SECURITY.md](../SECURITY.md).
 
 ### Step 2: Install the Add-in 📦
 
