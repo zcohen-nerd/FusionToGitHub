@@ -1,13 +1,18 @@
 # Ruff configuration for FusionToGitHub.
 #
-# CI installs ruff unpinned (`pip install ruff`). Newer ruff releases enable
-# additional style/modernization rules by default, which would turn a green
-# lint job red without any code change. This pins the rule set to the classic
-# default (real bugs only: pyflakes + syntax/runtime pycodestyle) so
-# `ruff check` is deterministic across ruff versions.
+# CI pins ruff to an exact version (.github/workflows/ci.yml) so that a new
+# ruff release cannot silently change the enforced rule set — ruff 0.16
+# broadened its *default* selection, which turned this job red with no code
+# change. This file makes the rule set explicit and stable.
 #
-# The source is clean under this set. Broader style cleanup (pep604 typing,
-# import sorting, etc.) can be adopted later as its own change.
+# `select` is ruff's historical stable default: real bugs only (pyflakes plus
+# the error-level pycodestyle checks). The source is clean under this set.
+# Adopting the broader modernization rules ruff now defaults to (pyupgrade,
+# bugbear, import sorting, bandit, logging-format, …) is worthwhile but is a
+# separate, reviewed change: several touch exception-handling and typing
+# patterns that need per-case judgement in Fusion add-in code, and ruff's
+# bundled isort needs tuning before it will reformat this repo's dual
+# import-fallback blocks sensibly.
 
 target-version = "py310"
 line-length = 100

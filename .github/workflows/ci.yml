@@ -22,7 +22,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install linter
-        run: pip install ruff
+        run: pip install ruff==0.16.5
 
       - name: Run ruff check
         run: ruff check src/ tests/ --output-format=github
