@@ -135,7 +135,7 @@ This roadmap turns the current refinement backlog into a sequence of actionable 
 **Key Tasks**
 - Decide on GitPython vendoring vs. pure CLI approach; update code and docs accordingly. *(Done – standardized on the Git CLI and documented zero external deps.)*
 - Add `requirements.txt` (or `pyproject.toml`) and a simple CLI harness for offline testing. *(Done – empty `requirements.txt` plus `push_cli.py` harness using the shared core.)*
-- Populate `version` in `Push_To_GitHub.manifest` and align with `VERSION` constant in Python. *(Done – both bumped to V7.7.)*
+- Populate `version` in `Push_To_GitHub.manifest` and align with `VERSION` constant in Python. *(Superseded — the internal label was later normalized to the release version; see CHANGELOG.md.)*
 
 **Success Criteria**
 - Fresh installs no longer require manual `pip install GitPython` unless intentionally chosen. *(Met – dependency section now highlights CLI-only strategy.)*

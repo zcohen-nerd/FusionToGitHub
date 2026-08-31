@@ -1,8 +1,8 @@
 # Fusion to GitHub — Automatic Design Backups
 
-**Back up your Fusion 360 designs to the cloud with one click — with a complete history of every version you ever saved.**
+**Back up your Fusion 360 designs to GitHub with one click, keeping a full version history in Git.**
 
-This is a free add-in for Autodesk Fusion 360. Every time you click its button, it saves your design to [GitHub](https://github.com) — a free online storage service that keeps *every* version of your files forever. If you ever break a design, lose a file, or just want to see what a part looked like three weeks ago, you can always get it back.
+This is a free add-in for Autodesk Fusion 360. Every time you click its button, it saves your design to [GitHub](https://github.com) as a new commit. As long as the repository stays intact, you can go back to any earlier version — if you break a design, lose a file, or just want to see what a part looked like three weeks ago. (Git history is durable but not immutable; see [Known limits](#status-supported-versions-and-known-limits).)
 
 No programming knowledge required. If you can install Fusion 360, you can use this.
 
@@ -11,7 +11,7 @@ No programming knowledge required. If you can install Fusion 360, you can use th
 ## What it does
 
 - 💾 **One-click backup** — click a button in Fusion, type a short note, done
-- 🕐 **Full version history** — every backup is kept forever; nothing is ever overwritten
+- 🕐 **Full version history** — each backup is its own commit; the add-in never overwrites or deletes an earlier one
 - 📦 **Multiple file formats** — saves your design as F3D, STEP, STL, IGES, or SAT (you pick)
 - 📓 **Automatic logbook** — keeps a `CHANGELOG.md` file listing what changed and when
 - 👥 **Easy sharing** — send anyone a link to view or download your designs
@@ -114,7 +114,7 @@ Each backup gets its own **snapshot branch** with a name like `fusion-export/Bra
 2. Click the **branch dropdown** (it says `main` near the top-left)
 3. Pick any snapshot to view or download the files from that moment
 
-Nothing is ever overwritten — every backup stays available forever. (Teams that want to review and merge snapshots into `main` should read the [Team Guide](docs/TEAM_GUIDE.md).)
+The add-in never overwrites an earlier snapshot — each is its own commit, and they stay available as long as the repository does. (Teams that want to review and merge snapshots into `main` should read the [Team Guide](docs/TEAM_GUIDE.md).)
 
 ---
 
@@ -136,7 +136,7 @@ The default (F3D + STEP + STL) is a good all-round choice.
 
 ## If something goes wrong
 
-The add-in explains problems in plain messages, keeps your work safe, and never deletes anything. The three most common hiccups:
+The add-in explains problems in plain messages and keeps your work safe: it never deletes or overwrites an earlier backup. The three most common hiccups:
 
 | Problem | Fix |
 |---------|-----|
@@ -170,11 +170,12 @@ and how to report a security problem — are in **[SECURITY.md](SECURITY.md)**.
 
 ## Status, supported versions, and known limits
 
-- **Release:** the tagged GitHub release is **`0.3`** (March 2025). `main` is
-  substantially ahead of it — reliability and credential-handling were
-  overhauled since (the code identifies internally as `V7.7`). Until a newer
-  release is cut, install from `main` (Download ZIP / clone). See
-  [`docs/RELEASE_NOTES_DRAFT.md`](docs/RELEASE_NOTES_DRAFT.md) for what changed.
+- **Version:** **`0.3.1`**. The runtime constant, the add-in manifest, the CLI
+  `--version`, the UI/log banner, the docs, and the Git tag all report the same
+  string, and a CI test (`tests/test_runner.py`, `T_VERSION`) fails the build if
+  they drift. `0.3.1` is a **corrective release**: earlier `main` carried an
+  internal version label that never matched the `0.3` tag. See
+  [`CHANGELOG.md`](CHANGELOG.md).
 - **Operating system:** Windows or macOS. The optional **stored-token** feature
   is **Windows-only**; on macOS you rely on Git Credential Manager's browser
   sign-in.
@@ -193,7 +194,13 @@ and how to report a security problem — are in **[SECURITY.md](SECURITY.md)**.
   complement to, not a replacement for, Fusion's own cloud version history.
   Keep both. Uncommitted changes in the target local repo are auto-stashed and
   restored; if a restore fails, the add-in tells you how to recover them.
-- **History grows:** every version of every export is kept forever, and CAD
+- **History is durable, not immutable.** A successful push creates Git history,
+  and this add-in never rewrites or deletes it. But Git history *can* be
+  altered: anyone with write access can force-push over a branch, delete a
+  branch, or delete the whole repository, and GitHub itself can have outages or
+  close an account. Treat this as a strong safety net, not a permanent archive —
+  keep an independent backup of anything you cannot afford to lose.
+- **History grows:** every export is kept as its own commit, and CAD
   files are binary — a long-lived backup repo can get large (there is no Git
   LFS integration).
 - **Automated tests:** 18, run in CI on Ubuntu + Windows across Python

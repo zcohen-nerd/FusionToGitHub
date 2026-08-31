@@ -1,4 +1,4 @@
-# FusionToGitHub V7.7 - Manual Test Checklist
+# FusionToGitHub 0.3.1 - Manual Test Checklist
 
 ## Quick Manual Test Checklist for Fusion 360
 
@@ -144,7 +144,7 @@ This checklist provides a streamlined set of manual tests to verify core functio
 **Date**: ___________  
 **Tester**: ___________  
 **Fusion Version**: ___________  
-**Add-in Version**: V7.7  
+**Add-in Version**: 0.3.1  
 
 ### Basic Functionality (Pass/Fail)
 - [ ] Test 1: Add-in Launch

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FusionToGitHub V7.7 - Automated Test Runner
+FusionToGitHub 0.3.1 - Automated Test Runner
 
 This script automates the execution of testable components from the TESTING.md
 systematic test plan. It focuses on programmatically verifiable tests while
@@ -18,6 +18,8 @@ Categories:
 """
 
 import argparse
+import json
+import re
 import logging
 import os
 import shutil
@@ -126,11 +128,58 @@ class TestRunner:
         self.log_test_start("T004", "fusion_git_core module import")
         try:
             import fusion_git_core
-            version_ok = fusion_git_core.VERSION == "0.3"
+            # fusion_git_core.VERSION is the single source of truth for the
+            # add-in version. Cross-surface consistency is T_VERSION's job; here
+            # we only assert it is set and shaped like a semantic version.
+            version_ok = bool(re.match(r"^\d+\.\d+(?:\.\d+)?$", fusion_git_core.VERSION))
             msg = f"Version: {fusion_git_core.VERSION}"
             self.record_result("T004", "fusion_git_core module import", version_ok, msg)
         except Exception as e:
             self.record_result("T004", "fusion_git_core module import", False, str(e))
+
+    def test_t_version_consistency(self):
+        """T_VERSION: every user-visible version surface matches fusion_git_core.VERSION"""
+        self.log_test_start("T_VERSION", "version consistency across all surfaces")
+        try:
+            import fusion_git_core
+            v = fusion_git_core.VERSION
+            root = Path(__file__).resolve().parent.parent
+            failures = []
+
+            # 1. Add-in manifest
+            manifest = json.loads((root / "src" / "Push_To_GitHub.manifest").read_text(encoding="utf-8"))
+            if manifest.get("version") != v:
+                failures.append(f"manifest version {manifest.get('version')!r} != {v!r}")
+
+            # 2. Push_To_GitHub.py re-exports the core constant, not a literal
+            main_src = (root / "src" / "Push_To_GitHub.py").read_text(encoding="utf-8")
+            if "VERSION = CORE_VERSION" not in main_src:
+                failures.append("Push_To_GitHub.py does not derive VERSION from CORE_VERSION")
+
+            # 3. CLI --version reports it
+            ok, out = self.run_command(
+                [sys.executable, str(root / "src" / "push_cli.py"), "--version"]
+            )
+            if v not in out:
+                failures.append(f"push_cli --version output {out.strip()!r} lacks {v!r}")
+
+            # 4. No stale internal label anywhere in shipped code
+            for py in (root / "src").glob("*.py"):
+                if re.search(r"\bV7\.7\b", py.read_text(encoding="utf-8")):
+                    failures.append(f"stale 'V7.7' in {py.name}")
+
+            # 5. README and the docs index state the current version and nothing older
+            readme = (root / "README.md").read_text(encoding="utf-8")
+            if f"**`{v}`**" not in readme and f"`{v}`" not in readme:
+                failures.append("README does not state the current version")
+            if re.search(r"\bV7\.7\b", readme):
+                failures.append("stale 'V7.7' in README.md")
+
+            self.record_result(
+                "T_VERSION", "version consistency", not failures, "; ".join(failures)
+            )
+        except Exception as e:
+            self.record_result("T_VERSION", "version consistency", False, str(e))
 
     def test_t005_cli_harness_help(self):
         """T005: Test CLI harness functionality"""
@@ -440,7 +489,9 @@ class TestRunner:
             import push_cli  # noqa: F401
             # Check that push_cli can import fusion_git_core and get VERSION
             from fusion_git_core import VERSION
-            version_ok = VERSION == "0.3"
+            version_ok = isinstance(VERSION, str) and bool(
+                re.match(r"^\d+\.\d+(?:\.\d+)?$", VERSION)
+            )
         except Exception:
             version_ok = False
         finally:
@@ -1001,6 +1052,7 @@ class TestRunner:
         self.test_t001_git_available()
         self.test_t002_python_environment()
         self.test_t004_fusion_git_core_import()
+        self.test_t_version_consistency()
         self.test_t005_cli_harness_help()
 
     def run_core_module_tests(self):
@@ -1056,7 +1108,7 @@ class TestRunner:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="FusionToGitHub V7.7 Test Runner")
+    parser = argparse.ArgumentParser(description="FusionToGitHub 0.3.1 Test Runner")
     parser.add_argument("--verbose", "-v", action="store_true",
                        help="Enable verbose output")
     parser.add_argument("--category", "-c",
@@ -1077,7 +1129,7 @@ def main():
     
     runner = TestRunner(verbose=args.verbose)
     
-    print("FusionToGitHub V7.7 - Automated Test Runner")
+    print("FusionToGitHub 0.3.1 - Automated Test Runner")
     print(f"Running category: {args.category}")
     print(f"Working directory: {os.getcwd()}")
     

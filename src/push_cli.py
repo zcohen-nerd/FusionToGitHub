@@ -78,6 +78,12 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=("Run the FusionToGitHub git pipeline outside Fusion for smoke testing " "and CI automation.")
     )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"FusionToGitHub {VERSION}",
+        help="Print the version and exit",
+    )
     parser.add_argument("--repo", required=True, help="Path to the existing Git repository")
     parser.add_argument(
         "--files",
