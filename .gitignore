@@ -64,3 +64,8 @@ htmlcov/
 # Documentation builds
 docs/_build/
 site/
+
+# Generated release packages
+/dist/
+/Push_To_GitHub-universal.zip
+/Push_To_GitHub-universal.zip.sha256
