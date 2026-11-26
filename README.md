@@ -276,3 +276,13 @@ python src/push_cli.py --repo C:\path\to\repo --files exports/model.step --desig
 ## License
 
 Free and open source under the [MIT License](LICENSE).
+
+## Packaging a Fusion add-in release
+
+From the repository root, check out the release commit and run this command with Git (Bash or Git Bash). It packages the tracked runtime files under the folder name Fusion expects.
+
+```sh
+git archive --format=zip --prefix=Push_To_GitHub/ --output=Push_To_GitHub-universal.zip --add-file=LICENSE HEAD:src -- Push_To_GitHub.manifest Push_To_GitHub.py AddInIcon.svg diagnostic.py dialog_helpers.py fusion_git_core.py push_cli.py
+```
+
+Upload `Push_To_GitHub-universal.zip` as an asset of a stable GitHub Release. Use a numeric tag such as `v0.3.1` matching the version in `Push_To_GitHub.manifest`.

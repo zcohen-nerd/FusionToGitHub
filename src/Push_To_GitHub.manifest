@@ -1,6 +1,7 @@
 {
 	"autodeskProduct":	"Fusion",
 	"type":	"addin",
+	"id": "a9902311-5949-4d34-9ea6-3d4e6250d4a9",
 	"author":	"Zachary Cohen",
 	"description":	{
 		"":	"Integrates Fusion with GitHub, allowing users to push designs to repositories."
