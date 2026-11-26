@@ -1,0 +1,119 @@
+name: Release Packaging
+
+on:
+  release:
+    types: [published]
+
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: Package Fusion Add-in
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate release version
+        if: github.event_name == 'release'
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+
+          with open("src/Push_To_GitHub.manifest") as f:
+              manifest = json.load(f)
+
+          tag = os.environ["RELEASE_TAG"].removeprefix("v")
+          version = manifest["version"]
+
+          if tag != version:
+              raise SystemExit(
+                  f"Release tag {tag} does not match manifest {version}"
+              )
+
+          print(f"Validated release version: {version}")
+          PY
+
+      - name: Build installable ZIP
+        run: |
+          mkdir -p dist
+
+          git archive \
+            --format=zip \
+            --prefix=Push_To_GitHub/ \
+            --output=dist/Push_To_GitHub-universal.zip \
+            --add-file=LICENSE \
+            HEAD:src -- \
+            Push_To_GitHub.manifest \
+            Push_To_GitHub.py \
+            AddInIcon.svg \
+            diagnostic.py \
+            dialog_helpers.py \
+            fusion_git_core.py \
+            push_cli.py
+
+      - name: Validate package
+        run: |
+          python3 - <<'PY'
+          import json
+          import zipfile
+
+          path = "dist/Push_To_GitHub-universal.zip"
+
+          required = {
+              "Push_To_GitHub/Push_To_GitHub.manifest",
+              "Push_To_GitHub/Push_To_GitHub.py",
+              "Push_To_GitHub/AddInIcon.svg",
+              "Push_To_GitHub/fusion_git_core.py",
+              "Push_To_GitHub/dialog_helpers.py",
+              "Push_To_GitHub/diagnostic.py",
+              "Push_To_GitHub/push_cli.py",
+              "Push_To_GitHub/LICENSE",
+          }
+
+          with zipfile.ZipFile(path) as archive:
+              missing = required - set(archive.namelist())
+
+              if missing:
+                  raise SystemExit(f"Missing files: {missing}")
+
+              if archive.testzip() is not None:
+                  raise SystemExit("ZIP integrity check failed")
+
+              manifest = json.loads(archive.read(
+                  "Push_To_GitHub/Push_To_GitHub.manifest"
+              ))
+
+              if not manifest.get("id"):
+                  raise SystemExit("Missing add-in GUID")
+
+              for name in archive.namelist():
+                  if not name.startswith("Push_To_GitHub/"):
+                      raise SystemExit(f"Unexpected path: {name}")
+
+              print("Package validation passed")
+
+          PY
+
+      - name: Generate SHA-256 checksum
+        run: |
+          cd dist
+          sha256sum Push_To_GitHub-universal.zip \
+            > Push_To_GitHub-universal.zip.sha256
+
+      - name: Upload release assets
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh release upload "$RELEASE_TAG" \
+            dist/Push_To_GitHub-universal.zip \
+            dist/Push_To_GitHub-universal.zip.sha256
