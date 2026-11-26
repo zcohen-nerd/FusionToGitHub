@@ -170,7 +170,7 @@ and how to report a security problem — are in **[SECURITY.md](SECURITY.md)**.
 
 ## Status, supported versions, and known limits
 
-- **Version:** **`0.3.1`**. The runtime constant, the add-in manifest, the CLI
+- **Version:** **`0.3.3`**. The runtime constant, the add-in manifest, the CLI
   `--version`, the UI/log banner, the docs, and the Git tag all report the same
   string, and a CI test (`tests/test_runner.py`, `T_VERSION`) fails the build if
   they drift. `0.3.1` is a **corrective release**: earlier `main` carried an
@@ -285,4 +285,4 @@ From the repository root, check out the release commit and run this command with
 git archive --format=zip --prefix=Push_To_GitHub/ --output=Push_To_GitHub-universal.zip --add-file=LICENSE HEAD:src -- Push_To_GitHub.manifest Push_To_GitHub.py AddInIcon.svg diagnostic.py dialog_helpers.py fusion_git_core.py push_cli.py
 ```
 
-Upload `Push_To_GitHub-universal.zip` as an asset of a stable GitHub Release. Use a numeric tag such as `v0.3.1` matching the version in `Push_To_GitHub.manifest`.
+Upload `Push_To_GitHub-universal.zip` as an asset of a stable GitHub Release. Use a numeric tag such as `v0.3.3` matching the version in `Push_To_GitHub.manifest`.
