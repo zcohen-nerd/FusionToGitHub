@@ -455,17 +455,32 @@ def _history_entry(
     return "\n".join(lines) + "\n"
 
 
-def _updated_history(existing: bytes, entry: str) -> bytes:
-    """Prepend *entry* to an existing history file, keeping its bytes intact."""
-    header = b"# Changelog\n\n"
+def _updated_history(existing: bytes, entry: str, new_file_header: str = "# Changelog\n\n") -> bytes:
+    """Add *entry* as the newest item of a history file, keeping every existing byte.
+
+    The entry goes after the file's header (everything before its first
+    ``## `` entry), so a title or note at the top stays at the top. A new file
+    starts with *new_file_header*. Existing line endings are kept.
+    """
     newline = b"\r\n" if b"\r\n" in existing else b"\n"
-    body = existing
-    for candidate in (header, header.replace(b"\n", b"\r\n")):
-        if body.startswith(candidate):
-            body = body[len(candidate) :]
-            break
     new_entry = entry.encode("utf-8").replace(b"\n", newline)
-    return header.replace(b"\n", newline) + new_entry + body
+    if not existing.strip():
+        return new_file_header.encode("utf-8").replace(b"\n", newline) + new_entry
+    if existing.startswith(b"## "):
+        return new_entry + existing
+    first = existing.find(newline + b"## ")
+    if first != -1:
+        split = first + len(newline)
+        return existing[:split] + new_entry + existing[split:]
+    if existing.startswith(b"# "):
+        # A title but no entries yet: newest entry right after the title
+        # line and the blank line(s) that follow it.
+        split = existing.find(newline)
+        split = len(existing) if split == -1 else split + len(newline)
+        while existing.startswith(newline, split):
+            split += len(newline)
+        return existing[:split] + new_entry + existing[split:]
+    return new_entry + existing
 
 
 def _build_commit(
@@ -474,8 +489,19 @@ def _build_commit(
     files: Sequence[Tuple[str, str]],
     extra_blobs: Dict[str, bytes],
     message: str,
+    identity: Optional[Dict[str, str]] = None,
 ) -> str:
-    """Create a commit = *parent*'s tree + *files* + *extra_blobs*, without touching the user's index."""
+    """Create a commit = *parent*'s tree + *files* + *extra_blobs*, without touching the user's index.
+
+    *identity* (``{"name", "email"}``) signs the commit through environment
+    variables for this one git call only: neither the repository's
+    ``.git/config`` nor the global Git config is changed (decision Q14).
+    """
+    identity_env: Dict[str, str] = {}
+    if identity and identity.get("name") and identity.get("email"):
+        for role in ("AUTHOR", "COMMITTER"):
+            identity_env[f"GIT_{role}_NAME"] = identity["name"]
+            identity_env[f"GIT_{role}_EMAIL"] = identity["email"]
     work_dir = tempfile.mkdtemp(prefix="fusion_git_commit_")
     index_env = {"GIT_INDEX_FILE": os.path.join(work_dir, "index")}
     try:
@@ -503,12 +529,12 @@ def _build_commit(
             args += ["-p", parent]
         args += ["-F", "-"]
         try:
-            return git_run(repo_path, *args, input_text=message).stdout.strip()
+            return git_run(repo_path, *args, input_text=message, env=identity_env or None).stdout.strip()
         except GitError as exc:
             if "Please tell me who you are" in str(exc) or "unable to auto-detect email" in str(exc):
                 raise GitError(
                     "Git doesn't know your name and email yet, so it can't sign the commit. "
-                    "Set them (git config user.name / user.email) and try again."
+                    "Enter them when the add-in asks, and try again."
                 ) from exc
             raise
     finally:
@@ -539,6 +565,9 @@ def push_export(
     pat_credentials: Optional[Dict[str, str]] = None,
     logger: Optional[logging.Logger] = None,
     on_step: Optional[Callable[[str], None]] = None,
+    identity: Optional[Dict[str, str]] = None,
+    history_title: Optional[str] = None,
+    legacy_history_file: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Commit *exports* on top of GitHub's branch tip and push it, without touching the checkout.
 
@@ -646,6 +675,7 @@ def push_export(
                         [],
                         {".gitattributes": GITATTRIBUTES_CONTENT.encode("utf-8")},
                         "Initialize repository for Fusion exports",
+                        identity,
                     )
                     proc = git_run(
                         repo_path,
@@ -707,8 +737,18 @@ def push_export(
                     rel_history = normalize_repo_path(history_file)
                     existing = _read_blob(repo_path, base, rel_history) or b""
                     entry = _history_entry(design_name, branch, message, [rel for _, rel in files], when)
-                    extra[rel_history] = _updated_history(existing, entry)
-                commit = _build_commit(repo_path, base, files, extra, message)
+                    header = f"# {history_title}\n\n" if history_title else "# Changelog\n\n"
+                    if not existing and legacy_history_file and _read_blob(
+                        repo_path, base, normalize_repo_path(legacy_history_file)
+                    ) is not None:
+                        # The repository has history written by an older
+                        # version in one shared file; point to it, never move it.
+                        header += (
+                            f"Earlier pushes are listed in `{legacy_history_file}` at the repository "
+                            "root, written by versions before 0.5.0.\n\n"
+                        )
+                    extra[rel_history] = _updated_history(existing, entry, header)
+                commit = _build_commit(repo_path, base, files, extra, message, identity)
 
                 step("Pushing to GitHub…")
                 proc = git_run(
