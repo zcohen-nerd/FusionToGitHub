@@ -644,6 +644,34 @@ def _read_blob(repo_path: str, commit: Optional[str], rel: str) -> Optional[byte
     return _git_bytes(repo_path, "cat-file", "blob", spec)
 
 
+def export_size_check(files: Sequence[Tuple[str, str]]) -> Tuple[Optional[str], Optional[str]]:
+    """Check exported file sizes against GitHub's limits: (error, question).
+
+    *files* are ``(source file, path in the repository)``. *error* is set when
+    a file is 100 MB or more (GitHub rejects it); *question* asks whether to
+    push files of 50 MB or more anyway. Both are None when the sizes are fine.
+    The dialog asks the question on Fusion's main thread before a background
+    push starts, then passes ``large_files_confirmed=True`` to push_export.
+    """
+    sizes = [(rel, os.path.getsize(src)) for src, rel in files]
+    for rel, size in sizes:
+        if size >= SIZE_BLOCK_BYTES:
+            return (
+                f"'{rel}' is {size / 1048576:.0f} MB. GitHub rejects files of 100 MB or more, "
+                "so nothing was pushed.\nUntick that format, or lower the STL mesh refinement, "
+                "and try again.",
+                None,
+            )
+    large = [(rel, size) for rel, size in sizes if size >= SIZE_WARN_BYTES]
+    if not large:
+        return None, None
+    listing = "\n".join(f"  {rel}: {size / 1048576:.0f} MB" for rel, size in large)
+    return None, (
+        f"These exports are large:\n{listing}\n\nGitHub warns about files over 50 MB, and "
+        "every version is kept forever, so the repository will grow quickly.\n\nPush anyway?"
+    )
+
+
 def _cancelled_result(
     repo_path: str, state: Dict[str, Any], auth: Optional["GitAuth"], logger: Optional[logging.Logger]
 ) -> Dict[str, Any]:
@@ -699,6 +727,7 @@ def push_export(
     legacy_history_file: Optional[str] = None,
     history_notes: Sequence[str] = (),
     cancel: Optional[threading.Event] = None,
+    large_files_confirmed: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """Commit *exports* on top of GitHub's branch tip and push it, without touching the checkout.
 
@@ -714,6 +743,9 @@ def push_export(
     Returns a result dict when the push succeeded, ``{"cancelled": True}`` when
     the user declined a prompt, and ``None`` on failure (already reported
     through *ui*).
+
+    *large_files_confirmed* skips the "these exports are large" question,
+    for a caller that already asked it (see export_size_check).
     """
 
     def step(text: str) -> None:
@@ -744,24 +776,14 @@ def push_export(
             raise ValueError("There are no exported files to push.")
 
         for source_path, rel in files:
-            size = os.path.getsize(source_path)
-            if size == 0:
+            if os.path.getsize(source_path) == 0:
                 raise ValueError(f"The exported file '{rel}' is empty; nothing was pushed.")
-            if size >= SIZE_BLOCK_BYTES:
-                ui.error(
-                    f"'{rel}' is {size / 1048576:.0f} MB. GitHub rejects files of 100 MB or more, "
-                    "so nothing was pushed.\nUntick that format, or lower the STL mesh refinement, "
-                    "and try again."
-                )
-                return None
-        large = [(rel, os.path.getsize(src)) for src, rel in files if os.path.getsize(src) >= SIZE_WARN_BYTES]
-        if large:
-            listing = "\n".join(f"  {rel}: {size / 1048576:.0f} MB" for rel, size in large)
-            if not ui.confirm(
-                f"These exports are large:\n{listing}\n\nGitHub warns about files over 50 MB, and "
-                "every version is kept forever, so the repository will grow quickly.\n\nPush anyway?"
-            ):
-                return {"cancelled": True}
+        size_error, size_question = export_size_check(files)
+        if size_error:
+            ui.error(size_error)
+            return None
+        if size_question and not large_files_confirmed and not ui.confirm(size_question):
+            return {"cancelled": True}
 
         if git_run(repo_path, "rev-parse", "--git-dir", check=False).returncode != 0:
             raise GitError(f"'{repo_path}' is not a Git repository.")
@@ -956,6 +978,7 @@ __all__ = [
     "TIMEOUTS",
     "SIZE_WARN_BYTES",
     "SIZE_BLOCK_BYTES",
+    "export_size_check",
     "MODE_SNAPSHOT",
     "MODE_SINGLE",
     "GitUI",

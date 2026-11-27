@@ -82,6 +82,9 @@ class PushPlan:
     pat_credentials: Optional[Dict[str, str]] = field(default=None, repr=False)
     notes: List[str] = field(default_factory=list)
     history_notes: List[str] = field(default_factory=list)
+    # Set once the "these exports are large" question was answered Yes (on
+    # Fusion's main thread), so the background push doesn't ask it again.
+    large_files_confirmed: bool = False
 
 
 def design_destination(profile: Dict[str, Any], design_id: str, design_name: str) -> Tuple[str, str]:
@@ -464,6 +467,7 @@ class PushController:
             on_step=on_step,
             history_notes=plan.history_notes,
             cancel=cancel,
+            large_files_confirmed=plan.large_files_confirmed,
         )
 
 
