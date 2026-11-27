@@ -52,11 +52,15 @@ THRESHOLDS = {
     # Thin Fusion entry point: mostly import fallbacks and Fusion-only
     # branches. Counted in the add-in layer group below.
     "Push_To_GitHub.py": 50,
+    # S4 background push (0.6.0).
+    "push_worker.py": 90,
+    "fusion_bridge.py": 81,
 }
 # Combined minimums across related modules (statements + branches).
 GROUPS = {
     "add-in layer (Fusion-facing code + push controller)": (
-        ("Push_To_GitHub.py", "push_dialog.py", "fusion_export.py", "addin_logging.py", "push_controller.py"),
+        ("Push_To_GitHub.py", "push_dialog.py", "fusion_export.py", "addin_logging.py", "push_controller.py",
+         "fusion_bridge.py"),
         74,
     ),
 }
