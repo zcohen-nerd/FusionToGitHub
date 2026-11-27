@@ -41,7 +41,7 @@ THRESHOLDS = {
     "settings_store.py": 85,
     "portable_names.py": 90,
     "export_checks.py": 90,
-    "dialog_helpers.py": 78,
+    "dialog_helpers.py": 80,
     "push_dialog.py": 77,
     "fusion_export.py": 85,
     "addin_logging.py": 65,
@@ -51,7 +51,7 @@ THRESHOLDS = {
     "credentials.py": 90,
     # Thin Fusion entry point: mostly import fallbacks and Fusion-only
     # branches. Counted in the add-in layer group below.
-    "Push_To_GitHub.py": 50,
+    "Push_To_GitHub.py": 60,
     # S4 background push (0.6.0).
     "push_worker.py": 90,
     "fusion_bridge.py": 81,
