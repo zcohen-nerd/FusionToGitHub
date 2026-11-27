@@ -38,13 +38,16 @@ from dialog_helpers import (
 from fusion_export import (
     AVAILABLE_FORMATS,
     DEFAULT_FORMATS,
+    FORMAT_SETTING_LABELS,
     FORMAT_SETTINGS_DEFAULT,
     FORMAT_SETTINGS_OPTIONS,
     _safe_base,
     design_identity,
     determine_valid_export_formats,
-    export_fusion_design,
+    export_design,
     get_fusion_design,
+    linked_components_note,
+    linked_components_question,
     temporary_export_dir,
 )
 from fusion_git_core import GitError, git_available, git_run, redact_secrets, sanitize_branch_name
@@ -417,34 +420,38 @@ class PushDialog:
         table.addCommandInput(header_label, 0, 0)
         table.addCommandInput(header_setting, 0, 1)
 
+        # One row per setting: STL has two (mesh refinement, files).
         row_index = 1
         for fmt in self.get_selected_formats():
             self.ensure_format_defaults(fmt)
-            label = export_inputs.addTextBoxCommandInput(f"formatSettingsLabel_{fmt}_g{generation}", "", fmt.upper(), 1, True)
-            label.isFullWidth = True
-            dropdown = export_inputs.addDropDownCommandInput(
-                f"formatSetting_{fmt}_g{generation}", "", adsk.core.DropDownStyles.TextListDropDownStyle
-            )
-            options = FORMAT_SETTINGS_OPTIONS.get(fmt, [])
-            dropdown.listItems.clear()
             current_state = self.format_settings_state.get(fmt, {})
-            state_key = list(FORMAT_SETTINGS_DEFAULT.get(fmt, {}).keys() or ["value"])[0]
-            current_value = current_state.get(state_key, FORMAT_SETTINGS_DEFAULT.get(fmt, {}).get(state_key, "default"))
-            for label_text, value in options:
-                dropdown.listItems.add(label_text, value == current_value, "")
-            self.format_setting_inputs[fmt] = (dropdown, state_key, options)
-            self.format_settings_ui["inputs"].extend([label, dropdown])
-            table.addCommandInput(label, row_index, 0)
-            table.addCommandInput(dropdown, row_index, 1)
-            row_index += 1
+            for state_key, options in FORMAT_SETTINGS_OPTIONS.get(fmt, {}).items():
+                row_key = f"{fmt}_{state_key}"
+                label_text = FORMAT_SETTING_LABELS.get((fmt, state_key), fmt.upper())
+                label = export_inputs.addTextBoxCommandInput(
+                    f"formatSettingsLabel_{row_key}_g{generation}", "", label_text, 1, True
+                )
+                label.isFullWidth = True
+                dropdown = export_inputs.addDropDownCommandInput(
+                    f"formatSetting_{row_key}_g{generation}", "", adsk.core.DropDownStyles.TextListDropDownStyle
+                )
+                dropdown.listItems.clear()
+                current_value = current_state.get(state_key, FORMAT_SETTINGS_DEFAULT.get(fmt, {}).get(state_key))
+                for option_label, value in options:
+                    dropdown.listItems.add(option_label, value == current_value, "")
+                self.format_setting_inputs[row_key] = (fmt, dropdown, state_key, options)
+                self.format_settings_ui["inputs"].extend([label, dropdown])
+                table.addCommandInput(label, row_index, 0)
+                table.addCommandInput(dropdown, row_index, 1)
+                row_index += 1
 
     def collect_format_settings_from_ui(self) -> Dict[str, Dict[str, str]]:
-        result = {}
-        for fmt, (dropdown, state_key, options) in self.format_setting_inputs.items():
+        result: Dict[str, Dict[str, str]] = {}
+        for fmt, dropdown, state_key, options in self.format_setting_inputs.values():
             selected_item = dropdown.selectedItem
             if not selected_item:
                 continue
-            result[fmt] = {state_key: dict(options).get(selected_item.name, selected_item.name)}
+            result.setdefault(fmt, {})[state_key] = dict(options).get(selected_item.name, selected_item.name)
         return result
 
     def update_export_subfolder_feedback(self, raw_value: str) -> str:
@@ -774,10 +781,10 @@ class PushDialog:
                 export_input.value = normalized_value
         elif input_id.startswith("formatSetting_"):
             # Ids carry a per-rebuild generation suffix ("_g<n>").
-            fmt_key = re.sub(r"_g\d+$", "", input_id.split("_", 1)[1])
-            data = self.format_setting_inputs.get(fmt_key)
+            row_key = re.sub(r"_g\d+$", "", input_id.split("_", 1)[1])
+            data = self.format_setting_inputs.get(row_key)
             if data:
-                dropdown, state_key, options = data
+                fmt_key, dropdown, state_key, options = data
                 selected = dropdown.selectedItem
                 if selected:
                     self.format_settings_state.setdefault(fmt_key, {})[state_key] = dict(options).get(
@@ -1074,19 +1081,34 @@ class PushDialog:
             if not valid_formats:
                 progress.hide()
                 return self._fail("No valid export formats available for this design.")
-            exported = export_fusion_design(
-                design, temp_dir, design_name, valid_formats, self.ui,
-                {fmt: format_settings.get(fmt, {}) for fmt in valid_formats}, self.title, self.logger,
+            export = export_design(
+                design, temp_dir, design_name, valid_formats,
+                {fmt: format_settings.get(fmt, {}) for fmt in valid_formats}, self.logger,
             )
             progress.hide()
-            if not exported:
-                return self._fail("No files exported. Aborting.")
+            export_warnings.extend(export.warnings)
+            if not export.ok:
+                # All or nothing: a partial backup is never pushed, and
+                # HISTORY.md is not touched.
+                problems = export.failures or ["No files were exported."]
+                return self._fail(
+                    "Nothing was pushed because these exports failed:\n"
+                    + "\n".join(f" • {problem}" for problem in problems)
+                )
+            exported = export.files
+            history_notes: List[str] = []
+            if export.linked_components:
+                if not self.ask_yes_no(linked_components_question(export.linked_components)):
+                    self.message("Push cancelled — nothing was pushed.")
+                    return False
+                history_notes.append(linked_components_note(export.linked_components))
 
             # Questions (publication notice, identity) come with the progress
             # dialog hidden, so they can't end up behind it.
             request = PushRequest(
                 profile_name=repo_name, design_name=design_name, design_id=design_id,
                 commit_message=commit_msg, branch_override=override,
+                history_notes=history_notes,
             )
             try:
                 plan = self.controller.plan(request, exported, confirm=self.git_ui.confirm, ask_identity=self.ask_identity)

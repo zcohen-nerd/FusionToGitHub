@@ -107,9 +107,9 @@ class SelectionAndValidationTests(AddinTestCase):
         change_input(command, "exportFormatsConfig")
         change_input(command, "exportFormatsConfig")  # a second rebuild must not collide
         table = item(command, "formatSettingsTable")
-        self.assertEqual(table.rowCount, 3)  # header + step + stl
+        self.assertEqual(table.rowCount, 4)  # header + step + stl mesh + stl files
         labels = sorted(cell.text for (row, col), cell in table.cells.items() if col == 0 and row > 0)
-        self.assertEqual(labels, ["STEP", "STL"])
+        self.assertEqual(labels, ["STEP", "STL", "STL files"])
 
     def test_format_setting_choice_is_saved_with_the_push(self):
         self.seed({"Designs": self.work_profile(exportFormats=["stl"])}, meta={"lastSelectedRepo": "Designs"})
@@ -119,7 +119,7 @@ class SelectionAndValidationTests(AddinTestCase):
         select_item(command, stl_dropdown.id, "Low (fast)")
         self.answer(YES)  # the one-time publication notice
         self.assertFalse(press_ok(command).executeFailed, self.ui.texts())
-        self.assertEqual(self.profile("Designs")["formatSettings"], {"stl": {"meshRefinement": "low"}})
+        self.assertEqual(self.profile("Designs")["formatSettings"], {"stl": {"meshRefinement": "low", "files": "single"}})
 
 
 class TokenTests(AddinTestCase):
@@ -329,7 +329,7 @@ class PushTests(AddinTestCase):
         command = self.open_dialog()
         args = press_ok(command)
         self.assertTrue(args.executeFailed)
-        self.assertIn("No files exported", self.last_message())
+        self.assertIn("Nothing was pushed because these exports failed", self.last_message())
         self.assertEqual(self.remote_branches(), [])
 
     def test_blank_name_setup_pushes_from_the_folder_it_cloned_into(self):
