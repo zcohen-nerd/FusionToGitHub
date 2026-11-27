@@ -224,19 +224,17 @@ python -c "import os, subprocess, tempfile"
 **Symptoms**: Local repository out of sync with remote
 
 **Solutions**:
-1. **Let add-in handle it**:
-   - Add-in automatically pulls before pushing
-   - Don't manually intervene during process
+1. **The add-in doesn't need your local folder to be up to date**: it builds
+   every backup on GitHub's latest version, and never changes your local
+   folder. To update the folder for your own use, run `git pull` there.
 
-2. **Manual sync if needed**:
-   ```bash
-   git pull --rebase origin main
-   ```
+2. **"GitHub kept receiving other changes"**: someone else pushed to the same
+   branch several times while your export was being sent. Nothing on GitHub was
+   changed; click **Push to GitHub** again.
 
-3. **"GitHub refused the push"**: GitHub has commits on that branch that
-   your computer doesn't. The add-in never force-pushes, so nothing on GitHub
-   was changed. Leave "Branch Name Override" blank to push the export to a new
-   branch instead.
+3. **"Push failed … Nothing on GitHub was changed"** with a message from
+   GitHub (for example a branch protection rule): the branch doesn't accept
+   direct pushes. Leave "Branch Name Override" blank to push to a new branch.
 
 ---
 
@@ -348,23 +346,18 @@ git log --oneline -10
 ### If Fusion 360 freezes during export
 
 1. **Force close Fusion 360**
-2. **Check repository state**:
+2. **Your local folder is safe**: since 0.4.0 the add-in never changes it, so
+   there is nothing to recover there. Every Git step also has a time limit, so
+   a stuck push stops on its own.
+3. **Versions before 0.4.0 stashed local changes** during a push. If you used
+   one and a push was interrupted, look for a stash named
+   `fusion_git_addin_autostash` and restore that one specifically:
    ```bash
-   git status
-   git stash list
-   ```
-3. **If a rebase was interrupted** (`git status` says "rebase in progress"):
-   ```bash
-   git rebase --abort
-   ```
-4. **Recover auto-stashed changes**: look for the add-in's entry, named
-   `fusion_git_addin_autostash`, and restore that one specifically:
-   ```bash
+   git status                 # if it says "rebase in progress": git rebase --abort
    git stash list
    git stash pop stash@{N}    # N = the number shown next to fusion_git_addin_autostash
    ```
-   Make sure you are back on your original branch first (`git status` shows
-   it). Don't use `git reset --hard`: it permanently discards uncommitted work.
+   Don't use `git reset --hard`: it permanently discards uncommitted work.
 
 ### If repository gets corrupted
 

@@ -218,16 +218,18 @@ are filled in at export time):
 
 ### Understanding Git Workflow
 
-The add-in follows professional Git practices:
+What happens when you click OK:
 
-1. **Stash**: Local changes are temporarily saved
-2. **Pull**: Latest changes from GitHub are downloaded
-3. **Branch**: New branch created for your export
-4. **Export**: Design files are generated
-5. **Add**: Files are staged for commit
-6. **Commit**: Changes are committed with your message
-7. **Push**: Branch is uploaded to GitHub
-8. **Restore**: Any stashed changes are restored
+1. **Export**: Fusion writes the design files to a temporary folder
+2. **Check GitHub**: The add-in asks GitHub for its latest version of the branch
+3. **Commit**: It builds a commit containing your exports and your message,
+   on top of GitHub's latest version
+4. **Push**: It sends the commit to GitHub. If someone else pushed meanwhile,
+   it rebuilds on their latest version and tries again
+
+Your local repository folder is never changed: no stashing, no switching
+branches, no copies of the exports. Anything you were doing there is left as it
+was.
 
 ### Branch Naming Best Practices
 
@@ -251,15 +253,13 @@ The add-in follows professional Git practices:
 
 If you want to continue work on an existing branch:
 
-1. **Use Branch Override**: Enter exact branch name
-2. **Local Checkout**: The add-in will switch to that branch
-3. **Update from GitHub**: The add-in first brings the branch up to date with GitHub
-4. **Append Changes**: New commits added to existing branch
+1. **Use Branch Override**: Enter the exact branch name
+2. **Confirm**: If the branch already exists on GitHub, the add-in asks before
+   adding to it (and warns specially if it is the repository's main branch)
+3. **Append Changes**: Your export is added as a new commit on top of the
+   branch's latest version on GitHub, so commits made from other computers are kept
 
-The add-in never force-pushes. If GitHub has commits on that branch that your
-computer doesn't (for example, the branch was created or updated from another
-computer and can't be updated automatically), the push is refused and nothing
-on GitHub changes. Leave Branch Override blank to push to a new branch instead.
+The add-in never force-pushes, so it can't overwrite anyone's commits.
 
 ---
 
