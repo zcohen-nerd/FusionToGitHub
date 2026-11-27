@@ -20,6 +20,7 @@ Commit hooks don't run for these commits (they are made with
 
 from __future__ import annotations
 
+import glob
 import logging
 import os
 import posixpath
@@ -28,14 +29,76 @@ import shutil
 import signal
 import subprocess
 import tempfile
-from dataclasses import dataclass, field
+import threading
+import time
+from contextlib import contextmanager
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Protocol, Sequence, Tuple
 from urllib.parse import urlsplit
 
 VERSION = "0.5.0"
 IS_WINDOWS = os.name == "nt"
-GIT_EXE = shutil.which("git") or (r"C:\Program Files\Git\bin\git.exe" if IS_WINDOWS else "git")
+GIT_OVERRIDE_ENV = "FUSION_TO_GITHUB_GIT"
+
+
+def git_candidates() -> List[str]:
+    """Places Git is commonly installed, most specific first (not checked for existence)."""
+    if IS_WINDOWS:
+        roots = [os.environ.get(k, "") for k in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)")]
+        local = os.environ.get("LOCALAPPDATA", "")
+        candidates = []
+        for root in dict.fromkeys(r for r in roots if r):
+            candidates += [os.path.join(root, "Git", "cmd", "git.exe"), os.path.join(root, "Git", "bin", "git.exe")]
+        if local:
+            candidates.append(os.path.join(local, "Programs", "Git", "cmd", "git.exe"))
+            # GitHub Desktop's bundled Git, newest version first.
+            candidates += sorted(
+                glob.glob(os.path.join(local, "GitHubDesktop", "app-*", "resources", "app", "git", "cmd", "git.exe")),
+                reverse=True,
+            )
+        return candidates
+    # macOS: Fusion started from the Dock gets a minimal PATH, and
+    # /usr/bin/git is only a placeholder that opens an "install developer
+    # tools" dialog when they're missing. Prefer real installs first.
+    return ["/opt/homebrew/bin/git", "/usr/local/bin/git", "/usr/bin/git"]
+
+
+def find_git() -> str:
+    """The Git executable to use: an explicit override, a known install, then PATH."""
+    override = os.environ.get(GIT_OVERRIDE_ENV, "").strip()
+    if override and os.path.isfile(override):
+        return override
+    candidates = git_candidates()
+    if not IS_WINDOWS:
+        for path in candidates[:2]:  # Homebrew installs before the PATH lookup
+            if os.path.isfile(path):
+                return path
+    found = shutil.which("git")
+    if found:
+        return found
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+    return "git"
+
+
+GIT_EXE = find_git()
+
+# A cancel request is checked this often while a git command runs.
+CANCEL_POLL_SECONDS = 0.2
+_CANCEL_SCOPE = threading.local()
+
+
+@contextmanager
+def cancel_scope(token: Optional[threading.Event]):
+    """Make git commands run by this thread stop when *token* is set (see GitCancelled)."""
+    previous = getattr(_CANCEL_SCOPE, "token", None)
+    _CANCEL_SCOPE.token = token
+    try:
+        yield
+    finally:
+        _CANCEL_SCOPE.token = previous
 
 # Upper bounds, in seconds, for one git call. Network calls get longer because
 # they include Git Credential Manager's browser sign-in. A stalled transfer is
@@ -82,6 +145,10 @@ class GitError(RuntimeError):
 
 class GitTimeoutError(GitError):
     """A git command took longer than its timeout and was stopped."""
+
+
+class GitCancelled(GitError):
+    """The user cancelled while a git command was running; it was stopped."""
 
 
 # ---------------------------------------------------------------------------
@@ -199,9 +266,7 @@ def _run_git_bytes(
         env=env_vars,
         **platform_kwargs,
     )
-    try:
-        out, err = proc.communicate(input_bytes, timeout=limit)
-    except subprocess.TimeoutExpired:
+    def stop() -> None:
         _kill_process_tree(proc)
         try:
             proc.communicate(timeout=5)
@@ -212,6 +277,26 @@ def _run_git_bytes(
                         stream.close()
                 except Exception:
                     pass
+
+    cancel = getattr(_CANCEL_SCOPE, "token", None)
+    deadline = time.monotonic() + limit
+    pending_input = input_bytes
+    while True:
+        remaining = deadline - time.monotonic()
+        # With a cancel token, wait in short slices so a cancel request is
+        # noticed quickly; without one, wait for the whole time limit.
+        wait = max(0.0, min(remaining, CANCEL_POLL_SECONDS)) if cancel is not None else max(0.0, remaining)
+        try:
+            out, err = proc.communicate(pending_input, timeout=wait)
+            break
+        except subprocess.TimeoutExpired:
+            pending_input = None  # input can only be sent on the first call
+            if cancel is not None and cancel.is_set():
+                stop()
+                raise GitCancelled(f"git {args[0] if args else ''} was stopped because you cancelled.")
+            if time.monotonic() < deadline:
+                continue
+        stop()
         raise GitTimeoutError(
             f"git {args[0] if args else ''} took longer than {int(limit)} seconds and was stopped. "
             + (
@@ -318,6 +403,10 @@ class GitAuth:
     host: str
     token: str = field(repr=False)
     username: str = ""
+    # An empty folder used as core.hooksPath while the token is present, so
+    # no repository hook (pre-push, reference-transaction, ...) runs inside a
+    # git process that holds the token (risk R-21).
+    hooks_dir: str = ""
 
     @property
     def env(self) -> Dict[str, str]:
@@ -334,7 +423,10 @@ class GitAuth:
         # credential. The inline helper is then registered for this one host,
         # so the token is never offered to any other server (audit SEC-02/04).
         # These must be -c arguments: Windows can't pass an empty env value.
-        return ["credential.helper=", f"credential.https://{self.host}.helper={_INLINE_CREDENTIAL_HELPER}"]
+        values = ["credential.helper=", f"credential.https://{self.host}.helper={_INLINE_CREDENTIAL_HELPER}"]
+        if self.hooks_dir:
+            values.append(f"core.hooksPath={self.hooks_dir}")
+        return values
 
 
 def token_auth(remote_url: str, token: str, username: str = "") -> GitAuth:
@@ -441,13 +533,15 @@ def _ensure_commit_available(repo_path: str, branch: str, sha: str, auth: Option
 
 
 def _history_entry(
-    design_name: str, branch: str, message: str, rel_paths: Sequence[str], when: datetime
+    design_name: str, branch: str, message: str, rel_paths: Sequence[str], when: datetime,
+    notes: Sequence[str] = (),
 ) -> str:
     lines = [
         f"## {when.strftime('%Y-%m-%d %H:%M:%S')} - {design_name}",
         f"- **Branch:** `{branch}`",
         f'- **Commit Message:** "{message}"',
     ]
+    lines.extend(f"- **Note:** {note}" for note in notes)
     if rel_paths:
         lines.append("- **Files Updated:**")
         lines.extend(f"  - `{rel}`" for rel in rel_paths)
@@ -550,6 +644,41 @@ def _read_blob(repo_path: str, commit: Optional[str], rel: str) -> Optional[byte
     return _git_bytes(repo_path, "cat-file", "blob", spec)
 
 
+def _cancelled_result(
+    repo_path: str, state: Dict[str, Any], auth: Optional["GitAuth"], logger: Optional[logging.Logger]
+) -> Dict[str, Any]:
+    """What a cancellation means: before the push nothing was sent; during it, ask GitHub.
+
+    A push that was stopped part-way may still have been accepted, so the
+    branch tip on GitHub is checked (without the cancel token) to tell the
+    user plainly whether the export was published.
+    """
+    result: Dict[str, Any] = {"cancelled": True, "published": False, "uncertain": False,
+                              "repository_initialized": False,
+                              "branch": state.get("branch"), "commit": state.get("commit")}
+    phase = state.get("phase")
+    if phase not in ("pushing", "bootstrapping") or not state.get("commit"):
+        return result
+    try:
+        listing = git_output(
+            repo_path, "ls-remote", "origin", f"refs/heads/{state['branch']}", auth=auth, network=True
+        )
+        tip = listing.split("\t", 1)[0].strip() if listing else ""
+        reached = tip == state["commit"]
+        if phase == "bootstrapping":
+            # Only the empty repository's first commit was being sent; the
+            # export itself was not.
+            result["repository_initialized"] = reached
+            result["branch"] = result["commit"] = None
+        else:
+            result["published"] = reached
+    except GitError as exc:
+        result["uncertain"] = True
+        if logger:
+            logger.warning("Couldn't check whether the cancelled push reached GitHub: %s", exc)
+    return result
+
+
 def push_export(
     repo_path: str,
     exports: Sequence[Tuple[str, str]],
@@ -568,6 +697,8 @@ def push_export(
     identity: Optional[Dict[str, str]] = None,
     history_title: Optional[str] = None,
     legacy_history_file: Optional[str] = None,
+    history_notes: Sequence[str] = (),
+    cancel: Optional[threading.Event] = None,
 ) -> Optional[Dict[str, Any]]:
     """Commit *exports* on top of GitHub's branch tip and push it, without touching the checkout.
 
@@ -596,6 +727,8 @@ def push_export(
 
     if mode not in (MODE_SNAPSHOT, MODE_SINGLE):
         raise ValueError(f"Unknown mode {mode!r}")
+    # Where the push got to, so a cancellation can be reported truthfully.
+    state: Dict[str, Any] = {"phase": "preparing", "branch": None, "commit": None}
 
     try:
         # --- Checks that need no network -----------------------------------
@@ -677,6 +810,7 @@ def push_export(
                         "Initialize repository for Fusion exports",
                         identity,
                     )
+                    state.update(phase="bootstrapping", branch=BOOTSTRAP_BRANCH, commit=init_commit)
                     proc = git_run(
                         repo_path,
                         "push",
@@ -736,7 +870,9 @@ def push_export(
                 if history_file:
                     rel_history = normalize_repo_path(history_file)
                     existing = _read_blob(repo_path, base, rel_history) or b""
-                    entry = _history_entry(design_name, branch, message, [rel for _, rel in files], when)
+                    entry = _history_entry(
+                        design_name, branch, message, [rel for _, rel in files], when, history_notes
+                    )
                     header = f"# {history_title}\n\n" if history_title else "# Changelog\n\n"
                     if not existing and legacy_history_file and _read_blob(
                         repo_path, base, normalize_repo_path(legacy_history_file)
@@ -751,6 +887,7 @@ def push_export(
                 commit = _build_commit(repo_path, base, files, extra, message, identity)
 
                 step("Pushing to GitHub…")
+                state.update(phase="pushing", branch=branch, commit=commit)
                 proc = git_run(
                     repo_path,
                     "push",
@@ -761,6 +898,7 @@ def push_export(
                     network=True,
                 )
                 if proc.returncode == 0:
+                    state["phase"] = "done"
                     return {
                         "branch": branch,
                         "commit": commit,
@@ -788,12 +926,20 @@ def push_export(
             return None
 
         auth = None
+        hooks_dir = None
         if pat_credentials and pat_credentials.get("token"):
             auth = token_auth(origin_url, pat_credentials["token"], pat_credentials.get("username", ""))
+            hooks_dir = tempfile.mkdtemp(prefix="fusion_git_nohooks_")
+            auth = replace(auth, hooks_dir=hooks_dir)
         try:
-            return network(auth)
+            with cancel_scope(cancel):
+                return network(auth)
+        except GitCancelled:
+            return _cancelled_result(repo_path, state, auth, logger)
         finally:
             git_run(repo_path, "update-ref", "-d", _BASE_REF, check=False)
+            if hooks_dir:
+                shutil.rmtree(hooks_dir, ignore_errors=True)
     except (GitError, ValueError, OSError) as exc:
         secrets = [pat_credentials.get("token", "")] if pat_credentials else []
         msg = redact_secrets(f"Push failed:\n{exc}", secrets)
@@ -815,6 +961,10 @@ __all__ = [
     "GitUI",
     "GitError",
     "GitTimeoutError",
+    "GitCancelled",
+    "cancel_scope",
+    "find_git",
+    "git_candidates",
     "sanitize_branch_name",
     "generate_branch_name",
     "is_valid_branch_name",

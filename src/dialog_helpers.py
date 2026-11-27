@@ -167,12 +167,55 @@ def validate_repo_inputs(
     else:
         set_msg("git", "", "info")
 
+    service = synced_folder_service(normalized_path) if normalized_path else None
+    if service and messages["path"][1] != "error":
+        text, severity = messages["path"]
+        messages["path"] = (
+            f"{text}\nℹ️ This folder is inside {service}. Sync apps can lock or duplicate Git's "
+            "files; a folder outside it is safer. (Your designs are backed up to GitHub anyway.)",
+            severity,
+        )
+
     return {
         "messages": messages,
         "ok": ok,
         "path": normalized_path,
         "has_git_dir": git_dir_exists,
     }
+
+
+# Folder names that sync apps use, matched against whole path components.
+_SYNC_FOLDER_NAMES = (
+    ("OneDrive", lambda part: part == "onedrive" or part.startswith("onedrive - ")),
+    ("Dropbox", lambda part: part == "dropbox" or part.startswith("dropbox (")),
+    ("Google Drive", lambda part: part in ("google drive", "my drive", "googledrive")),
+    ("iCloud Drive", lambda part: part in ("icloud drive", "icloud~com~apple~clouddocs", "com~apple~clouddocs")),
+    ("Box", lambda part: part in ("box", "box sync")),
+)
+
+
+def synced_folder_service(path: str) -> Optional[str]:
+    """Name of the sync service whose folder contains *path* (OneDrive, Dropbox, ...), or None.
+
+    Only an informational warning is based on this: repositories inside a
+    synced folder work, but sync apps can lock or duplicate Git's files.
+    """
+    if not path:
+        return None
+    normalized = os.path.normcase(os.path.abspath(os.path.expanduser(path)))
+    for variable in ("OneDrive", "OneDriveConsumer", "OneDriveCommercial"):
+        root = os.environ.get(variable, "").strip()
+        if root:
+            root = os.path.normcase(os.path.abspath(root))
+            if normalized == root or normalized.startswith(root.rstrip("\\/") + os.sep):
+                return "OneDrive"
+    parts = [part.lower() for part in re.split(r"[\\/]+", normalized) if part]
+    if "mobile documents" in parts:
+        return "iCloud Drive"
+    for service, matches in _SYNC_FOLDER_NAMES:
+        if any(matches(part) for part in parts):
+            return service
+    return None
 
 
 def normalize_export_subfolder(raw: str) -> str:
@@ -378,5 +421,6 @@ __all__ = [
     "publication_notice",
     "resolve_new_repo_path",
     "setup_new_repository",
+    "synced_folder_service",
     "validate_repo_inputs",
 ]

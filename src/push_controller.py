@@ -58,6 +58,9 @@ class PushRequest:
     design_id: str
     commit_message: str = ""
     branch_override: str = ""
+    # Recorded in the design's HISTORY.md entry (for example, that the design
+    # has linked components and the backup may not be self-contained).
+    history_notes: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -78,6 +81,7 @@ class PushPlan:
     identity: Optional[Dict[str, str]] = None
     pat_credentials: Optional[Dict[str, str]] = field(default=None, repr=False)
     notes: List[str] = field(default_factory=list)
+    history_notes: List[str] = field(default_factory=list)
 
 
 def design_destination(profile: Dict[str, Any], design_id: str, design_name: str) -> Tuple[str, str]:
@@ -424,16 +428,23 @@ class PushController:
             identity=identity,
             pat_credentials=pat,
             notes=notes,
+            history_notes=list(request.history_notes),
         )
 
     # -- push: git phase ----------------------------------------------------
 
     def execute(
-        self, plan: PushPlan, ui: git_core.GitUI, on_step: Optional[Callable[[str], None]] = None
+        self,
+        plan: PushPlan,
+        ui: git_core.GitUI,
+        on_step: Optional[Callable[[str], None]] = None,
+        cancel=None,
     ) -> Optional[Dict[str, Any]]:
-        """Run the push. Returns push_export's result: a dict, {"cancelled": True}, or None.
+        """Run the push. Returns push_export's result: a dict, {"cancelled": True, ...}, or None.
 
-        Makes no Fusion calls itself; *ui* and *on_step* are the only callbacks.
+        Makes no Fusion calls itself; *ui* and *on_step* are the only
+        callbacks. Setting *cancel* (a threading.Event) stops the running git
+        command; the result then says whether the export reached GitHub.
         """
         return self.git.push_export(
             plan.repo_path,
@@ -451,6 +462,8 @@ class PushController:
             pat_credentials=plan.pat_credentials,
             logger=self.logger,
             on_step=on_step,
+            history_notes=plan.history_notes,
+            cancel=cancel,
         )
 
 

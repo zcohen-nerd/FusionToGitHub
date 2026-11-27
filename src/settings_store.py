@@ -35,6 +35,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fusion_git_core import url_has_embedded_secret
+from portable_names import portable_name
 
 SCHEMA_VERSION = 1
 LEGACY_META_KEY = "__meta__"
@@ -411,13 +412,8 @@ _FOLDER_UNSAFE = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
 
 
 def safe_folder_name(name: str) -> str:
-    """A design name that works as a folder on Windows, macOS and GitHub."""
-    candidate = _FOLDER_UNSAFE.sub("_", (name or "").strip()).strip(" .")
-    if candidate.upper() in {"CON", "PRN", "AUX", "NUL"} | {f"COM{i}" for i in range(1, 10)} | {
-        f"LPT{i}" for i in range(1, 10)
-    }:
-        candidate += "_"
-    return candidate[:100] or "Design"
+    """A design name that works as a folder on Windows, macOS and GitHub (see portable_names)."""
+    return portable_name(name, fallback="Design")
 
 
 def design_folder(profile: Dict[str, Any], design_id: str, design_name: str) -> str:

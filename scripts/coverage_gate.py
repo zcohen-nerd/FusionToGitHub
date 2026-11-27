@@ -39,6 +39,8 @@ THRESHOLDS = {
     "fusion_git_core.py": 85,
     "push_controller.py": 90,
     "settings_store.py": 85,
+    "portable_names.py": 90,
+    "export_checks.py": 90,
     "dialog_helpers.py": 78,
     "push_dialog.py": 77,
     "fusion_export.py": 68,

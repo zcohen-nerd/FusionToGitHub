@@ -50,6 +50,8 @@ PACKAGE_FILES: Dict[str, str] = {
     "src/push_controller.py": "push_controller.py",
     "src/push_dialog.py": "push_dialog.py",
     "src/settings_store.py": "settings_store.py",
+    "src/portable_names.py": "portable_names.py",
+    "src/export_checks.py": "export_checks.py",
     "src/AddInIcon.svg": "AddInIcon.svg",
     "LICENSE": "LICENSE",
 }
