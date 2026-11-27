@@ -34,8 +34,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fusion_git_core import url_has_embedded_secret
-from portable_names import portable_name
+from .fusion_git_core import url_has_embedded_secret
+from .portable_names import portable_name
 
 SCHEMA_VERSION = 1
 LEGACY_META_KEY = "__meta__"

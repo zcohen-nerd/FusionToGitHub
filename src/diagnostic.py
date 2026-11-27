@@ -64,7 +64,7 @@ for filename in files_to_check:
 # 5. Try importing the core module
 print("\n5. Testing imports:")
 try:
-    sys.path.insert(0, src_dir)
+    # Standalone tool, run as a script: its folder is already on sys.path.
     import fusion_git_core
     print(f"   ✓ fusion_git_core imported successfully (Version: {fusion_git_core.VERSION})")
 except Exception as e:

@@ -29,8 +29,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-from export_checks import check_exports
-from portable_names import portable_name, unique_names
+from .export_checks import check_exports
+from .portable_names import portable_name, unique_names
 
 try:
     import adsk.core

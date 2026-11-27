@@ -29,10 +29,10 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from urllib.parse import urlsplit
 
-import fusion_git_core as git_core
-from credentials import CredentialError, CredentialStore
-from dialog_helpers import expand_export_subfolder, normalize_export_subfolder, publication_notice
-from settings_store import SettingsError, SettingsStore, design_folder
+from . import fusion_git_core as git_core
+from .credentials import CredentialError, CredentialStore
+from .dialog_helpers import expand_export_subfolder, normalize_export_subfolder, publication_notice
+from .settings_store import SettingsError, SettingsStore, design_folder
 
 HISTORY_FILE_NAME = "HISTORY.md"
 LEGACY_HISTORY_FILE = "CHANGELOG.md"

@@ -1,6 +1,9 @@
 """Add-in start/stop and handler lifetime, against the SIMULATED Fusion API."""
 
 import gc
+import os
+import sys
+import types
 import unittest
 from unittest import mock
 
@@ -45,17 +48,57 @@ class LifecycleTests(AddinTestCase):
         # This copy created them in an earlier load that never reached stop().
         definition = self.ui.commandDefinitions.addButtonDefinition(addin.CMD_ID, addin.CMD_NAME, "", "")
         self.ui.allToolbarPanels.item(0).controls.addCommand(definition, addin.CONTROL_ID)
-        addin._command_owners()[addin.CMD_ID] = addin.THIS_FILE
         addin.run(None)
         self.assertEqual(len(self.controls()), 1)
         self.assertFalse(definition.isValid)  # replaced by a fresh definition
         self.assertIsNot(self.ui.commandDefinitions.itemById(addin.CMD_ID), definition)
         self.assertEqual(self.ui.messages, [])
 
+    def load(self, module):
+        """Put *module* in sys.modules for this test only (nothing else is touched)."""
+        self.assertNotIn(module.__name__, sys.modules)
+        sys.modules[module.__name__] = module
+        self.addCleanup(sys.modules.pop, module.__name__, None)
+
+    def other_copy(self, folder="OtherCopy", **attrs):
+        """Another installed copy's entry module, loaded in the same Python (as in Fusion)."""
+        module = types.ModuleType(f"{folder}.Push_To_GitHub")
+        module.__file__ = os.path.join(self.base, folder, "Push_To_GitHub.py")
+        module.CMD_ID = addin.CMD_ID
+        vars(module).update(attrs)
+        self.load(module)
+        definition = self.ui.commandDefinitions.addButtonDefinition(addin.CMD_ID, addin.CMD_NAME, "", "")
+        control = self.ui.allToolbarPanels.item(0).controls.addCommand(definition, addin.CONTROL_ID)
+        return definition, control
+
+    def test_an_older_running_copy_is_recognised_by_is_initialized(self):
+        # 0.3.x-0.5.x entry modules have no owns_command, only is_initialized.
+        other, other_control = self.other_copy(is_initialized=True)
+        addin.run(None)
+        self.assertIn("Another copy of 'Push to GitHub' is already running", self.last_message())
+        self.assertIn("OtherCopy", self.last_message())
+        self.assertTrue(other.isValid and other_control.isValid)
+
+    def test_a_loaded_copy_that_has_stopped_is_not_a_duplicate(self):
+        stale, _ = self.other_copy(owns_command=False, is_initialized=False)
+        addin.run(None)
+        self.assertEqual(self.ui.messages, [])
+        self.assertFalse(stale.isValid)  # its leftover definition was replaced
+        self.assertEqual(len(self.controls()), 1)
+
+    def test_duplicate_detection_runs_no_code_in_other_modules(self):
+        class Trap(types.ModuleType):
+            def __getattr__(self, name):  # a lazily-loading module
+                raise AssertionError(f"module code ran for {name}")
+
+        self.load(Trap("some_lazy_module"))
+        self.other_copy(owns_command=True)
+        addin.run(None)  # must not raise
+        self.assertIn("Another copy", self.last_message())
+
     def test_a_second_installed_copy_warns_once_and_adds_no_button(self):
         # Another copy (any version) of the add-in already owns the button.
-        other = self.ui.commandDefinitions.addButtonDefinition(addin.CMD_ID, addin.CMD_NAME, "", "")
-        other_control = self.ui.allToolbarPanels.item(0).controls.addCommand(other, addin.CONTROL_ID)
+        other, other_control = self.other_copy(owns_command=True)
         addin.run(None)
         self.assertIn("Another copy of 'Push to GitHub' is already running", self.last_message())
         self.assertEqual(len(self.ui.messages), 1)
@@ -82,7 +125,7 @@ class LifecycleTests(AddinTestCase):
             self.assertEqual(self.controls(), [])
             self.assertEqual(self.app.registered_custom_events, [])
             self.assertIsNone(addin.bridge)
-            self.assertNotIn(addin.CMD_ID, addin._command_owners())
+            self.assertFalse(addin.owns_command)
         addin.stop(None)  # a second stop is harmless
 
     def test_handlers_survive_garbage_collection(self):

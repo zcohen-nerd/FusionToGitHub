@@ -10,30 +10,19 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-# Import core functions - handle both standalone and installed scenarios
-try:
-    from fusion_git_core import (
-        VERSION,
-        MODE_SINGLE,
-        MODE_SNAPSHOT,
-        GitUI,
-        git_available,
-        push_export,
-    )
-except ImportError:
-    # Add current directory to path
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    if current_dir not in sys.path:
-        sys.path.insert(0, current_dir)
-    
-    from fusion_git_core import (
-        VERSION,
-        MODE_SINGLE,
-        MODE_SNAPSHOT,
-        GitUI,
-        git_available,
-        push_export,
-    )
+# Standalone execution mode: this is a developer tool, run as a script
+# (``python src/push_cli.py``), so its own folder is already first on
+# sys.path. It isn't shipped with the add-in. fusion_git_core has no sibling
+# imports, so it works both here and inside the add-in package (the add-in
+# itself imports it relatively; see Push_To_GitHub.py and risk R-25).
+from fusion_git_core import (
+    VERSION,
+    MODE_SINGLE,
+    MODE_SNAPSHOT,
+    GitUI,
+    git_available,
+    push_export,
+)
 
 
 class TerminalUI(GitUI):

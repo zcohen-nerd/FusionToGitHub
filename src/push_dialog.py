@@ -28,9 +28,9 @@ from typing import Any, Dict, List, Optional
 import adsk.core
 import adsk.fusion  # noqa: F401  (Design type checks happen in fusion_export)
 
-import addin_logging
-from credentials import CredentialError, CredentialStore
-from dialog_helpers import (
+from . import addin_logging
+from .credentials import CredentialError, CredentialStore
+from .dialog_helpers import (
     convert_github_url,
     default_path_for_new_repo,
     derive_repo_name_from_url,
@@ -39,7 +39,7 @@ from dialog_helpers import (
     setup_new_repository,
     validate_repo_inputs,
 )
-from fusion_export import (
+from .fusion_export import (
     AVAILABLE_FORMATS,
     DEFAULT_FORMATS,
     FORMAT_SETTING_LABELS,
@@ -54,9 +54,9 @@ from fusion_export import (
     linked_components_question,
     temporary_export_dir,
 )
-import push_worker
-from fusion_bridge import BUSY_TEXT, NOTHING_PUSHED, PushJob, WorkerBusy
-from fusion_git_core import (
+from . import push_worker
+from .fusion_bridge import BUSY_TEXT, NOTHING_PUSHED, PushJob, WorkerBusy
+from .fusion_git_core import (
     GitError,
     export_size_check,
     git_available,
@@ -64,7 +64,7 @@ from fusion_git_core import (
     redact_secrets,
     sanitize_branch_name,
 )
-from push_controller import (
+from .push_controller import (
     DEFAULT_BRANCH_FORMAT,
     DEFAULT_COMMIT_TEMPLATE,
     PushCancelled,
@@ -72,7 +72,7 @@ from push_controller import (
     PushRefused,
     PushRequest,
 )
-from settings_store import SettingsError, SettingsStore
+from .settings_store import SettingsError, SettingsStore
 
 ADD_NEW_OPTION = "🆕 Set up new GitHub repository..."
 DIALOG_TITLE_CONFIG_ERROR = "Config Error"

@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Optional
 from urllib.parse import urlsplit
 
-from fusion_git_core import url_has_embedded_secret
+from .fusion_git_core import url_has_embedded_secret
 
 
 # Matches GitHub browser URLs (optionally scheme-less), capturing owner and

@@ -21,7 +21,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 import adsk.core
 
-from push_worker import PushWorker, WorkerBusy
+from .push_worker import PushWorker, WorkerBusy
 
 EVENT_SUFFIX = "_PushWorker"
 SHUTDOWN_TIMEOUT_SECONDS = 3.0

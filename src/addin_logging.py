@@ -18,11 +18,7 @@ import threading
 import webbrowser
 from typing import Optional
 
-try:
-    from fusion_git_core import redact_secrets
-except ImportError:  # pragma: no cover - add-in folder not on sys.path yet
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from fusion_git_core import redact_secrets
+from .fusion_git_core import redact_secrets
 
 IS_WINDOWS = os.name == "nt"
 LOG_DIR = os.path.expanduser("~/.PushToGitHub_AddIn_Data")

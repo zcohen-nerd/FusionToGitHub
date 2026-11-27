@@ -17,7 +17,7 @@ import os
 import struct
 from typing import Dict, List, Optional, Sequence
 
-from portable_names import case_collisions
+from .portable_names import case_collisions
 
 SIZE_LIMIT_BYTES = 100 * 1024 * 1024  # GitHub rejects files of 100 MB or more
 

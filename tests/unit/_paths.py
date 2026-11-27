@@ -1,13 +1,18 @@
-"""Make src/ and tests/fakes importable for the unit tests."""
+"""Load the add-in (src/) as a package, with the simulated Fusion API, for the unit tests.
+
+See tests/addin_package.py: src/ itself is never put on sys.path.
+"""
 
 import os
 import sys
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
-for _path in (os.path.join(_HERE, "..", "..", "src"), os.path.join(_HERE, "..", "fakes")):
-    _path = os.path.normpath(_path)
-    if _path not in sys.path:
-        sys.path.insert(0, _path)
+_TESTS = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+if _TESTS not in sys.path:
+    sys.path.insert(0, _TESTS)
+
+import addin_package  # noqa: E402
+
+addin_package.install()
 
 
 def force_rmtree(path):

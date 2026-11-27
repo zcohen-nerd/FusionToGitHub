@@ -70,9 +70,9 @@ class AddinTestCase(GitSandbox):
         browser = mock.patch("webbrowser.open")
         self.opened_urls = browser.start()
         self.addCleanup(browser.stop)
-        owners = mock.patch.dict(addin._command_owners(), clear=True)
-        owners.start()
-        self.addCleanup(owners.stop)
+        warned = mock.patch.object(addin, "_duplicate_warned", False)
+        warned.start()
+        self.addCleanup(warned.stop)
         self.addCleanup(self._check_background_work_ended)
         # Registered last, so it runs first: every question must have been
         # expected (scripted) and every scripted answer used.

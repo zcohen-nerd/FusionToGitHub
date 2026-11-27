@@ -34,7 +34,7 @@ import logging
 import threading
 from typing import Any, Callable, Dict, List, Optional
 
-from fusion_git_core import redact_secrets
+from .fusion_git_core import redact_secrets
 
 CONFIRM_TIMEOUT_SECONDS = 10 * 60
 TICK_SECONDS = 0.5
