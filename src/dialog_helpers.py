@@ -244,6 +244,29 @@ def default_path_for_new_repo(
     return os.path.join(base_dir, sanitized)
 
 
+def resolve_new_repo_path(
+    repo_name: str,
+    validated_path: str,
+    path_is_auto: bool,
+    base_dir: str,
+    safe_base_fn,
+) -> str:
+    """Return the folder a repository being set up should live in.
+
+    While the path field still holds the auto-suggested value, the folder
+    follows *repo_name*, which may only be known at OK time (derived from
+    the URL when the name was left blank). A folder the user typed or
+    browsed to always wins.
+
+    The caller must use the returned folder for both the setup and the push
+    that follows; using the dialog's earlier validated path for the push
+    was bug BUG-01 (first push failed with "not a Git repo").
+    """
+    if path_is_auto or not validated_path:
+        return os.path.normpath(default_path_for_new_repo(repo_name, base_dir, safe_base_fn))
+    return os.path.normpath(validated_path)
+
+
 def setup_new_repository(
     repo_name: str,
     local_path: str,
@@ -332,6 +355,7 @@ __all__ = [
     "ensure_export_subfolder_exists",
     "expand_export_subfolder",
     "normalize_export_subfolder",
+    "resolve_new_repo_path",
     "setup_new_repository",
     "validate_repo_inputs",
 ]

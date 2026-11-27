@@ -48,6 +48,7 @@ try:
         ensure_export_subfolder_exists,
         expand_export_subfolder,
         normalize_export_subfolder,
+        resolve_new_repo_path as _resolve_new_repo_path,
         setup_new_repository as _setup_new_repository,
         validate_repo_inputs as _validate_repo_inputs,
     )
@@ -71,6 +72,7 @@ except ImportError:
         ensure_export_subfolder_exists,
         expand_export_subfolder,
         normalize_export_subfolder,
+        resolve_new_repo_path as _resolve_new_repo_path,
         setup_new_repository as _setup_new_repository,
         validate_repo_inputs as _validate_repo_inputs,
     )
@@ -1622,13 +1624,15 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                                 )
                                 execute_args.executeFailed = True
                                 return
-                            local_path = normalized_repo_path or os.path.join(REPO_BASE_DIR, repo_name_to_add)
-                            if auto_path_state.get("auto", True):
-                                # The auto path tracks the repo name; recompute in
-                                # case the name was just derived from the URL.
-                                local_path = _default_path_for_new_repo(
-                                    repo_name_to_add, REPO_BASE_DIR, _safe_base
-                                )
+                            # The auto path tracks the repo name, which may
+                            # have just been derived from the URL.
+                            local_path = _resolve_new_repo_path(
+                                repo_name_to_add,
+                                normalized_repo_path,
+                                auto_path_state.get("auto", True),
+                                REPO_BASE_DIR,
+                                _safe_base,
+                            )
 
                             existing_entry = current_config.get(repo_name_to_add)
                             if existing_entry is not None:
@@ -1691,7 +1695,13 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                                     "lastCommitMessage", "Updated design"
                                 )
                             save_config(current_config)
-                            
+
+                            # The push below must use the folder the repository
+                            # was just set up in, not the path validated before
+                            # the name was known (BUG-01).
+                            normalized_repo_path = local_path
+                            repo_path_input.value = local_path
+
                             # Don't return - let the user continue to push immediately
                             # Update the UI to reflect the new repository is now selected
                             selected_action = repo_name_to_add

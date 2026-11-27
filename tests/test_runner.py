@@ -1115,6 +1115,100 @@ class TestRunner:
         finally:
             self._cleanup_dir(base_dir)
 
+    def test_setup_blank_name_uses_clone_folder(self):
+        """T_SETUP_01: "Set up new" with a blank name pushes from the folder it cloned into.
+
+        Regression test for audit finding BUG-01. The dialog validates the
+        suggested folder (…/NewRepo) before the name is derived from the URL;
+        the add-in then cloned into …/<name> but pushed from …/NewRepo.
+        """
+        self.log_test_start("T_SETUP_01", "Setup: blank name uses the clone folder")
+        base_dir = tempfile.mkdtemp(prefix="fusion_setup1_")
+        try:
+            from dialog_helpers import (
+                default_path_for_new_repo,
+                derive_repo_name_from_url,
+                resolve_new_repo_path,
+                setup_new_repository,
+                validate_repo_inputs,
+            )
+            from fusion_git_core import git_run, handle_git_operations
+
+            def safe_base(name):
+                return re.sub(r"[^\w\-]", "_", name)
+
+            add_new = "__add_new__"
+            repos_dir = os.path.join(base_dir, "FusionGitRepos")
+            origin_dir = os.path.join(base_dir, "MyDesigns.git")
+            git_run(base_dir, "init", "--bare", origin_dir)
+            # A URL, as users paste: forward slashes on every OS.
+            origin = Path(origin_dir).as_uri()
+
+            ok = True
+            details = []
+
+            # What the dialog does: suggest a folder for the blank name and
+            # validate it, then derive the name from the URL when OK is clicked.
+            suggested = default_path_for_new_repo("", repos_dir, safe_base)
+            validated = validate_repo_inputs(add_new, suggested, origin, add_new)["path"]
+            name = derive_repo_name_from_url(origin)
+            local_path = resolve_new_repo_path(name, validated, True, repos_dir, safe_base)
+
+            if name != "MyDesigns":
+                ok = False
+                details.append(f"derived name {name!r}")
+            if os.path.normcase(local_path) != os.path.normcase(
+                os.path.normpath(os.path.join(repos_dir, "MyDesigns"))
+            ):
+                ok = False
+                details.append(f"clone folder {local_path!r} does not follow the derived name")
+
+            error = setup_new_repository(name, local_path, origin, git_run)
+            if error:
+                ok = False
+                details.append(f"setup failed: {error}")
+            elif os.path.isdir(os.path.join(validated, ".git")):
+                ok = False
+                details.append("test premise broken: the suggested folder is a repo too")
+            else:
+                ui = _PipelineTestUI()
+                result = handle_git_operations(
+                    local_path,
+                    [],
+                    "Design update: {filename}",
+                    "fusion-export/{filename}-{timestamp}",
+                    ui,
+                    "TestDesign",
+                    materialize_files=self._write_file_materializer(
+                        os.path.join(local_path, "model.step"), "FIRST EXPORT"
+                    ),
+                )
+                if not result:
+                    ok = False
+                    details.append(f"first push failed: {ui.errors}")
+
+            # A folder the user typed or browsed to always wins.
+            typed = os.path.join(base_dir, "Typed", "Folder")
+            if resolve_new_repo_path("Other", typed, False, repos_dir, safe_base) != os.path.normpath(typed):
+                ok = False
+                details.append("a typed folder was not kept")
+
+            # Wiring guard: the add-in must push from the folder it set up.
+            main_src = (Path(__file__).resolve().parent.parent / "src" / "Push_To_GitHub.py").read_text(
+                encoding="utf-8"
+            )
+            if "normalized_repo_path = local_path" not in main_src:
+                ok = False
+                details.append("Push_To_GitHub.py no longer pushes from the set-up folder")
+
+            self.record_result(
+                "T_SETUP_01", "Setup: blank name uses the clone folder", ok, "; ".join(details)
+            )
+        except Exception as e:
+            self.record_result("T_SETUP_01", "Setup: blank name uses the clone folder", False, str(e))
+        finally:
+            self._cleanup_dir(base_dir)
+
     def test_no_force_push_in_source(self):
         """T_NOFORCE: no force-push option or setting anywhere in the shipped code."""
         self.log_test_start("T_NOFORCE", "No force push in source")
@@ -1162,6 +1256,7 @@ class TestRunner:
             self.test_pipeline_template_branch_uniquify()
             self.test_pipeline_reused_branch_sync()
             self.test_pipeline_never_overwrites_remote()
+            self.test_setup_blank_name_uses_clone_folder()
         finally:
             for key, value in saved.items():
                 if value is None:
