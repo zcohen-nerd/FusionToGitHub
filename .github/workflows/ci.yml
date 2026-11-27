@@ -59,6 +59,10 @@ jobs:
   test:
     name: Test
     runs-on: ${{ matrix.os }}
+    env:
+      # Lets the Windows jobs exercise the real Credential Manager (ephemeral
+      # runner); never set this on a developer machine.
+      FTG_REAL_VAULT_TESTS: "1"
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
@@ -78,8 +82,76 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Run tests
+      - name: Run regression tests
         run: python tests/test_runner.py
+
+      - name: Run unit tests (including the dialog, against simulated Fusion)
+        run: python -m unittest discover -s tests/unit -v
+
+  unusual-git-config:
+    name: Unusual Git config (${{ matrix.os }})
+    # The suites must pass with a global Git config full of non-default
+    # settings real users have (tests/hostile.gitconfig), and must not leave
+    # temporary folders behind.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    env:
+      GIT_CONFIG_GLOBAL: ${{ github.workspace }}/tests/hostile.gitconfig
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Record existing temp folders
+        run: python scripts/tempdir_guard.py snapshot "${{ runner.temp }}/tempdirs.json"
+
+      - name: Run regression tests
+        run: python tests/test_runner.py
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests/unit
+
+      - name: Check no temp folders were left behind
+        run: python scripts/tempdir_guard.py check "${{ runner.temp }}/tempdirs.json"
+
+  coverage:
+    name: Coverage
+    # Windows, because it is the supported platform and the only one where
+    # the Credential Manager code runs. Per-module thresholds live in
+    # scripts/coverage_gate.py.
+    runs-on: windows-latest
+    env:
+      FTG_REAL_VAULT_TESTS: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install coverage
+        run: pip install coverage==7.16.0
+
+      - name: Measure both suites
+        run: |
+          python -m coverage run --branch --parallel-mode --source=src -m unittest discover -s tests/unit
+          python -m coverage run --branch --parallel-mode --source=src tests/test_runner.py
+          python -m coverage combine
+          python -m coverage report --skip-empty
+          python -m coverage json -o coverage.json
+
+      - name: Enforce per-module thresholds and assertion checks
+        run: python scripts/coverage_gate.py coverage.json
 
   package:
     name: Package

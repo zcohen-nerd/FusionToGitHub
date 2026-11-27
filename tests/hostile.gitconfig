@@ -1,0 +1,50 @@
+# A deliberately unusual global Git configuration.
+#
+# CI runs the regression suite with GIT_CONFIG_GLOBAL pointing here, to prove
+# the add-in doesn't depend on Git's defaults. Real users have settings like
+# these. Each one must leave every push working exactly as before.
+
+[init]
+	# The add-in must not assume a "master" or "main" default branch.
+	defaultBranch = trunk
+[core]
+	# Line-ending conversion must never alter exported CAD files.
+	autocrlf = true
+	safecrlf = warn
+	quotePath = true
+[color]
+	# Output the add-in parses must not contain colour codes.
+	ui = always
+	branch = always
+	status = always
+	diff = always
+[commit]
+	# Signing is ignored by git commit-tree, so a missing GPG program must not
+	# break pushes. (Test fixtures that use "git commit" opt out explicitly.)
+	gpgSign = true
+[tag]
+	gpgSign = true
+[gpg]
+	program = /nonexistent/gpg-for-fusiontogithub-tests
+[push]
+	# The add-in always names exactly what to push.
+	default = nothing
+	followTags = true
+[fetch]
+	prune = true
+	writeCommitGraph = true
+[transfer]
+	fsckObjects = true
+[pull]
+	rebase = merges
+[user]
+	# No guessing an identity from the machine name.
+	useConfigOnly = true
+[status]
+	showUntrackedFiles = no
+[log]
+	showSignature = true
+[format]
+	pretty = fuller
+[advice]
+	detachedHead = true

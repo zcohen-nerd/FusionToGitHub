@@ -488,7 +488,7 @@ class TestRunner:
             # Test git operations
             try:
                 git_run(temp_dir, "add", "test.txt")
-                git_run(temp_dir, "commit", "-m", "Test commit")
+                git_run(temp_dir, "-c", "commit.gpgSign=false", "commit", "-m", "Test commit")
                 
                 # Check commit was created
                 result = git_run(temp_dir, "log", "--oneline", check=False)
@@ -506,23 +506,7 @@ class TestRunner:
             # Restore original directory
             os.chdir(original_dir)
             
-            # Clean up temp directory with retry logic for Windows
-            if temp_dir and os.path.exists(temp_dir):
-                try:
-                    import shutil
-                    import time
-                    # Try to clean up, but don't fail the test if it doesn't work on Windows
-                    for attempt in range(3):
-                        try:
-                            shutil.rmtree(temp_dir)
-                            break
-                        except (PermissionError, OSError):
-                            if attempt < 2:
-                                time.sleep(0.1)  # Brief pause before retry
-                            # On final attempt, just log and continue
-                except Exception:
-                    # Cleanup failure shouldn't fail the test
-                    pass
+            self._cleanup_dir(temp_dir)
 
     # CLI Tests
     def test_cli_basic_functionality(self):
@@ -569,19 +553,33 @@ class TestRunner:
 
     @staticmethod
     def _cleanup_dir(path: Optional[str]):
-        if not path or not os.path.exists(path):
-            return
-        for attempt in range(5):
+        """Delete a test folder, including Git's read-only object files (Windows)."""
+        import stat
+
+        def clear_readonly(func, target, _exc):
             try:
-                shutil.rmtree(path)
+                os.chmod(target, stat.S_IWRITE | stat.S_IREAD)
+                func(target)
+            except OSError:
+                pass
+
+        for attempt in range(5):
+            if not path or not os.path.exists(path):
                 return
-            except (PermissionError, OSError):
-                if attempt < 4:
-                    time.sleep(0.3)
+            if sys.version_info >= (3, 12):
+                shutil.rmtree(path, onexc=clear_readonly)
+            else:
+                shutil.rmtree(path, onerror=clear_readonly)
+            if os.path.exists(path):
+                time.sleep(0.3)
 
     @staticmethod
     def _make_seeded_remote(base_dir: str):
         """Create a bare origin plus a work clone with one pushed commit.
+
+        Fixture commits opt out of commit signing, so the suite also runs under
+        tests/hostile.gitconfig (which turns signing on); the add-in's own
+        commits use git commit-tree, which never signs.
 
         Returns (origin_path, work_path, branch_name).
         """
@@ -595,7 +593,7 @@ class TestRunner:
         with open(os.path.join(work, "readme.md"), "w", encoding="utf-8") as fh:
             fh.write("seed\n")
         git_run(work, "add", ".")
-        git_run(work, "commit", "-m", "seed commit")
+        git_run(work, "-c", "commit.gpgSign=false", "commit", "-m", "seed commit")
         git_run(work, "remote", "add", "origin", origin)
         git_run(work, "push", "-u", "origin", branch)
         # Make origin's HEAD point at the seeded branch whatever git's default is.
@@ -746,14 +744,14 @@ class TestRunner:
             git_run(base_dir, "clone", origin, other)
             with open(os.path.join(other, "readme.md"), "w", encoding="utf-8") as fh:
                 fh.write("remote edit\n")
-            git_run(other, "commit", "-am", "remote edit")
+            git_run(other, "-c", "commit.gpgSign=false", "commit", "-am", "remote edit")
             git_run(other, "push", "origin", branch)
             # ...while the user has a private unpushed commit, a staged change,
             # an unstaged change and an untracked file.
             with open(os.path.join(work, "secret.txt"), "w", encoding="utf-8") as fh:
                 fh.write("private work\n")
             git_run(work, "add", "secret.txt")
-            git_run(work, "commit", "-m", "private unpushed commit")
+            git_run(work, "-c", "commit.gpgSign=false", "commit", "-m", "private unpushed commit")
             with open(os.path.join(work, "staged.txt"), "w", encoding="utf-8") as fh:
                 fh.write("staged\n")
             git_run(work, "add", "staged.txt")
@@ -913,7 +911,7 @@ class TestRunner:
             with open(os.path.join(other, "notes.txt"), "w", encoding="utf-8") as fh:
                 fh.write("added elsewhere\n")
             git_run(other, "add", "notes.txt")
-            git_run(other, "commit", "-m", "remote-side commit")
+            git_run(other, "-c", "commit.gpgSign=false", "commit", "-m", "remote-side commit")
             git_run(other, "push", "origin", "my-export")
             result = self._push(work, [(self._write_export(base_dir, "model.step", "v2"), "model.step")], ui,
                                 branch_override="my-export")
@@ -950,7 +948,7 @@ class TestRunner:
                 with open(os.path.join(other, filename), "w", encoding="utf-8") as fh:
                     fh.write(content)
                 git_run(other, "add", filename)
-                git_run(other, "commit", "-m", f"colleague edit on {target_branch}")
+                git_run(other, "-c", "commit.gpgSign=false", "commit", "-m", f"colleague edit on {target_branch}")
                 git_run(other, "push", "origin", target_branch)
                 return git_run(origin, "rev-parse", target_branch).stdout.strip()
 
@@ -1181,7 +1179,7 @@ class TestRunner:
             with open(os.path.join(other, "CHANGELOG.md"), "wb") as fh:
                 fh.write(b"# Changelog\r\n\r\nold entry caf\xe9\r\n")
             git_run(other, "-c", "core.autocrlf=false", "add", "CHANGELOG.md")
-            git_run(other, "commit", "-m", "add changelog")
+            git_run(other, "-c", "commit.gpgSign=false", "commit", "-m", "add changelog")
             git_run(other, "push", "origin", branch)
             ui = _PipelineTestUI()
             result = self._push(work, [(self._write_export(base_dir, "m.step", "x"), "m.step")], ui, mode=MODE_SINGLE)
