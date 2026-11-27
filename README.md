@@ -170,10 +170,12 @@ The default (F3D + STEP + STL) is a good all-round choice.
   (the file exists, isn't empty, is the right kind of file, is under 100 MB).
   If one fails, nothing is pushed. These checks don't prove a file opens in
   other CAD software.
-- **Linked components.** Fusion can only export `.f3d`, which may not include
-  components linked from other designs. If your design has any, the add-in
-  names them and asks before pushing, and notes it in the design's
-  `HISTORY.md`.
+- **Linked components: known limitation.** Fusion can only export `.f3d`,
+  which may not include components linked from other designs, so **a backup
+  of such a design may not restore on its own**. Restoring one hasn't been
+  verified yet. If your design has linked components, the add-in names them
+  and asks before pushing, and notes the limitation in the design's
+  `HISTORY.md`. Keep the linked designs in Fusion too.
 - **STL** files are written in millimetres on recent Fusion builds; on older
   ones they use the design's units, and the add-in says so. **Format Settings
   → STL files → One file per body** writes each body to its own file

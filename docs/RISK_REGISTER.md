@@ -29,24 +29,24 @@ The formal list of known risks to FusionToGitHub users and to the project
 | R-03 | Private local commits published | 1×4 = 4 Low | **Resolved** (0.4.0) | — |
 | R-04 | Fusion freezes during Git network work | 1×3 = 3 Low | Mitigated (S4: background thread) | Live responsiveness check (checklist I) |
 | R-05 | Broken or empty public release | 1×2 = 2 Low | **Resolved** (0.3.3) | — |
-| R-06 | Backups of designs with linked components can't be restored | 2×4 = 8 Medium | Mitigated (S4: detected, confirmed, recorded) | Live re-import check; maintainer decision on the residual |
-| R-07 | Token exposed through helpers, URLs or logs | 1×3 = 3 Low | **Resolved** (0.4.0, 0.5.0) | — |
-| R-08 | Proprietary design pushed to a public repository | 2×5 = 10 Medium | Acceptance proposed | Maintainer decision |
+| R-06 | Backups of designs with linked components can't be restored | 2×4 = 8 Medium | **Accepted, conditionally** (before 1.0 only, while communicated) | Live restore check required for 1.0 |
+| R-07 | Token exposed through helpers, URLs or logs | 1×3 = 3 Low | **Resolved** (0.4.0, 0.6.0) | — |
+| R-08 | Proprietary design pushed to a public repository | 2×5 = 10 Medium | **Accepted** (2026-11-27) | Keep the mitigations |
 | R-09 | macOS users can't find Git or sign in | 2×2 = 4 Low | Mitigated (labelled Experimental) | S4 small fixes |
-| R-10 | GitHub size limits exceeded | 2×2 = 4 Low | Acceptance proposed | Maintainer decision; LFS after 1.0 |
+| R-10 | GitHub size limits exceeded | 2×2 = 4 Low | **Accepted** (2026-11-27) | LFS after 1.0 |
 | R-11 | Autodesk App Store rejection | 2×2 = 4 Low | Open (separate track after 1.0) | Questions to Autodesk |
-| R-12 | Single maintainer's capacity | 3×2 = 6 Low | Acceptance proposed | Maintainer decision |
+| R-12 | Single maintainer's capacity | 3×2 = 6 Low | **Accepted** (2026-11-27) | — |
 | R-13 | Fusion API changes break the add-in | 2×3 = 6 Low | Mitigated | Manual check every release |
-| R-14 | Git is an external dependency | 3×1 = 3 Low | Acceptance proposed | Maintainer decision |
+| R-14 | Git is an external dependency | 3×1 = 3 Low | **Accepted** (2026-11-27) | S5 setup check states the minimum version |
 | R-15 | Two copies installed after an upgrade | 2×1 = 2 Low | Mitigated (S4: warning, no second button) | Live duplicate check (checklist K) |
 | R-16 | Supply-chain compromise of a release | 1×3 = 3 Low | **Resolved** (0.3.3) | Keep actions pinned |
 | R-17 | Contributor attribution | 1×1 = 1 Low | **Resolved** (0.3.3) | — |
 | R-18 | Fusion test doubles diverge from real Fusion | 3×3 = 9 Medium | Open (new in S3; 25 assumptions in S4) | Manual checklist every release |
 | R-19 | Settings migration loses saved repositories | 1×3 = 3 Low | Mitigated (new in S3) | Confirm on a real 0.4.0 settings file |
 | R-20 | Per-design folders surprise existing users | 3×2 = 6 Low | Open (new in S3) | Release notes; S5 docs |
-| R-21 | A repository's own hooks or settings could expose the stored token | 1×4 = 4 Low | Mitigated (S4: hooks off, https only, proxy/TLS settings refused) | Live push with a token; maintainer decision on the residual |
+| R-21 | A repository's own hooks or settings could expose the stored token | 1×4 = 4 Low | Mitigated, **not accepted** (maintainer, 2026-11-27) | Live push with a token; 1.0: token kept out of process environments |
 | R-22 | Masked token field unsupported in some Fusion builds | 2×3 = 6 Low | Open (new in S3) | Manual check of the Token field |
-| R-23 | Stored token sent to a server it wasn't stored for | 1×4 = 4 Low | **Resolved** (0.5.0) | — |
+| R-23 | Stored token sent to a server it wasn't stored for | 1×4 = 4 Low | **Resolved** (0.6.0) | — |
 | R-24 | Two saved repositories for one GitHub repository allocate design folders independently | 2×2 = 4 Low | Open (new in S3) | Seed folder names from the repository's tree (S5) |
 | R-25 | An update in a running Fusion loads the previous version's modules | 1×3 = 3 Low | Mitigated (S4, reported by DiegoV71) | Live stop → update → run and Store update (checklist K) |
 | R-26 | A failed or partial export is pushed as if it were a complete backup | 2×4 = 8 Medium | Mitigated (S4: all or nothing) | Live failure check |
@@ -75,35 +75,43 @@ The formal list of known risks to FusionToGitHub users and to the project
 - **Evidence:** `tests/unit/test_push_worker.py`, `tests/unit/test_worker_bridge.py`, `tests/unit/test_core_cancel_hooks.py` (real threads; the stand-in queues custom events and refuses UI calls off the main thread).
 - **Resolved when:** the live checklist (section I) shows Fusion stays responsive during a slow push and during sign-in, and Cancel behaves as tested. The export itself still runs on the main thread (Fusion requires it).
 
-### R-06 — Unrestorable backups of designs with linked components — Mitigated (S4)
+### R-06 — Unrestorable backups of designs with linked components — Accepted conditionally (before 1.0)
 - **Cause:** the add-in exports `.f3d`; for designs with external references Fusion may need `.f3z` (audit BUG-02, unverified live).
 - **Impact:** a backup that looks fine but can't be opened on its own.
 - **Finding (S4):** Fusion's documented API has no `.f3z` export. `createFusionArchiveExportOptions` writes `.f3d`; the only route seen is the undocumented text command `data.fileExport f3z`, which has reported naming problems and isn't used.
 - **Mitigation (S4):** linked components are detected (`Occurrence.isReferencedComponent` across all occurrences) when F3D is exported. The add-in names them and asks before pushing ("this backup might not restore on its own"); declining pushes nothing. Accepting records a note in the design's `HISTORY.md`, so the backup is never presented as complete.
 - **Evidence:** `tests/unit/test_fusion_export.py`, `tests/unit/test_dialog_exports.py` (against simulated Fusion).
-- **Residual:** a user who accepts still has an F3D that may not restore alone; the linked designs stay in Fusion's cloud. **Not accepted.** Needs the live re-import check (checklist J) and then a maintainer decision.
+- **Residual:** a user who accepts still has an F3D that may not restore alone; the linked designs stay in Fusion's cloud.
+- **Decision (accepted by the maintainer on 2026-11-27):** accepted for distribution **before 1.0 only**, and only while incomplete recoverability is communicated explicitly. That means:
+  - the confirmation question before every such push;
+  - the `HISTORY.md` note;
+  - the README's "Linked components" limitation;
+  - the CHANGELOG.
 
-### R-08 — Proprietary design pushed to a public repository — Acceptance proposed
+  If any of these is removed, the acceptance lapses.
+- **Open requirement for 1.0:** a live restore check. A pushed `.f3d` with linked components is re-opened in Fusion and the result recorded (consolidated checklist, step 6). 1.0 can't ship until it is done and the warning text matches the result.
+
+### R-08 — Proprietary design pushed to a public repository — Accepted
 - **Cause:** the user chooses the repository; the add-in makes no GitHub API calls, so it can't see visibility.
 - **Mitigation:** README warning in setup; a one-time notice per repository before the first push; PRIVACY.md.
-- **Why acceptance is proposed:** the risk is inherent to publishing to a user-chosen repository. Detecting visibility would need API access and a token with broader scope, which conflicts with the least-privilege design.
-- **Needs:** maintainer acceptance.
+- **Why accepted:** the risk is inherent to publishing to a user-chosen repository. Detecting visibility would need API access and a token with broader scope, which conflicts with the least-privilege design.
+- **Decision:** accepted by the maintainer on 2026-11-27, with the mitigations above kept in place.
 
-### R-10 — GitHub size limits exceeded — Acceptance proposed
+### R-10 — GitHub size limits exceeded — Accepted
 - **Mitigation:** exports of 100 MB or more are refused before anything is pushed; over 50 MB needs confirmation; README "Size limits".
-- **Why acceptance is proposed:** Git LFS is deferred until after 1.0 (decision Q15). Repository growth over many versions is inherent to keeping every version.
-- **Needs:** maintainer acceptance.
+- **Why accepted:** Git LFS is deferred until after 1.0 (decision Q15). Repository growth over many versions is inherent to keeping every version.
+- **Decision:** accepted by the maintainer on 2026-11-27, with the size checks kept in place.
 
-### R-12 — Single maintainer's capacity — Acceptance proposed
+### R-12 — Single maintainer's capacity — Accepted
 - **Mitigation:** CI gates, a release checklist, a sprint plan, contributor docs.
-- **Needs:** maintainer acceptance (support is best effort, as SECURITY.md states).
+- **Decision:** accepted by the maintainer on 2026-11-27; support is best effort, as SECURITY.md states.
 
 ### R-13 — Fusion API changes — Mitigated
 - **Mitigation:** the manual Fusion checklist runs before each release, with the Fusion build recorded; API calls with version differences already have fallbacks (format table, LogLevels).
 
-### R-14 — Git is an external dependency — Acceptance proposed
-- **Why acceptance is proposed:** bundling Git would make the add-in far larger and leave security updates to this project. "Git not found" is explained in the dialog; S5's setup check will state the minimum version.
-- **Needs:** maintainer acceptance.
+### R-14 — Git is an external dependency — Accepted
+- **Why accepted:** bundling Git would make the add-in far larger and leave security updates to this project. "Git not found" is explained in the dialog; S5's setup check will state the minimum version.
+- **Decision:** accepted by the maintainer on 2026-11-27.
 
 ### R-15 — Two copies installed after an upgrade — Mitigated
 - **Mitigation:** upgrade instructions say to remove the old folder first. Since S4, a copy that finds another running copy of any version (an entry module with the same command id, outside its own folder) warns once and adds no button, event or handler; its `stop()` leaves the other copy alone. The check only reads other modules' attributes and changes nothing. Limits: a copy that crashed without stopping still counts as running until Fusion restarts (a false warning, no harm). If a pre-0.6.0 copy started after this one took over, that copy's own `stop()` can remove this copy's button, because older versions don't have the guard.
@@ -138,13 +146,24 @@ The formal list of known risks to FusionToGitHub users and to the project
   - the push is **refused**, before anything is sent, while the repository's own config (with its includes) sets a proxy (`http.*proxy*`, `remote.*.proxy`) or TLS trust (`http.*sslVerify`, `sslCAInfo`, `sslCAPath`, `sslBackend`, client certificates, `curloptResolve`). It is checked in the dialog (dialog stays open, with an explanation) and again in the push. Global settings, such as a company proxy, are not affected.
 - **Behaviour changes:** a repository's `pre-push` hook no longer runs when the add-in pushes with a stored token (pushes through Git Credential Manager, which carry no token, are unchanged). A repository with its own proxy or TLS settings can't be used with a stored token until they're moved to the global config. Documented in SECURITY.md.
 - **Evidence:** `HookIsolationTests` in `tests/unit/test_core_cancel_hooks.py`: the hook and `ext::` reproductions, each with a control run that shows the attack works without the mitigation, plus the detection of proxy and TLS settings (including through `include.path`) and the refusal.
-- **Residual (open, not accepted):**
-  - other repository settings that change a connection without running a program, for example `http.extraHeader` or cookie files, are not refused, because they can't redirect the token;
-  - anything that can write a repository's `.git` folder can usually also run code as the user some other way.
+- **Decision (maintainer, 2026-11-27): not accepted.** The remaining exposure was investigated further.
+- **Investigation (S4, after the decision):** `docs/audit/workpapers/r21_probe.py`. It used a synthetic token, local HTTPS servers on 127.0.0.1 with a throwaway certificate, and no system or global Git config.
 
-  Review again whenever a Git command that carries the token is added. Any acceptance of the residual is the maintainer's decision.
+  | # | Route | Result before | Now |
+  |---|---|---|---|
+  | E1 | Tracing in the user's environment (`GIT_TRACE_CURL` / `GIT_CURL_VERBOSE` with `GIT_TRACE_REDACT=0`) | The `Authorization` header, with the token in base64, was written to the trace file, to stderr, and from there into the add-in's error message, whose redaction knew only the raw token | **Fixed.** Token-carrying commands force `GIT_TRACE_REDACT=1` and drop the HTTP trace variables; redaction also covers the base64 `user:token` form |
+  | E2 | Redirect to another host (`http.followRedirects=true`) | The other host received no token | Safe; no change needed |
+  | E3 | Another repository on the **same** host (`remote.origin.pushurl`, `url.*.insteadOf` / `pushInsteadOf`) | The token, and the design, went to an attacker-chosen repository; the host check passed | **Fixed.** A token push is refused unless the fetch, push and configured addresses are all the same repository and match the GitHub address saved for it. Checked in the dialog and again in the push |
+  | E4 | Another program running as the same user reads the environment of a running `git` process | The token is readable | **Open**, see below |
 
-### R-23 — Stored token sent to a server it wasn't stored for — Resolved (0.5.0)
+- **Remaining exposure (open, not accepted):**
+  - **E4.** During a push, the token sits in the environment of the `git` processes. Another program running as the same Windows user can read it there, with the same rights it needs to read the stored token directly from Windows Credential Manager (`CredRead`, no prompt). So it adds no new reader. On macOS, stored tokens aren't supported. **Proposed for 1.0:** stop passing the token in the environment. Hand it to the credential helper through a one-time local channel (a single-use loopback answer bound to a random nonce), or through a short-lived file that only the user can read. Then pair that with an OS store that has per-application access control, so the stored token itself is protected too.
+  - Other repository settings that neither run a program nor redirect the connection (for example `http.extraHeader` or cookie files) are not refused, because none of them can send the token elsewhere.
+  - Anything that can write a repository's `.git` folder can usually also run code as the user some other way.
+
+  Review again whenever a Git command that carries the token is added.
+
+### R-23 — Stored token sent to a server it wasn't stored for — Resolved (0.6.0)
 - **Found by:** the S3 independent security review. Tokens were stored per repository name; pointing a saved repository at a clone on another server, or re-adding a removed repository's name, could have reused the token there.
 - **Mitigation:** the server is stored with the token (Credential Manager comment field) and checked against the folder's actual push address, including the port, before every push; changing a repository's folder or server turns off Use Stored Token. Tokens from before 0.5.0 are bound on first use.
 - **Resolution evidence:** `ReviewFixTests` in `tests/unit/test_push_controller.py`.

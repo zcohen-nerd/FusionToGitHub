@@ -156,6 +156,21 @@ Automated test execution for rapid feedback.
 
 ---
 
+### 10. **[../tests/MANUAL_CHECKLIST.md](../tests/MANUAL_CHECKLIST.md)** - Release Checklist in Fusion
+**Time**: about 90 minutes | **Difficulty**: Advanced
+
+The mandatory live test before every release: one ordered session in real
+Fusion, from installing the previous release to updating, restarting and
+removing duplicates.
+
+---
+
+### 11. **[RISK_REGISTER.md](RISK_REGISTER.md)** and **[audit/](audit/README.md)** - Risks and Audit Record
+The current list of known risks and the maintainer's decisions on them, and
+the permanent record of the v1.0 readiness audit and the sprint reports.
+
+---
+
 ## 📋 Documentation Organization
 
 ### By User Type

@@ -1462,8 +1462,11 @@ class TestRunner:
                     continue
                 if "(ZAC)" in path.read_text(encoding="utf-8", errors="replace"):
                     problems.append(f"'(ZAC)' in {path.relative_to(root)}")
-        # This file and the CHANGELOG (history) name the old label on purpose.
-        problems = [p for p in problems if "test_runner.py" not in p and "CHANGELOG.md" not in p]
+        # This file, the CHANGELOG and the audit record (history) name the old
+        # label on purpose.
+        audit = str(Path("docs") / "audit")
+        problems = [p for p in problems
+                    if "test_runner.py" not in p and "CHANGELOG.md" not in p and audit not in p]
         self.record_result("T_NAME", "Display name and frozen command id", not problems, "; ".join(problems))
 
     def test_no_force_push_in_source(self):

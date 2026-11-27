@@ -80,9 +80,18 @@ stores them:
     add-in refuses to send it and says which setting to remove. Proxy
     settings in your *global* Git config (for example a company proxy) are
     used as normal.
-  - The token goes only to the host of the repository's **push** address,
-    after any `insteadOf` rewriting; if that host differs from the one the
-    token was saved for, it isn't used.
+  - The token goes only to the **repository** you chose. If the folder's Git
+    settings would send the push anywhere else (`remote.origin.pushurl`,
+    `url.*.insteadOf`), even on the same server, or to a server other than
+    the one the token was saved for, the push is refused.
+  - HTTP tracing you may have switched on (`GIT_TRACE_CURL`,
+    `GIT_CURL_VERBOSE`) is off for these commands, and Git's redaction is
+    forced on, so the token can't end up in a trace file or an error message.
+  - **One known limit:** while a push runs, the token is in the environment
+    of the `git` processes, where another program running as you could read
+    it. Such a program can already read the stored token from Windows
+    Credential Manager, so this isn't a new exposure, but it's tracked as open
+    (risk R-21) and planned to change before 1.0.
 
 The developer test harness `src/push_cli.py` (not part of the installed add-in)
 reads a token from the `FUSION_TO_GITHUB_TOKEN` environment variable or from a
