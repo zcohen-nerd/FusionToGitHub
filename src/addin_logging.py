@@ -3,7 +3,8 @@
 State lives in this module so every part of the add-in logs to the same
 place. ``LOG_DIR`` is read at call time, so tests can point it at a temporary
 folder. Only the palette handler touches the Fusion API, and only through the
-``app`` object it is given.
+``app`` object it is given, and only on the thread that created it (Fusion's
+main thread): records logged by the background push go to the file only.
 """
 
 from __future__ import annotations
@@ -13,14 +14,11 @@ import logging.handlers
 import os
 import subprocess
 import sys
+import threading
 import webbrowser
 from typing import Optional
 
-try:
-    from fusion_git_core import redact_secrets
-except ImportError:  # pragma: no cover - add-in folder not on sys.path yet
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from fusion_git_core import redact_secrets
+from .fusion_git_core import redact_secrets
 
 IS_WINDOWS = os.name == "nt"
 LOG_DIR = os.path.expanduser("~/.PushToGitHub_AddIn_Data")
@@ -84,6 +82,9 @@ class FusionPaletteHandler(logging.Handler):
     def __init__(self, app, log_levels=None):
         super().__init__()
         self._app = app
+        # Fusion's API must not be called from other threads (Autodesk's
+        # threading guide), and the push worker logs from one.
+        self._fusion_thread = threading.get_ident()
         self.LEVEL_MAP = {}
         if log_levels is None:
             return
@@ -102,7 +103,7 @@ class FusionPaletteHandler(logging.Handler):
                     break
 
     def emit(self, record: logging.LogRecord) -> None:
-        if not self._app:
+        if not self._app or threading.get_ident() != self._fusion_thread:
             return
         try:
             message = self.format(record)

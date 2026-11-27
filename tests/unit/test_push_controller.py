@@ -108,6 +108,8 @@ class PlanTests(ControllerTestCase):
                                      ask_identity=lambda a=answer: a)
 
     def test_stored_token_required_when_enabled(self):
+        # The saved GitHub address is the folder's own address (as after setup).
+        core.git_run(self.work, "remote", "set-url", "origin", self.store.get("Designs")["url"])
         self.store.update("Designs", {"useStoredPat": True, "gitIdentity": {"name": "A", "email": "a@b.invalid"}})
         with self.assertRaises(PushRefused):
             self.controller.plan(self.request(), [self.export("a.step", "A")], confirm=self.confirm_yes)
@@ -204,8 +206,10 @@ class ReviewFixTests(ControllerTestCase):
     TOKEN = "ghp_" + "h" * 36
 
     def use_https_origin(self, url="https://github.com/acme/designs.git"):
-        # Only the push address changes; nothing here contacts a server.
-        core.git_run(self.work, "remote", "set-url", "--push", "origin", url)
+        # The folder's own address (fetch and push); nothing here contacts a
+        # server. Only a push *URL* would be a redirect, which token pushes
+        # refuse (R-21).
+        core.git_run(self.work, "remote", "set-url", "origin", url)
 
     def ready_profile(self, **changes):
         changes.setdefault("gitIdentity", {"name": "A", "email": "a@b.invalid"})
@@ -244,6 +248,24 @@ class ReviewFixTests(ControllerTestCase):
         self.creds.set("Designs", "", self.TOKEN)  # no host, as 0.4.0 stored it
         self.controller.plan(self.request(), [self.export("a.step", "A")], confirm=self.confirm_yes)
         self.assertEqual(self.creds.get("Designs")["host"], "github.com")
+
+    def test_a_token_push_to_another_repository_is_refused_in_the_dialog(self):
+        # R-21 follow-up (E3): a push URL to another repository on the same
+        # server would have received the token; refused before the push.
+        self.use_https_origin()
+        self.ready_profile(useStoredPat=True)
+        self.controller.store_token("Designs", "", self.TOKEN)
+        core.git_run(self.work, "remote", "set-url", "--push", "origin", "https://github.com/attacker/loot.git")
+        with self.assertRaises(PushRefused) as ctx:
+            self.controller.plan(self.request(), [self.export("a.step", "A")], confirm=self.confirm_yes)
+        self.assertIn("attacker/loot", str(ctx.exception))
+        self.assertNotIn(self.TOKEN, str(ctx.exception))
+        # And a folder whose address differs from the one saved for it.
+        core.git_run(self.work, "remote", "set-url", "--delete", "--push", "origin", "https://github.com/attacker/loot.git")
+        core.git_run(self.work, "remote", "set-url", "origin", "https://github.com/acme/other.git")
+        with self.assertRaises(PushRefused) as ctx:
+            self.controller.plan(self.request(), [self.export("a.step", "A")], confirm=self.confirm_yes)
+        self.assertIn("acme/designs", str(ctx.exception))
 
     def test_failed_edit_changes_nothing(self):
         self.store.add("Other", {"path": self.work})

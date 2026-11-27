@@ -29,10 +29,10 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from urllib.parse import urlsplit
 
-import fusion_git_core as git_core
-from credentials import CredentialError, CredentialStore
-from dialog_helpers import expand_export_subfolder, normalize_export_subfolder, publication_notice
-from settings_store import SettingsError, SettingsStore, design_folder
+from . import fusion_git_core as git_core
+from .credentials import CredentialError, CredentialStore
+from .dialog_helpers import expand_export_subfolder, normalize_export_subfolder, publication_notice
+from .settings_store import SettingsError, SettingsStore, design_folder
 
 HISTORY_FILE_NAME = "HISTORY.md"
 LEGACY_HISTORY_FILE = "CHANGELOG.md"
@@ -58,6 +58,9 @@ class PushRequest:
     design_id: str
     commit_message: str = ""
     branch_override: str = ""
+    # Recorded in the design's HISTORY.md entry (for example, that the design
+    # has linked components and the backup may not be self-contained).
+    history_notes: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -78,6 +81,10 @@ class PushPlan:
     identity: Optional[Dict[str, str]] = None
     pat_credentials: Optional[Dict[str, str]] = field(default=None, repr=False)
     notes: List[str] = field(default_factory=list)
+    history_notes: List[str] = field(default_factory=list)
+    # Set once the "these exports are large" question was answered Yes (on
+    # Fusion's main thread), so the background push doesn't ask it again.
+    large_files_confirmed: bool = False
 
 
 def design_destination(profile: Dict[str, Any], design_id: str, design_name: str) -> Tuple[str, str]:
@@ -372,6 +379,12 @@ class PushController:
                 f"{server or 'an unknown server'}, so the token was not used. Untick 'Use Stored "
                 "Token', or store a token for this server with 'Manage Token…'."
             )
+        risky = git_core.risky_local_network_config(repo_path)
+        if risky:
+            raise PushRefused(git_core.risky_config_message(risky))
+        elsewhere = git_core.token_destination_problem(repo_path, self.profile(name).get("url", ""))
+        if elsewhere:
+            raise PushRefused(elsewhere)
         return {"username": pat.get("username", ""), "token": pat["token"]}
 
     def plan(
@@ -424,16 +437,23 @@ class PushController:
             identity=identity,
             pat_credentials=pat,
             notes=notes,
+            history_notes=list(request.history_notes),
         )
 
     # -- push: git phase ----------------------------------------------------
 
     def execute(
-        self, plan: PushPlan, ui: git_core.GitUI, on_step: Optional[Callable[[str], None]] = None
+        self,
+        plan: PushPlan,
+        ui: git_core.GitUI,
+        on_step: Optional[Callable[[str], None]] = None,
+        cancel=None,
     ) -> Optional[Dict[str, Any]]:
-        """Run the push. Returns push_export's result: a dict, {"cancelled": True}, or None.
+        """Run the push. Returns push_export's result: a dict, {"cancelled": True, ...}, or None.
 
-        Makes no Fusion calls itself; *ui* and *on_step* are the only callbacks.
+        Makes no Fusion calls itself; *ui* and *on_step* are the only
+        callbacks. Setting *cancel* (a threading.Event) stops the running git
+        command; the result then says whether the export reached GitHub.
         """
         return self.git.push_export(
             plan.repo_path,
@@ -451,6 +471,9 @@ class PushController:
             pat_credentials=plan.pat_credentials,
             logger=self.logger,
             on_step=on_step,
+            history_notes=plan.history_notes,
+            cancel=cancel,
+            large_files_confirmed=plan.large_files_confirmed,
         )
 
 

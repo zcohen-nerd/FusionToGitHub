@@ -1,5 +1,9 @@
 """Add-in start/stop and handler lifetime, against the SIMULATED Fusion API."""
 
+import gc
+import os
+import sys
+import types
 import unittest
 from unittest import mock
 
@@ -41,10 +45,121 @@ class LifecycleTests(AddinTestCase):
         self.assertEqual(self.ui.commandDefinitions.count, 1)
 
     def test_a_leftover_control_from_a_crash_is_replaced(self):
+        # This copy created them in an earlier load that never reached stop().
         definition = self.ui.commandDefinitions.addButtonDefinition(addin.CMD_ID, addin.CMD_NAME, "", "")
         self.ui.allToolbarPanels.item(0).controls.addCommand(definition, addin.CONTROL_ID)
         addin.run(None)
         self.assertEqual(len(self.controls()), 1)
+        self.assertFalse(definition.isValid)  # replaced by a fresh definition
+        self.assertIsNot(self.ui.commandDefinitions.itemById(addin.CMD_ID), definition)
+        self.assertEqual(self.ui.messages, [])
+
+    def load(self, module):
+        """Put *module* in sys.modules for this test only (nothing else is touched)."""
+        self.assertNotIn(module.__name__, sys.modules)
+        sys.modules[module.__name__] = module
+        self.addCleanup(sys.modules.pop, module.__name__, None)
+
+    def other_copy(self, folder="OtherCopy", **attrs):
+        """Another installed copy's entry module, loaded in the same Python (as in Fusion)."""
+        module = types.ModuleType(f"{folder}.Push_To_GitHub")
+        module.__file__ = os.path.join(self.base, folder, "Push_To_GitHub.py")
+        module.CMD_ID = addin.CMD_ID
+        vars(module).update(attrs)
+        self.load(module)
+        definition = self.ui.commandDefinitions.addButtonDefinition(addin.CMD_ID, addin.CMD_NAME, "", "")
+        control = self.ui.allToolbarPanels.item(0).controls.addCommand(definition, addin.CONTROL_ID)
+        return definition, control
+
+    def test_an_older_running_copy_is_recognised_by_is_initialized(self):
+        # 0.3.x-0.5.x entry modules have no owns_command, only is_initialized.
+        other, other_control = self.other_copy(is_initialized=True)
+        addin.run(None)
+        self.assertIn("Another copy of 'Push to GitHub' is already running", self.last_message())
+        self.assertIn("OtherCopy", self.last_message())
+        self.assertTrue(other.isValid and other_control.isValid)
+
+    def test_a_loaded_copy_that_has_stopped_is_not_a_duplicate(self):
+        stale, _ = self.other_copy(owns_command=False, is_initialized=False)
+        addin.run(None)
+        self.assertEqual(self.ui.messages, [])
+        self.assertFalse(stale.isValid)  # its leftover definition was replaced
+        self.assertEqual(len(self.controls()), 1)
+
+    def test_duplicate_detection_runs_no_code_in_other_modules(self):
+        class Trap(types.ModuleType):
+            def __getattr__(self, name):  # a lazily-loading module
+                raise AssertionError(f"module code ran for {name}")
+
+        self.load(Trap("some_lazy_module"))
+        self.other_copy(owns_command=True)
+        addin.run(None)  # must not raise
+        self.assertIn("Another copy", self.last_message())
+
+    def test_objects_in_sys_modules_that_are_not_modules_are_tolerated(self):
+        # Found in the S4 security review: vars() raised for such objects and
+        # would have stopped the add-in loading.
+        class Slotted:
+            __slots__ = ("x",)
+
+        odd_file = types.SimpleNamespace(__name__="odd_namespace", __file__=123)
+        self.assertEqual(addin._module_file(Slotted()), "")
+        self.assertEqual(addin._module_file(odd_file), "")
+        self.assertEqual(addin._module_dir(Slotted()), "")
+        self.load(odd_file)
+        sys.modules["odd_slotted"] = Slotted()
+        self.addCleanup(sys.modules.pop, "odd_slotted", None)
+        self.assertIsNone(addin._other_running_copy())
+        # The purge itself (which forgets this package's modules) runs with
+        # such objects loaded in the isolated "restarts" scenario.
+
+    def test_a_second_installed_copy_warns_once_and_adds_no_button(self):
+        # Another copy (any version) of the add-in already owns the button.
+        other, other_control = self.other_copy(owns_command=True)
+        addin.run(None)
+        self.assertIn("Another copy of 'Push to GitHub' is already running", self.last_message())
+        self.assertEqual(len(self.ui.messages), 1)
+        self.assertIsNone(addin.bridge)
+        self.assertEqual(self.app.registered_custom_events, [])
+        self.assertEqual([c for _, c in self.controls()], [other_control])
+        addin.run(None)
+        self.assertEqual(len(self.ui.messages), 1)  # warned once
+        addin.stop(None)
+        # stop() leaves the other copy's button and command alone.
+        self.assertTrue(other.isValid and other_control.isValid)
+        self.assertIs(self.ui.commandDefinitions.itemById(addin.CMD_ID), other)
+
+    def test_repeated_run_and_stop_keep_one_button_and_one_custom_event(self):
+        event_id = addin.CMD_ID + "_PushWorker"
+        for _ in range(3):
+            addin.run(None)
+            addin.run(None)
+            self.assertEqual(len(self.controls()), 1)
+            self.assertEqual(self.ui.commandDefinitions.count, 1)
+            self.assertEqual(self.app.registered_custom_events, [event_id])
+            self.assertEqual(len(addin.handlers), 1)
+            addin.stop(None)
+            self.assertEqual(self.controls(), [])
+            self.assertEqual(self.app.registered_custom_events, [])
+            self.assertIsNone(addin.bridge)
+            self.assertFalse(addin.owns_command)
+        addin.stop(None)  # a second stop is harmless
+
+    def test_handlers_survive_garbage_collection(self):
+        addin.run(None)
+        gc.collect()
+        command = self.ui.open_command(addin.CMD_ID)  # commandCreated still reaches the add-in
+        self.assertIsNotNone(command.commandInputs.itemById("repoSelector"))
+        gc.collect()
+        adsk.core.change_input(command, "commitMsgPush", value="x")  # dialog handlers held too
+        self.assertEqual(len(command.inputChanged.handlers), 1)
+
+    def test_the_stand_in_drops_handlers_nobody_holds(self):
+        # Control for the test above: Fusion keeps only weak references.
+        event = adsk.core.Event()
+        event.add(adsk.core.CustomEventHandler())
+        gc.collect()
+        self.assertEqual(event.handlers, [])
 
     def test_stop_removes_button_definition_and_all_handlers(self):
         addin.run(None)
@@ -52,6 +167,7 @@ class LifecycleTests(AddinTestCase):
         self.assertEqual(len(addin.dialog_handlers), 2)
         addin.stop(None)
         self.assertEqual(self.controls(), [])
+        self.assertEqual(self.app.registered_custom_events, [])
         self.assertIsNone(self.ui.commandDefinitions.itemById(addin.CMD_ID))
         self.assertEqual(addin.handlers, [])
         self.assertEqual(addin.dialog_handlers, [])
@@ -65,9 +181,12 @@ class LifecycleTests(AddinTestCase):
     def test_each_dialog_replaces_the_previous_dialogs_handlers(self):
         addin.run(None)
         first = self.ui.open_command(addin.CMD_ID)
-        self.ui.open_command(addin.CMD_ID)
+        second = self.ui.open_command(addin.CMD_ID)
+        gc.collect()
         self.assertEqual(len(addin.dialog_handlers), 2)
-        self.assertEqual(len(first.inputChanged.handlers), 1)
+        # Fusion holds handlers weakly: the first dialog's were released.
+        self.assertEqual(len(first.inputChanged.handlers), 0)
+        self.assertEqual(len(second.inputChanged.handlers), 1)
 
     def test_exceptions_never_escape_event_handlers(self):
         addin.run(None)

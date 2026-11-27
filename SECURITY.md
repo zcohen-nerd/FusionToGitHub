@@ -60,10 +60,38 @@ stores them:
     `http://` or SSH, the push stops with an explanation.
   - `GIT_TERMINAL_PROMPT=0` is always set, so Git never waits for input.
 
-One limit: a repository's own **`pre-push` hook**, if it has one, runs during
-the push and could read the token from its environment. Only use a stored token
-with repositories whose hooks you trust. (Commit hooks don't run: the add-in
-builds its commits with `git commit-tree`.)
+  - **Repository hooks don't run** for those commands. Since 0.6.0 the
+    add-in points `core.hooksPath` at an empty temporary folder for any Git
+    command that carries the token, so a repository's own `pre-push` (or
+    other) hook can't read it from the environment. If you rely on a
+    `pre-push` hook, it still runs when you push from your own Git tools,
+    and when the add-in pushes through Git Credential Manager (path 1),
+    which passes no token to Git. Commit hooks never run: the add-in builds
+    its commits with `git commit-tree`.
+  - **Nothing else a repository configures runs either.** Only the https
+    transport is allowed (`GIT_ALLOW_PROTOCOL=https`), so an address
+    rewritten to `ext::<command>`, `file://` or SSH can't start a program.
+    No askpass program is inherited, and submodules aren't fetched or pushed.
+  - **A repository's own proxy or certificate settings stop the push.** If
+    the repository's `.git/config` (or a file it includes) sets a proxy
+    (`http.proxy`, `http.<url>.proxy`, `remote.<name>.proxy`) or changes TLS
+    trust (`http.sslVerify`, `http.sslCAInfo`, client certificates, and
+    similar), those settings could pass the token to someone else, so the
+    add-in refuses to send it and says which setting to remove. Proxy
+    settings in your *global* Git config (for example a company proxy) are
+    used as normal.
+  - The token goes only to the **repository** you chose. If the folder's Git
+    settings would send the push anywhere else (`remote.origin.pushurl`,
+    `url.*.insteadOf`), even on the same server, or to a server other than
+    the one the token was saved for, the push is refused.
+  - HTTP tracing you may have switched on (`GIT_TRACE_CURL`,
+    `GIT_CURL_VERBOSE`) is off for these commands, and Git's redaction is
+    forced on, so the token can't end up in a trace file or an error message.
+  - **One known limit:** while a push runs, the token is in the environment
+    of the `git` processes, where another program running as you could read
+    it. Such a program can already read the stored token from Windows
+    Credential Manager, so this isn't a new exposure, but it's tracked as open
+    (risk R-21) and planned to change before 1.0.
 
 The developer test harness `src/push_cli.py` (not part of the installed add-in)
 reads a token from the `FUSION_TO_GITHUB_TOKEN` environment variable or from a
@@ -159,8 +187,9 @@ local copies.
 | `~/.PushToGitHub_AddIn_Data/PushToGitHub.log` (+ up to 3 older copies, 1 MB each) | What the add-in did, with folder paths, addresses and Git messages; secrets redacted | Owner-only on macOS. **Logging & Privacy → Clear Log** deletes them. |
 
 Git hooks, filters and `core.fsmonitor` configured *in a repository* run when
-the add-in runs Git there, as they do for any Git command. Only use the add-in
-with repositories you trust.
+the add-in runs Git there, as they do for any Git command (except hooks during
+a push with a stored token, above). Only use the add-in with repositories you
+trust.
 
 ---
 

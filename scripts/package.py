@@ -50,6 +50,10 @@ PACKAGE_FILES: Dict[str, str] = {
     "src/push_controller.py": "push_controller.py",
     "src/push_dialog.py": "push_dialog.py",
     "src/settings_store.py": "settings_store.py",
+    "src/portable_names.py": "portable_names.py",
+    "src/export_checks.py": "export_checks.py",
+    "src/push_worker.py": "push_worker.py",
+    "src/fusion_bridge.py": "fusion_bridge.py",
     "src/AddInIcon.svg": "AddInIcon.svg",
     "LICENSE": "LICENSE",
 }
@@ -213,7 +217,11 @@ def validate(zip_path: Path, expect_version: Optional[str] = None) -> List[str]:
 
         # Python modules: must compile and import only what exists in Fusion.
         packaged_modules = {Path(arc).stem for arc in PACKAGE_FILES.values() if arc.endswith(".py")}
-        allowed_roots = _stdlib_modules() | packaged_modules | {"adsk"}
+        # The add-in's own modules must be imported relatively ("from . import
+        # x"): a bare "import x" can pick up a module of that name already
+        # loaded in Fusion's shared Python, such as the previous version's
+        # (risk R-25, issue #11).
+        allowed_roots = _stdlib_modules() | {"adsk"}
         for arc in sorted(a for a in PACKAGE_FILES.values() if a.endswith(".py")):
             source = read(arc)
             if source is None:
@@ -243,7 +251,12 @@ def validate(zip_path: Path, expect_version: Optional[str] = None) -> List[str]:
                         modules = [node.module]
                 for module in modules:
                     root = module.split(".")[0]
-                    if root not in allowed_roots:
+                    if root in packaged_modules:
+                        errors.append(
+                            f"{arc} imports {module!r} by its bare name; "
+                            f"use a relative import (from . import {root})"
+                        )
+                    elif root not in allowed_roots:
                         errors.append(f"{arc} imports {module!r}, which is not in the package")
 
     # The Community Store rule "folder == manifest stem == script stem" is

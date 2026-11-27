@@ -317,7 +317,12 @@ class TestRunner:
             store_file = os.path.join(base, "store.txt").replace("\\", "/")
             git_run(repo, "config", "credential.helper", f"store --file={store_file}", env=isolated)
             token = "ghp_" + "T" * 36
-            auth = token_auth(f"https://{host}/owner/repo.git", token)
+            from dataclasses import replace as dc_replace
+
+            no_hooks = os.path.join(base, "nohooks")
+            os.makedirs(no_hooks)
+            # push_export always gives the token an empty hooks folder (R-21).
+            auth = dc_replace(token_auth(f"https://{host}/owner/repo.git", token), hooks_dir=no_hooks)
 
             fill = git_run(repo, "credential", "fill", check=False, auth=auth, env=isolated,
                            input_text=f"protocol=https\nhost={host}\n\n")
@@ -518,28 +523,15 @@ class TestRunner:
         success, output = self.run_command([sys.executable, str(cli_path), "--help"])
         help_ok = success and all(word in output.lower() for word in ["usage", "options"])
 
-        # Test that we can import the CLI module and access VERSION
-        inserted_src_path = False
-        try:
-            # Add src to path temporarily
-            import sys as system_module
-            src_path = str(Path("src").resolve())
-            if src_path not in system_module.path:
-                system_module.path.insert(0, src_path)
-                inserted_src_path = True
-
-            import push_cli  # noqa: F401
-            # Check that push_cli can import fusion_git_core and get VERSION
-            from fusion_git_core import VERSION
-            version_ok = isinstance(VERSION, str) and bool(
-                re.match(r"^\d+\.\d+(?:\.\d+)?$", VERSION)
-            )
-        except Exception:
-            version_ok = False
-        finally:
-            # Only remove the path entry this test added itself
-            if inserted_src_path and src_path in system_module.path:
-                system_module.path.remove(src_path)
+        # Standalone execution (risk R-25): the CLI also runs as a plain script
+        # without the add-in package (-E -s: no PYTHON* variables and no user
+        # site-packages, so only its own folder is on sys.path).
+        isolated_ok, isolated_out = self.run_command([sys.executable, "-E", "-s", str(cli_path), "--help"])
+        from fusion_git_core import VERSION
+        version_ok = (
+            isolated_ok and "usage" in isolated_out.lower()
+            and isinstance(VERSION, str) and bool(re.match(r"^\d+\.\d+\.\d+$", VERSION))
+        )
 
         overall_ok = version_ok and help_ok
         msg = f"Version import OK: {version_ok}, Help OK: {help_ok}"
@@ -1470,8 +1462,11 @@ class TestRunner:
                     continue
                 if "(ZAC)" in path.read_text(encoding="utf-8", errors="replace"):
                     problems.append(f"'(ZAC)' in {path.relative_to(root)}")
-        # This file and the CHANGELOG (history) name the old label on purpose.
-        problems = [p for p in problems if "test_runner.py" not in p and "CHANGELOG.md" not in p]
+        # This file, the CHANGELOG and the audit record (history) name the old
+        # label on purpose.
+        audit = str(Path("docs") / "audit")
+        problems = [p for p in problems
+                    if "test_runner.py" not in p and "CHANGELOG.md" not in p and audit not in p]
         self.record_result("T_NAME", "Display name and frozen command id", not problems, "; ".join(problems))
 
     def test_no_force_push_in_source(self):
@@ -1486,11 +1481,7 @@ class TestRunner:
                     hits.append(f"{py.name}:{lineno}")
         # The old force-push setting may only appear in the settings store's
         # list of obsolete keys, which drops it when settings are loaded.
-        sys.path.insert(0, str(root / "src"))
-        try:
-            import settings_store
-        finally:
-            sys.path.pop(0)
+        import settings_store
         if "skipPullDefault" not in settings_store.OBSOLETE_PROFILE_KEYS:
             hits.append("settings_store no longer drops a saved skipPullDefault")
         if settings_store.migrate({"R": {"path": "x", "skipPullDefault": True}})["repositories"]["R"].get(
@@ -1637,9 +1628,12 @@ def main():
     project_root = script_dir.parent
     os.chdir(project_root)
     
-    # Add src directory to Python path for imports
-    src_dir = project_root / "src"
-    sys.path.insert(0, str(src_dir))
+    # Load src/ as the add-in package, as Fusion does (tests/addin_package.py);
+    # src/ itself is never put on sys.path.
+    sys.path.insert(0, str(script_dir))
+    import addin_package
+
+    addin_package.install()
     
     runner = TestRunner(verbose=args.verbose)
     

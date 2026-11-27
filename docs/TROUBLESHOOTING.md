@@ -345,6 +345,10 @@ git log --oneline -10
 
 ### If Fusion 360 freezes during export
 
+Since 0.6.0 only the export itself runs in Fusion; the push runs in the
+background and the progress window's **Cancel** stops it. If Fusion still
+stops responding:
+
 1. **Force close Fusion 360**
 2. **Your local folder is safe**: since 0.4.0 the add-in never changes it, so
    there is nothing to recover there. Every Git step also has a time limit, so

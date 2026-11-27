@@ -4,10 +4,17 @@ Everything is isolated: settings, logs and repositories live in a temporary
 folder; Git's system and global configuration are replaced by empty files
 (see GitSandbox); tokens go to an in-memory store. Nothing here can touch the
 developer's real settings, logs, credential vault or Git configuration.
+
+Pushes run on a background thread (push_worker); ``push()`` presses OK and
+then delivers the worker's messages on this thread, as Fusion's message loop
+would, until the push has finished and its summary was shown. Every test
+ends with no push running, no worker thread left, and no Fusion UI call made
+from another thread.
 """
 
 import json
 import os
+import threading
 from unittest import mock
 
 import _paths  # noqa: F401
@@ -18,10 +25,16 @@ from test_core_identity_history import GitSandbox
 
 import addin_logging
 import Push_To_GitHub as addin
+import push_worker
 from credentials import MemoryCredentialStore
 from settings_store import SettingsStore
 
 DialogResults = adsk.core.DialogResults
+PUSH_TIMEOUT = 60
+
+
+def worker_threads():
+    return [t for t in threading.enumerate() if t.name.startswith("PushToGitHub-") and t.is_alive()]
 
 
 class AddinTestCase(GitSandbox):
@@ -42,6 +55,8 @@ class AddinTestCase(GitSandbox):
             ("push_cmd_def", None),
             ("git_push_control", None),
             ("logger", None),
+            ("bridge", None),
+            ("owns_command", False),
         ]:
             patcher = mock.patch.object(addin, target, value)
             patcher.start()
@@ -55,9 +70,24 @@ class AddinTestCase(GitSandbox):
         browser = mock.patch("webbrowser.open")
         self.opened_urls = browser.start()
         self.addCleanup(browser.stop)
+        warned = mock.patch.object(addin, "_duplicate_warned", False)
+        warned.start()
+        self.addCleanup(warned.stop)
+        self.addCleanup(self._check_background_work_ended)
         # Registered last, so it runs first: every question must have been
         # expected (scripted) and every scripted answer used.
         self.addCleanup(self._check_questions_were_scripted)
+
+    def _check_background_work_ended(self):
+        running = push_worker.is_busy()
+        if addin.bridge is not None:
+            addin.bridge.close(timeout=10)
+        push_worker.shutdown_active(10)
+        leftover = worker_threads()
+        violations = self.app.thread_violations
+        if running or leftover or violations:
+            self.fail(f"push still running: {running}; worker threads left: {leftover}; "
+                      f"Fusion UI used off the main thread: {violations}")
 
     def _check_questions_were_scripted(self):
         unscripted = list(self.ui.unscripted)
@@ -95,6 +125,18 @@ class AddinTestCase(GitSandbox):
 
     def answer(self, *results):
         self.ui.answers.extend(results)
+
+    def push(self, command, timeout=PUSH_TIMEOUT):
+        """Press OK, then run Fusion's "message loop" until the background push has finished."""
+        args = adsk.core.press_ok(command)
+        self.wait_for_push(timeout)
+        return args
+
+    def wait_for_push(self, timeout=PUSH_TIMEOUT):
+        bridge = addin.bridge
+        if bridge is None:
+            return
+        self.app.process_events(timeout=timeout, until=lambda: not bridge.busy)
 
     def design(self, name="Bracket", file_id="urn:adsk:bracket"):
         self.app.activeProduct = adsk.fusion.Design(name, file_id)

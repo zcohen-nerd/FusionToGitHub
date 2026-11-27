@@ -289,8 +289,8 @@ on the repo (or a classic token with `repo` scope)
 Older instructions had you copy the source files into a folder called
 `FusionToGitHub` (or similar). Stop that add-in in **UTILITIES → ADD-INS**,
 untick **Run on Startup**, quit Fusion, and delete that folder before installing
-the ZIP. Don't keep two copies: both would load, and you could get two buttons
-or duplicate pushes.
+the ZIP. Don't keep two copies. Since 0.6.0 a second copy shows a warning and
+adds no second button, but older versions could add two buttons.
 
 ### Preserve Settings
 

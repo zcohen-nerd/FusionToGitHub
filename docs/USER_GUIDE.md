@@ -184,6 +184,10 @@ The token is only sent to this repository's server, over https. See
 - **Contains**: Triangle mesh geometry
 - **Use when**: Preparing for 3D printing
 - **Note**: No feature history or parameters
+- **Units**: written in millimetres on Fusion builds that support it (2025
+  onward); older builds use the design's units and the add-in says so
+- **Files**: one file for the whole design, or **Format Settings → STL files →
+  One file per body** (`<design> - <component> - <body>.stl`)
 
 #### IGES (.iges, .igs)
 - **Best for**: Legacy CAD systems

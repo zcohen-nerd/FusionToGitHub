@@ -39,9 +39,11 @@ THRESHOLDS = {
     "fusion_git_core.py": 85,
     "push_controller.py": 90,
     "settings_store.py": 85,
-    "dialog_helpers.py": 78,
+    "portable_names.py": 90,
+    "export_checks.py": 90,
+    "dialog_helpers.py": 80,
     "push_dialog.py": 77,
-    "fusion_export.py": 68,
+    "fusion_export.py": 85,
     "addin_logging.py": 65,
     # 92% in the Windows Coverage job, where the real Credential Manager
     # tests run (FTG_REAL_VAULT_TESTS=1). Locally, without them, it is ~57%:
@@ -49,12 +51,16 @@ THRESHOLDS = {
     "credentials.py": 90,
     # Thin Fusion entry point: mostly import fallbacks and Fusion-only
     # branches. Counted in the add-in layer group below.
-    "Push_To_GitHub.py": 50,
+    "Push_To_GitHub.py": 60,
+    # S4 background push (0.6.0).
+    "push_worker.py": 90,
+    "fusion_bridge.py": 81,
 }
 # Combined minimums across related modules (statements + branches).
 GROUPS = {
     "add-in layer (Fusion-facing code + push controller)": (
-        ("Push_To_GitHub.py", "push_dialog.py", "fusion_export.py", "addin_logging.py", "push_controller.py"),
+        ("Push_To_GitHub.py", "push_dialog.py", "fusion_export.py", "addin_logging.py", "push_controller.py",
+         "fusion_bridge.py"),
         74,
     ),
 }
@@ -64,7 +70,6 @@ EXEMPT = {
     "push_cli.py": "developer tool; tested through subprocess calls (T_PIPE_05, T_CORE_05)",
     "diagnostic.py": "developer tool; not shipped",
 }
-ASSERTION_NAMES = ("assert", "fail")
 
 
 def _module_name(path: str) -> str:
@@ -111,14 +116,32 @@ def group_percent(files: dict, modules) -> "float | None":
     return 100.0 * covered / total if total else None
 
 
+def _is_constant(node: ast.AST) -> bool:
+    return isinstance(node, ast.Constant)
+
+
 def _is_assertion(node: ast.AST) -> bool:
+    """An assertion that can fail: ``assert x``, ``self.assert*(...)``, ``self.fail(...)``,
+    or a test helper named ``assert*``. Not ``assert True``, ``assertTrue(1)``, a mock's
+    ``.assert_called()`` on something other than ``self``, or ``failed_text(...)``."""
     if isinstance(node, ast.Assert):
+        return not _is_constant(node.test)
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    if isinstance(func, ast.Attribute):
+        on_self = isinstance(func.value, ast.Name) and func.value.id == "self"
+        if not on_self:
+            return False
+        name = func.attr
+    else:
+        name = getattr(func, "id", "")
+    if name == "fail":
         return True
-    if isinstance(node, ast.Call):
-        func = node.func
-        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
-        return name.startswith(ASSERTION_NAMES)
-    return False
+    if not name.startswith("assert"):
+        return False
+    # assertTrue(True), assertEqual(1, 1): can't fail.
+    return not (node.args and all(_is_constant(arg) for arg in node.args))
 
 
 def _has_unconditional_assertion(function: ast.FunctionDef) -> bool:

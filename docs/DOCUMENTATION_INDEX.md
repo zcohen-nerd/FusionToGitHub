@@ -2,7 +2,7 @@
 
 ## 📚 Complete Documentation Suite
 
-Welcome to FusionToGitHub 0.5.0! This comprehensive documentation will help you get started, master the features, and troubleshoot any issues.
+Welcome to FusionToGitHub 0.6.0! This comprehensive documentation will help you get started, master the features, and troubleshoot any issues.
 
 ---
 
@@ -156,6 +156,21 @@ Automated test execution for rapid feedback.
 
 ---
 
+### 10. **[../tests/MANUAL_CHECKLIST.md](../tests/MANUAL_CHECKLIST.md)** - Release Checklist in Fusion
+**Time**: about 90 minutes | **Difficulty**: Advanced
+
+The mandatory live test before every release: one ordered session in real
+Fusion, from installing the previous release to updating, restarting and
+removing duplicates.
+
+---
+
+### 11. **[RISK_REGISTER.md](RISK_REGISTER.md)** and **[audit/](audit/README.md)** - Risks and Audit Record
+The current list of known risks and the maintainer's decisions on them, and
+the permanent record of the v1.0 readiness audit and the sprint reports.
+
+---
+
 ## 📋 Documentation Organization
 
 ### By User Type
@@ -266,7 +281,7 @@ Automated test execution for rapid feedback.
 3. **Team Sharing**: Share workflows and best practices
 
 ### Information to Include When Asking for Help
-- **Version**: FusionToGitHub 0.5.0
+- **Version**: FusionToGitHub 0.6.0
 - **System**: OS, Fusion version, Git version
 - **Problem**: Specific error messages from logs
 - **Steps**: What you were trying to do
@@ -279,7 +294,7 @@ Automated test execution for rapid feedback.
 
 This documentation is maintained alongside the FusionToGitHub add-in. 
 
-**Version**: 0.5.0
+**Version**: 0.6.0
 **Last Updated**: September 30, 2025
 **Next Review**: December 2025
 

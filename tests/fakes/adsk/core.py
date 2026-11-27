@@ -3,10 +3,30 @@
 Simulation only (see the package docstring). Deliberately strict where real
 Fusion is strict and silent failures would hide bugs: adding two inputs with
 the same id to one command raises, as does adding a toolbar control whose id
-already exists in a panel.
+already exists in a panel; events hold their handlers weakly; input values
+have Fusion's types; and the UI may only be used from the thread that
+created the Application ("Fusion's main thread"). Custom events fired from
+any thread are queued and only delivered by ``Application.process_events``,
+which a test calls on the main thread, as Fusion's message loop would.
 """
 
+import queue
+import threading
+import time
+import weakref
 from collections import deque
+
+
+# -- Fusion's main thread -------------------------------------------------------
+
+_MAIN = {"thread": threading.get_ident(), "violations": []}
+
+
+def _on_main_thread(what):
+    """Record and refuse a UI call made from a thread other than Fusion's main thread."""
+    if threading.get_ident() != _MAIN["thread"]:
+        _MAIN["violations"].append(f"{what} called from thread {threading.current_thread().name}")
+        raise RuntimeError(f"Fusion API '{what}' called from a worker thread")
 
 
 # -- enums --------------------------------------------------------------------
@@ -44,22 +64,60 @@ class LogLevels:
 
 
 class Event:
+    """Holds handlers by weak reference, as Fusion does: an add-in must keep its own."""
+
     def __init__(self):
-        self.handlers = []
+        self._refs = []
+
+    @property
+    def handlers(self):
+        return [h for h in (ref() for ref in self._refs) if h is not None]
 
     def add(self, handler):
-        self.handlers.append(handler)
+        if handler in self.handlers:
+            return False
+        self._refs.append(weakref.ref(handler))
         return True
 
     def remove(self, handler):
-        if handler in self.handlers:
-            self.handlers.remove(handler)
-            return True
+        for ref in list(self._refs):
+            if ref() is handler:
+                self._refs.remove(ref)
+                return True
         return False
 
     def fire(self, args):
-        for handler in list(self.handlers):
+        for handler in self.handlers:
             handler.notify(args)
+
+
+class CustomEvent(Event):
+    def __init__(self, event_id):
+        super().__init__()
+        self.eventId = event_id
+
+
+class CustomEventHandler:
+    def __init__(self):
+        pass
+
+
+class CustomEventArgs:
+    def __init__(self, event, additional_info):
+        self.firingEvent = event
+        self.additionalInfo = additional_info
+
+
+class ValidateInputsEventHandler:
+    def __init__(self):
+        pass
+
+
+class ValidateInputsEventArgs:
+    def __init__(self, command, inputs):
+        self.firingEvent = None
+        self.inputs = inputs
+        self.areInputsValid = True
 
 
 class CommandCreatedEventHandler:
@@ -143,12 +201,23 @@ class StringValueCommandInput(CommandInput):
         self.isPassword = False
         self.isReadOnly = False
 
+    def __setattr__(self, name, value):
+        # Fusion's StringValueCommandInput.value is a str; anything else raises.
+        if name == "value" and not isinstance(value, str):
+            raise TypeError(f"StringValueCommandInput.value must be str, not {type(value).__name__}")
+        super().__setattr__(name, value)
+
 
 class BoolValueCommandInput(CommandInput):
     def __init__(self, registry, input_id, name, is_check_box, resource, value):
         super().__init__(registry, input_id, name)
         self.isCheckBox = is_check_box
         self.value = value
+
+    def __setattr__(self, name, value):
+        if name == "value" and not isinstance(value, bool):
+            raise TypeError(f"BoolValueCommandInput.value must be bool, not {type(value).__name__}")
+        super().__setattr__(name, value)
 
 
 class TextBoxCommandInput(CommandInput):
@@ -316,6 +385,7 @@ class Command:
         self.execute = Event()
         self.destroy = Event()
         self.validateInputs = Event()
+        self.isTerminated = False
 
 
 class CommandDefinition:
@@ -458,25 +528,56 @@ class FolderDialog:
 
 
 class ProgressDialog:
+    """``show(title, message, minimumValue, maximumValue, delay)``: the last one is a
+    delay in seconds before the dialog appears, not a value. ``wasCancelled``
+    becomes True when the user presses Cancel (``press_cancel`` in tests)."""
+
     def __init__(self):
+        object.__setattr__(self, "_ready", False)
         self.isShowing = False
         self.message = ""
+        self.title = ""
         self.progressValue = 0
+        self.minimumValue = 0
+        self.maximumValue = 0
         self.cancelButtonText = "Cancel"
+        self.isCancelButtonShown = True
         self.isBackgroundTranslucencyEnabled = False
         self.wasCancelled = False
         self.shown = []
+        self.messages = []
+        object.__setattr__(self, "_ready", True)
 
-    def show(self, title, message, minimum, maximum, value=0):
+    def __setattr__(self, name, value):
+        if self.__dict__.get("_ready"):
+            _on_main_thread(f"ProgressDialog.{name}")
+            if name == "message":
+                self.messages.append(value)
+        object.__setattr__(self, name, value)
+
+    def show(self, title, message, minimum, maximum, delay=0):
+        _on_main_thread("ProgressDialog.show")
+        for label, value in (("minimumValue", minimum), ("maximumValue", maximum), ("delay", delay)):
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise TypeError(f"ProgressDialog.show {label} must be an int, not {type(value).__name__}")
         self.isShowing = True
+        self.title = title
         self.message = message
-        self.progressValue = value
+        self.minimumValue, self.maximumValue = minimum, maximum
+        self.progressValue = minimum
         self.shown.append(message)
         return True
 
     def hide(self):
+        _on_main_thread("ProgressDialog.hide")
         self.isShowing = False
         return True
+
+    # test helper
+    def press_cancel(self):
+        if not self.isShowing:
+            raise AssertionError("the progress dialog isn't showing, so Cancel can't be pressed")
+        self.wasCancelled = True
 
 
 class UserInterface:
@@ -506,7 +607,14 @@ class UserInterface:
         self.workspaces = Workspaces([Workspace("FusionSolidEnvironment", ToolbarPanels([utilities, scripts]))])
 
     def messageBox(self, text, title="", buttons=MessageBoxButtonTypes.OKButtonType, icon=0):  # noqa: N802
+        _on_main_thread("messageBox")
         self.messages.append((text, title, buttons))
+        # Simulation of a modal message box that keeps Fusion's message loop
+        # running, so other events are delivered while it is open (assumed
+        # possible in real Fusion; see README). One-shot: set by a test.
+        while_open, self.while_message_box_open = getattr(self, "while_message_box_open", None), None
+        if while_open is not None:
+            while_open()
         if buttons == MessageBoxButtonTypes.OKButtonType:
             return DialogResults.DialogOK
         self.questions.append(text)
@@ -516,6 +624,7 @@ class UserInterface:
         return DialogResults.DialogNo
 
     def inputBox(self, prompt, title="", default_value=""):  # noqa: N802
+        _on_main_thread("inputBox")
         self.input_prompts.append(prompt)
         if self.input_answers:
             return self.input_answers.popleft()
@@ -525,6 +634,7 @@ class UserInterface:
         return FolderDialog(self)
 
     def createProgressDialog(self):  # noqa: N802
+        _on_main_thread("createProgressDialog")
         dialog = ProgressDialog()
         self.progress_dialogs.append(dialog)
         return dialog
@@ -548,9 +658,14 @@ class Application:
     _instance = None
 
     def __init__(self):
+        # The thread that creates the Application plays Fusion's main thread.
+        _MAIN["thread"] = threading.get_ident()
+        _MAIN["violations"] = []
         self.userInterface = UserInterface()
         self.activeProduct = None
         self.logs = []
+        self._custom_events = {}
+        self._queue = queue.Queue()
 
     @classmethod
     def get(cls):
@@ -563,21 +678,89 @@ class Application:
         cls._instance = cls()
         return cls._instance
 
+    @property
+    def thread_violations(self):
+        """UI calls made from a thread other than the main one (each one raised)."""
+        return list(_MAIN["violations"])
+
     def log(self, message, level=None, log_type=None):
+        _on_main_thread("Application.log")
         self.logs.append((message, level))
+
+    # -- custom events ---------------------------------------------------------
+
+    def registerCustomEvent(self, event_id):  # noqa: N802
+        _on_main_thread("registerCustomEvent")
+        if event_id in self._custom_events:
+            raise RuntimeError(f"custom event '{event_id}' is already registered")
+        event = CustomEvent(event_id)
+        self._custom_events[event_id] = event
+        return event
+
+    def unregisterCustomEvent(self, event_id):  # noqa: N802
+        _on_main_thread("unregisterCustomEvent")
+        return self._custom_events.pop(event_id, None) is not None
+
+    def fireCustomEvent(self, event_id, additional_info=""):  # noqa: N802
+        """Safe from any thread. Queued: handlers run later, in process_events()."""
+        if event_id not in self._custom_events:
+            return False
+        self._queue.put((event_id, additional_info))
+        return True
+
+    @property
+    def registered_custom_events(self):
+        return sorted(self._custom_events)
+
+    def process_events(self, timeout=0.0, until=None):
+        """Deliver queued custom events on this (the main) thread, like Fusion's message loop.
+
+        Without *until*: deliver what is queued, waiting up to *timeout* s for
+        more. With *until*: keep delivering until ``until()`` is true; raise
+        TimeoutError after *timeout* s. Returns the number delivered.
+        """
+        _on_main_thread("process_events")
+        deadline = time.monotonic() + timeout
+        delivered = 0
+        while True:
+            if until is not None and until():
+                return delivered
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 and (until is not None or self._queue.empty()):
+                if until is not None:
+                    raise TimeoutError(f"condition not met within {timeout} s ({delivered} events delivered)")
+                return delivered
+            try:
+                event_id, info = self._queue.get(timeout=max(0.0, min(remaining, 0.05)))
+            except queue.Empty:
+                if until is None and remaining <= 0:
+                    return delivered
+                continue
+            event = self._custom_events.get(event_id)
+            if event is not None:  # unregistered since it was fired: dropped, as in Fusion
+                event.fire(CustomEventArgs(event, info))
+                delivered += 1
 
 
 # -- simulated user actions -------------------------------------------------------
 
 
+def _user_changed(command, changed):
+    # Fusion fires inputChanged, then validateInputs, after a user edit.
+    if command.isTerminated:
+        raise AssertionError("the dialog has closed")
+    command.inputChanged.fire(InputChangedEventArgs(changed, command.commandInputs))
+    command.validateInputs.fire(ValidateInputsEventArgs(command, command.commandInputs))
+
+
 def change_input(command, input_id, **attributes):
-    """Set attributes on an input as the user would, then fire inputChanged."""
+    """Set attributes on an input as the user would, then fire inputChanged and validateInputs."""
     changed = command.commandInputs.itemById(input_id)
     if changed is None:
         raise AssertionError(f"no input '{input_id}'")
     for key, value in attributes.items():
         setattr(changed, key, value)
-    command.inputChanged.fire(InputChangedEventArgs(changed, command.commandInputs))
+    _user_changed(command, changed)
     return changed
 
 
@@ -590,7 +773,7 @@ def select_item(command, input_id, name):
             break
     else:
         raise AssertionError(f"'{name}' is not in '{input_id}'")
-    command.inputChanged.fire(InputChangedEventArgs(dropdown, command.commandInputs))
+    _user_changed(command, dropdown)
 
 
 def click(command, input_id):
@@ -598,8 +781,27 @@ def click(command, input_id):
     return change_input(command, input_id, value=True)
 
 
+def _terminate(command):
+    command.isTerminated = True
+    command.destroy.fire(CommandEventArgs(command))
+
+
 def press_ok(command):
-    """Click OK: fire execute; returns the event args (check executeFailed)."""
+    """Click OK: fire execute; unless executeFailed was set, the command ends (destroy).
+
+    Returns the event args (check executeFailed).
+    """
+    if command.isTerminated:
+        raise AssertionError("the dialog has closed")
     args = CommandEventArgs(command)
     command.execute.fire(args)
+    if not args.executeFailed:
+        _terminate(command)
     return args
+
+
+def press_cancel(command):
+    """Close the dialog with Cancel: the command ends (destroy) without execute."""
+    if command.isTerminated:
+        raise AssertionError("the dialog has closed")
+    _terminate(command)

@@ -7,12 +7,40 @@ All notable changes to the FusionToGitHub add-in. Versions follow
 file must match it; `scripts/check_release.py` and the `T_VERSION` test enforce
 this, and the release workflow refuses a tag that differs.
 
-## 0.5.0 — Unreleased
+## 0.6.0 — Unreleased
 
-**A testable add-in, safer settings, and repository Edit/Remove.**
+**Pushes run in the background, exports are checked, updates work without
+restarting Fusion, and a testable add-in with safer settings and repository
+Edit/Remove.**
+
+0.5.0 was never released on its own: its changes (developed as sprint S3)
+ship in this release together with sprint S4's.
 
 ### Added
 
+- **Fusion stays usable during a push.** The Git part of a push runs on a
+  background thread, and the dialog closes as soon as the push starts.
+  Progress, questions and the result are shown on Fusion's main thread; the
+  background thread never calls Fusion. Only one push runs at a time.
+- **Cancel a push.** The progress window's Cancel button stops Git
+  straight away. The message then says truthfully whether anything reached
+  GitHub: nothing pushed, pushed before the cancel took effect, only an
+  empty repository's first commit, or couldn't tell.
+- **Linked components are detected.** Fusion's API can only export `.f3d`,
+  which may not include components linked from other designs. When a design
+  has linked components the add-in names them and asks before pushing, and
+  records a note in the design's `HISTORY.md` if you push anyway.
+  **Known limitation:** such a backup may not restore on its own, and
+  restoring one hasn't been verified yet; keep the linked designs in Fusion.
+- **STL: one file per body** (Format Settings → STL files), with predictable
+  names such as `Bracket - Arm 1 - Pin.stl`, including bodies inside
+  components and bodies with the same name.
+- **STL files are written in millimetres** on Fusion builds that support
+  choosing the unit; on older builds a note says they use the design's
+  units.
+- A note when the repository folder is inside OneDrive, Dropbox, Google
+  Drive, iCloud Drive or Box (sync apps can interfere with Git). Pushing is
+  still allowed.
 - **Edit and Remove saved repositories.** Rename a saved repository, change
   its GitHub address or local folder, or remove it. Removing only forgets the
   entry: the local folder, the GitHub repository and its history are never
@@ -29,6 +57,43 @@ this, and the release workflow refuses a tag that differs.
 
 ### Changed
 
+- **All or nothing exports.** Every chosen format must export and pass
+  basic file checks (exists, not empty, the right kind of file, under
+  100 MB, no two files overwriting each other) before anything is pushed. If
+  one fails, nothing is pushed and `HISTORY.md` isn't changed. Previously a
+  failed format was skipped. These checks don't prove a file opens in CAD
+  software. (Formats this add-in can't export at all, such as DWG/DXF from
+  older settings, are still left out with a note, as before.)
+- **File and folder names work on every system.** Design and body names
+  are made safe the same way on Windows and macOS: characters Windows
+  doesn't allow become `_`, Windows device names (`CON`, `NUL`, …) get a
+  `_`, trailing dots and spaces are removed, and names that differ only in
+  case get " (2)".
+- **Hooks don't run during a push with a stored token**, and a repository's
+  configuration can no longer start any program while the token is present
+  (only https is allowed). A push with a stored token is refused if the
+  repository's own `.git/config` sets a proxy or changes certificate checks,
+  because those could pass the token to someone else; the message says which
+  setting to remove. It is also refused if the folder's Git settings would
+  send the push to a different repository than the one saved, even on the
+  same server, and HTTP tracing can no longer write the token to a file or an
+  error message. Pushes through Git Credential Manager are unchanged.
+  See SECURITY.md.
+- Design and component names are written to the commit message and
+  `HISTORY.md` as a single line, so a name can't add lines there.
+- New file and folder names are made with stricter rules (see below). A
+  design whose name has repeated spaces, line breaks, or invisible or unusual
+  Unicode characters may get a slightly different file name than in earlier
+  versions; its folder is kept, because folders are remembered per design.
+- Git is found in more places: an explicit `FUSION_TO_GITHUB_GIT` setting,
+  Homebrew on macOS (before the Xcode placeholder), and per-user and GitHub
+  Desktop installs on Windows.
+- **The dialog closes when the push starts.** Errors and the result appear
+  as messages when the push finishes; open the dialog again to retry. Every
+  question that can be asked up front (including the one for exports over
+  50 MB) is asked before the push starts, with the dialog still open.
+- The add-in's modules import each other only within the add-in's own
+  package, and the add-in no longer adds its folder to Python's search path.
 - **Each design gets its own folder and `HISTORY.md`.** New pushes put a
   design's files, and a history of its pushes, in a folder named after the
   design (for example `Bracket/Bracket.step` and `Bracket/HISTORY.md`). The
@@ -52,16 +117,34 @@ this, and the release workflow refuses a tag that differs.
 - **Internal structure.** The 2,000-line dialog file is split into modules
   for the Fusion entry point, the dialog, exports, logging, the push
   workflow, settings and tokens. The workflow is separated into a part that
-  must run on Fusion's main thread and a Git-only part, ready for a
-  background thread in a later release.
+  must run on Fusion's main thread and a Git-only part, which is what now
+  runs in the background.
 
 ### Removed
 
 - Copilot-specific agent and prompt files in `.github/`; development
   instructions for every contributor stay in `CONTRIBUTING.md`.
 
+### Fixed
+
+- **Updating in a running Fusion** (Community Store update, Stop → replace →
+  Run, or going back to an earlier version) could fail to start the new
+  version, because modules of the previous version stayed loaded.
+  Reported and reproduced by DiegoV71 (#11).
+- A second copy of the add-in no longer adds a second toolbar button; it
+  shows a warning instead.
+
 ### Quality
 
+- The simulated Fusion objects used by the tests are stricter: they hold
+  event handlers weakly as Fusion does, refuse UI calls from other threads,
+  and deliver custom events only through a simulated message loop. Tests
+  use real background threads for ordering, questions, timeouts,
+  cancellation and shutdown.
+- Same-process updates are tested with the real 0.3.3 and 0.4.0 releases:
+  the reported failure is reproduced, and updating and rolling back between
+  them and 0.6.0 works.
+- Not yet verified in real Fusion: see the manual checklist, sections I–M.
 - The dialog is tested automatically against simulated Fusion objects, as
   are settings, tokens and the push workflow. CI also runs every suite under
   an unusual Git configuration (`tests/hostile.gitconfig`), checks that no
