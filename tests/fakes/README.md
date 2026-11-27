@@ -32,3 +32,38 @@ checklist in `tests/MANUAL_TESTS.md`).
 12. `exportManager.execute(options)` returns `True` and writes the file at
     `options.filename` when it succeeds.
 13. `adsk.doEvents()` can be called between git steps without side effects.
+    (Since S4 the add-in no longer calls it during a push.)
+
+### Events and threads (S4 background push)
+
+14. Events keep only weak references to their handlers: a handler the add-in
+    doesn't hold itself is collected and never called. The fake's `Event`
+    holds weak references, so a missing reference fails the tests.
+15. Fusion's API may only be used on its main thread (Autodesk's "Working in
+    a Separate Thread" guide: don't call any Fusion API from a worker thread;
+    even `messageBox` can crash). The fake refuses `messageBox`, `inputBox`,
+    `createProgressDialog`, progress dialog use, `app.log` and custom event
+    registration from any other thread, and the test harness fails a test
+    that tried.
+16. `app.registerCustomEvent(id)` returns an event you add a handler to;
+    registering an id twice fails (the fake raises); `unregisterCustomEvent(id)`
+    removes it. `app.fireCustomEvent(id, text)` may be called from any thread,
+    returns False for an id that isn't registered, and **queues** the event:
+    the handler runs later on the main thread, with `args.additionalInfo`
+    being *text*. Events still queued when the id is unregistered are dropped.
+    In tests, `app.process_events(timeout, until=...)` plays Fusion's message
+    loop; nothing is delivered inside `fireCustomEvent`.
+17. `ProgressDialog.show(title, message, minimumValue, maximumValue, delay)`
+    takes integers; the last is a delay in seconds before the dialog appears.
+    `cancelButtonText` labels the Cancel button and `wasCancelled` becomes
+    True once the user presses it (`press_cancel()` in tests). The dialog
+    stays responsive while the add-in's code is idle (the push runs in the
+    background).
+18. A command ends when OK is pressed and `executeFailed` stays False, or
+    when it is cancelled; `destroy` is then fired and the dialog is gone.
+    `validateInputs` fires after each `inputChanged`.
+19. `StringValueCommandInput.value` is a `str` and
+    `BoolValueCommandInput.value` a `bool`; other types raise.
+20. Command definitions and toolbar controls created by another add-in (for
+    example a second installed copy using the same command id) are visible
+    through `commandDefinitions.itemById`.
