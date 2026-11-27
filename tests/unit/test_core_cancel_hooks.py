@@ -30,17 +30,34 @@ class CancelTests(GitSandbox):
         )
         return result, ui
 
-    def cancel_after(self, seconds):
+    def hook_then_cancel(self, hook):
+        """Install a remote *hook* that signals, then waits; cancel once it signals.
+
+        Cancelling on the hook's signal (not after a fixed delay) makes the
+        moment of cancellation deterministic on slow machines.
+        """
+        marker = os.path.join(self.base, f"{hook}-started")
+        write_hook(self.origin, hook, f'touch "{marker.replace(chr(92), "/")}"\nsleep 30\nexit 1')
         token = threading.Event()
-        timer = threading.Timer(seconds, token.set)
-        timer.start()
-        self.addCleanup(timer.cancel)
+        stop = threading.Event()
+
+        def watch():
+            deadline = time.monotonic() + 60
+            while not stop.is_set() and time.monotonic() < deadline:
+                if os.path.exists(marker):
+                    token.set()
+                    return
+                time.sleep(0.05)
+
+        watcher = threading.Thread(target=watch, daemon=True)
+        watcher.start()
+        self.addCleanup(watcher.join, 5)
+        self.addCleanup(stop.set)
         return token
 
     def test_cancel_before_the_remote_accepts_reports_not_published(self):
-        write_hook(self.origin, "pre-receive", "sleep 30\nexit 1")
         started = time.monotonic()
-        result, ui = self.push(self.cancel_after(1.0))
+        result, ui = self.push(self.hook_then_cancel("pre-receive"))
         self.assertLess(time.monotonic() - started, 15)
         self.assertEqual(result["cancelled"], True)
         self.assertFalse(result["published"])
@@ -53,8 +70,7 @@ class CancelTests(GitSandbox):
         # the client is still waiting: cancelling then can't undo the push.
         first, ui = self.push(None)  # sets up the empty repository first
         self.assertTrue(first and not first.get("cancelled"), ui.errors)
-        write_hook(self.origin, "post-receive", "sleep 30")
-        result, ui = self.push(self.cancel_after(1.5))
+        result, ui = self.push(self.hook_then_cancel("post-receive"))
         self.assertTrue(result["cancelled"])
         self.assertTrue(result["published"], result)
         tip = core.git_run(self.origin, "rev-parse", result["branch"]).stdout.strip()
@@ -70,8 +86,7 @@ class CancelTests(GitSandbox):
         self.assertIsNone(getattr(core._CANCEL_SCOPE, "token", None))
 
     def test_cancel_while_setting_up_an_empty_repository_is_reported(self):
-        write_hook(self.origin, "post-receive", "sleep 30")
-        result, ui = self.push(self.cancel_after(1.5))
+        result, ui = self.push(self.hook_then_cancel("post-receive"))
         self.assertTrue(result["cancelled"])
         self.assertFalse(result["published"])  # the export itself was not sent
         self.assertTrue(result["repository_initialized"], result)
@@ -81,18 +96,34 @@ class CancelTests(GitSandbox):
         self.assertTrue(result and not result.get("cancelled"), ui.errors)
 
 
+class _LocalOriginAuth(core.GitAuth):
+    """Test only: the sandbox's origin is a local folder, which real token
+    pushes refuse (https only). Allowing the file transport here isolates the
+    hooks behaviour being tested."""
+
+    @property
+    def env(self):
+        return {**super().env, "GIT_ALLOW_PROTOCOL": "https:file"}
+
+
+FAKE_TOKEN = "ghp_" + "q" * 36
+
+
 class HookIsolationTests(GitSandbox):
     """R-21: no repository hook runs inside a git process that holds the token."""
+
+    def commit(self):
+        core.git_run(self.work, "-c", "commit.gpgSign=false", "commit", "--allow-empty", "-m", "x",
+                     env={"GIT_AUTHOR_NAME": "a", "GIT_AUTHOR_EMAIL": "a@b.invalid",
+                          "GIT_COMMITTER_NAME": "a", "GIT_COMMITTER_EMAIL": "a@b.invalid"})
 
     def test_hooks_do_not_run_when_a_token_is_passed(self):
         marker = os.path.join(self.base, "hook-ran.txt")
         write_hook(os.path.join(self.work, ".git"), "pre-push", f'env > "{marker.replace(chr(92), "/")}"')
-        core.git_run(self.work, "-c", "commit.gpgSign=false", "commit", "--allow-empty", "-m", "x",
-                     env={"GIT_AUTHOR_NAME": "a", "GIT_AUTHOR_EMAIL": "a@b.invalid",
-                          "GIT_COMMITTER_NAME": "a", "GIT_COMMITTER_EMAIL": "a@b.invalid"})
+        self.commit()
         empty = tempfile.mkdtemp(prefix="ftg_nohooks_")
         self.addCleanup(_paths.force_rmtree, empty)
-        auth = core.GitAuth(host="git.example.invalid", token="ghp_" + "q" * 36, hooks_dir=empty)
+        auth = _LocalOriginAuth(host="git.example.invalid", token=FAKE_TOKEN, hooks_dir=empty)
         core.git_run(self.work, "push", "origin", "HEAD:refs/heads/with-token", auth=auth, network=True)
         self.assertFalse(os.path.exists(marker), "a hook ran while the token was in the environment")
         core.git_run(self.work, "push", "origin", "HEAD:refs/heads/without-token", network=True)
@@ -104,6 +135,36 @@ class HookIsolationTests(GitSandbox):
         auth = core.GitAuth(host="github.com", token="t" * 40, hooks_dir="/tmp/empty")
         self.assertIn("core.hooksPath=/tmp/empty", auth.config)
         self.assertNotIn("t" * 40, repr(auth))
+        for item in ("core.askPass=", "fetch.recurseSubmodules=false", "push.recurseSubmodules=no",
+                     "submodule.recurse=false"):
+            self.assertIn(item, auth.config)
+
+    def test_repository_config_cannot_start_a_program_that_sees_the_token(self):
+        # A repository can rewrite its address to "ext::<command>" and allow
+        # that transport in its own config. Without a token the command runs
+        # (the control); with the token, only https may run, so it never does.
+        marker = os.path.join(self.base, "ext-ran.txt").replace("\\", "/")
+        rewrite = f"url.ext::sh -c env>{marker} %S.insteadOf"
+        core.git_run(self.work, "remote", "set-url", "origin", "https://git.example.invalid/o/r.git")
+        core.git_run(self.work, "config", rewrite, "https://git.example.invalid/")
+        core.git_run(self.work, "config", "protocol.ext.allow", "always")
+        auth = core.token_auth("https://git.example.invalid/o/r.git", FAKE_TOKEN)
+        for args in (("ls-remote", "origin"), ("fetch", "origin"), ("push", "origin", "HEAD:refs/heads/x")):
+            result = core.git_run(self.work, *args, auth=auth, network=True, check=False)
+            self.assertNotEqual(result.returncode, 0, args)
+            self.assertFalse(os.path.exists(marker), f"{args[0]}: a configured program ran with the token")
+            self.assertNotIn(FAKE_TOKEN, result.stderr + result.stdout)
+        core.git_run(self.work, "ls-remote", "origin", network=True, check=False)
+        self.assertTrue(os.path.exists(marker), "control: without a token the rewrite should take effect")
+
+    def test_askpass_programs_are_not_inherited_by_token_processes(self):
+        auth = core.GitAuth(host="git.example.invalid", token=FAKE_TOKEN)
+        with mock.patch.dict(os.environ, {"GIT_ASKPASS": "/bin/evil", "SSH_ASKPASS": "/bin/evil"}):
+            seen = core.git_run(self.work, "-c", "alias.showenv=!env", "showenv", auth=auth).stdout
+            control = core.git_run(self.work, "-c", "alias.showenv=!env", "showenv").stdout
+        self.assertNotIn("ASKPASS=/bin/evil", seen)
+        self.assertIn("GIT_ALLOW_PROTOCOL=https", seen)
+        self.assertIn("GIT_ASKPASS=/bin/evil", control)
 
 
 class DiscoveryTests(unittest.TestCase):
