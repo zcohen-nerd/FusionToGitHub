@@ -292,62 +292,116 @@ class TestRunner:
         except Exception as e:
             self.record_result("T_CORE_02", "URL conversion helpers", False, str(e))
 
-    def test_askpass_script_security(self):
-        """T_CORE_03: askpass script contains no secrets and echoes credentials"""
-        self.log_test_start("T_CORE_03", "Askpass script security")
+    def test_credential_scoping(self):
+        """T_CORE_03: the stored token goes only to the origin's https host, and no helper keeps a copy.
+
+        Regression for audit SEC-02/04 (experiment S-E8): a pre-configured
+        `store` helper must stay empty, another host must get nothing, and
+        plain http must be refused.
+        """
+        self.log_test_start("T_CORE_03", "Stored-token credential scoping")
+        base = tempfile.mkdtemp(prefix="fusion_cred_")
         try:
-            from fusion_git_core import IS_WINDOWS, git_askpass_env
+            from fusion_git_core import GitError, git_run, token_auth
 
-            username = "test-fixture-user@example.invalid"
-            # Deliberately NOT shaped like a real GitHub token (no ghp_/github_pat_
-            # prefix). The "&x%y" keeps the shell/cmd metacharacter coverage.
-            token = "EXAMPLE-not-a-real-token-&x%y"  # noqa: S105 - test fixture, not a credential
-            ok = True
-            details = []
-            with git_askpass_env(username, token) as env_map:
-                script_path = env_map["GIT_ASKPASS"]
-                with open(script_path, "r", encoding="utf-8") as fh:
-                    content = fh.read()
-                if token in content or username in content:
-                    ok = False
-                    details.append("credentials were written into the askpass script")
+            problems = []
+            # Never let these credential commands reach the developer's real
+            # helpers (e.g. Git Credential Manager): no system or global
+            # config, and hosts that can't match a real stored credential.
+            empty_global = os.path.join(base, "empty.gitconfig")
+            open(empty_global, "w").close()
+            isolated = {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": empty_global}
+            host = "git.example.invalid"
+            repo = os.path.join(base, "repo")
+            git_run(base, "init", repo, env=isolated)
+            store_file = os.path.join(base, "store.txt").replace("\\", "/")
+            git_run(repo, "config", "credential.helper", f"store --file={store_file}", env=isolated)
+            token = "ghp_" + "T" * 36
+            auth = token_auth(f"https://{host}/owner/repo.git", token)
 
-                run_env = {**os.environ, **env_map}
-                if IS_WINDOWS:
-                    base_cmd = ["cmd", "/d", "/c", script_path]
-                else:
-                    base_cmd = ["/bin/sh", script_path]
-                out_user = subprocess.run(
-                    base_cmd + ["Username for 'https://github.com':"],
-                    capture_output=True, text=True, env=run_env,
-                ).stdout.strip()
-                out_token = subprocess.run(
-                    base_cmd + ["Password for 'https://github.com':"],
-                    capture_output=True, text=True, env=run_env,
-                ).stdout.strip()
-                # A password prompt whose URL contains the word "username"
-                # must still yield the token (anchored prompt matching).
-                out_tricky = subprocess.run(
-                    base_cmd + ["Password for 'https://myusername@github.com':"],
-                    capture_output=True, text=True, env=run_env,
-                ).stdout.strip()
-                if out_user != username:
-                    ok = False
-                    details.append(f"username echo wrong: {out_user!r}")
-                if out_token != token:
-                    ok = False
-                    details.append(f"token echo wrong: {out_token!r}")
-                if out_tricky != token:
-                    ok = False
-                    details.append(f"username-in-URL password prompt returned {out_tricky!r}")
-
-            if os.path.exists(script_path):
-                ok = False
-                details.append("askpass script not cleaned up after use")
-
-            self.record_result("T_CORE_03", "Askpass script security", ok, "; ".join(details))
+            fill = git_run(repo, "credential", "fill", check=False, auth=auth, env=isolated,
+                           input_text=f"protocol=https\nhost={host}\n\n")
+            if fill.returncode != 0 or f"password={token}" not in fill.stdout:
+                problems.append(f"helper did not answer for {host}: rc={fill.returncode}")
+            other = git_run(repo, "credential", "fill", check=False, auth=auth, env=isolated,
+                            input_text="protocol=https\nhost=evil.example.invalid\n\n")
+            if token in other.stdout:
+                problems.append("token offered to another host")
+            git_run(repo, "credential", "approve", check=False, auth=auth, env=isolated,
+                    input_text=fill.stdout + "\n")
+            if os.path.exists(store_file) and os.path.getsize(store_file) > 0:
+                problems.append("another credential helper stored a copy of the token")
+            if "FUSION_GIT_TOKEN" in repr(auth) or token in repr(auth):
+                problems.append("token visible in repr()")
+            for bad_url in ("http://github.com/owner/repo.git", "git@github.com:owner/repo.git"):
+                try:
+                    token_auth(bad_url, token)
+                    problems.append(f"token allowed for {bad_url}")
+                except GitError:
+                    pass
+            # A local git call without auth must not see the token.
+            plain = git_run(repo, "config", "--get-all", "credential.helper", check=False)
+            if token in plain.stdout:
+                problems.append("token leaked into config")
+            self.record_result("T_CORE_03", "Stored-token credential scoping", not problems, "; ".join(problems))
         except Exception as e:
-            self.record_result("T_CORE_03", "Askpass script security", False, str(e))
+            self.record_result("T_CORE_03", "Stored-token credential scoping", False, str(e))
+        finally:
+            self._cleanup_dir(base)
+
+    def test_secret_redaction_and_urls(self):
+        """T_CORE_05: tokens in URLs are refused and redacted everywhere (audit SEC-03)."""
+        self.log_test_start("T_CORE_05", "Token-in-URL refusal and redaction")
+        base = tempfile.mkdtemp(prefix="fusion_redact_")
+        try:
+            from dialog_helpers import publication_notice, setup_new_repository, validate_repo_inputs
+            from fusion_git_core import git_run, redact_secrets, url_has_embedded_secret
+
+            problems = []
+            token = "ghp_" + "S" * 36
+            fine_grained = "github_pat_" + "A" * 30
+            cases = {
+                f"https://user:{token}@github.com/o/r.git": True,
+                f"https://{token}@github.com/o/r.git": True,
+                "https://user:hunter2@example.com/o/r.git": True,
+                "https://user@github.com/o/r.git": False,
+                "git@github.com:o/r.git": False,
+                "https://github.com/o/r.git": False,
+            }
+            for url, expected in cases.items():
+                if url_has_embedded_secret(url) != expected:
+                    problems.append(f"url_has_embedded_secret({redact_secrets(url)!r}) != {expected}")
+
+            text = f"fatal: unable to access 'https://bob:{token}@github.com/o/r.git/' {fine_grained} and mytoken99"
+            redacted = redact_secrets(text, ["mytoken99"])
+            for secret in (token, fine_grained, "mytoken99", "bob:"):
+                if secret in redacted:
+                    problems.append(f"{secret[:8]}… not redacted")
+
+            bad_url = f"https://user:{token}@github.com/o/r.git"
+            add_new = "__add_new__"
+            check = validate_repo_inputs(add_new, os.path.join(base, "x"), bad_url, add_new)
+            if check["ok"] or "token" not in check["messages"]["git"][0]:
+                problems.append("the dialog accepted a URL with a token")
+            if not setup_new_repository("x", os.path.join(base, "x"), bad_url, git_run):
+                problems.append("setup accepted a URL with a token")
+            if os.path.exists(os.path.join(base, "x", ".git")):
+                problems.append("setup created a repository for a URL with a token")
+
+            notice = publication_notice("https://github.com/acme/widgets.git")
+            if "github.com/acme/widgets" not in notice or "public" not in notice:
+                problems.append(f"publication notice unclear: {notice[:80]!r}")
+            if "github.com/acme/widgets" not in publication_notice("git@github.com:acme/widgets.git"):
+                problems.append("publication notice wrong for ssh addresses")
+
+            cli_help = self.run_command([sys.executable, str(Path("src") / "push_cli.py"), "--help"])[1]
+            if "--pat-token" in cli_help:
+                problems.append("push_cli still accepts a token on the command line")
+            self.record_result("T_CORE_05", "Token-in-URL refusal and redaction", not problems, "; ".join(problems))
+        except Exception as e:
+            self.record_result("T_CORE_05", "Token-in-URL refusal and redaction", False, str(e))
+        finally:
+            self._cleanup_dir(base)
 
     def test_export_subfolder_helpers(self):
         """T_CORE_04: subfolder normalisation, placeholder expansion, containment"""
@@ -355,7 +409,6 @@ class TestRunner:
         base = None
         try:
             from dialog_helpers import (
-                ensure_export_subfolder_exists,
                 expand_export_subfolder,
                 normalize_export_subfolder,
             )
@@ -392,13 +445,6 @@ class TestRunner:
             auto = expand_export_subfolder("v{timestamp}", "X")
             if not (auto.startswith("v") and len(auto) == len("v20260708-120000")):
                 failures.append(f"auto timestamp expansion wrong: {auto!r}")
-
-            base = tempfile.mkdtemp(prefix="fusion_subfolder_")
-            dest = ensure_export_subfolder_exists(base, "exports/step")
-            if not os.path.isdir(dest):
-                failures.append("subfolder was not created")
-            if ensure_export_subfolder_exists(base, "") != base:
-                failures.append("blank subfolder should return the repo root")
 
             self.record_result(
                 "T_CORE_04", "Export subfolder helpers", not failures, "; ".join(failures)
@@ -1182,6 +1228,40 @@ class TestRunner:
 
         self._run_pipeline_case("T_PIPE_16", "Pipeline: unsafe paths and names refused", body)
 
+    def test_pipeline_token_requires_https(self):
+        """T_PIPE_17: a stored token is never sent over a non-https remote; errors are redacted."""
+
+        def body(base_dir, details):
+            from fusion_git_core import git_run
+
+            origin, work, branch = self._make_seeded_remote(base_dir)
+            token = "ghp_" + "P" * 36
+            ui = _PipelineTestUI()
+            result = self._push(work, [(self._write_export(base_dir, "m.step", "x"), "m.step")], ui,
+                                pat_credentials={"username": "", "token": token})
+            if result:
+                details.append("a token was used with a non-https remote")
+            if not any("https" in e for e in ui.errors):
+                details.append(f"no explanation: {ui.errors}")
+            if any(token in e for e in ui.errors + ui.warnings):
+                details.append("token appeared in a message")
+            if git_run(origin, "branch", "--format", "%(refname:short)").stdout.split() != [branch]:
+                details.append("GitHub changed")
+
+            # An origin URL that embeds a token is pushed to, but warned about,
+            # and the token never appears in messages.
+            git_run(work, "remote", "set-url", "origin", origin)
+            ui2 = _PipelineTestUI()
+            git_run(work, "config", "remote.origin.pushurl", f"https://u:{token}@127.0.0.1:9/none.git")
+            self._push(work, [(self._write_export(base_dir, "m.step", "x"), "m.step")], ui2)
+            if not any("plain text" in w for w in ui2.warnings):
+                details.append(f"no warning about a token in the address: {ui2.warnings}")
+            if any(token in m for m in ui2.errors + ui2.warnings):
+                details.append("token from the address appeared in a message")
+            return True
+
+        self._run_pipeline_case("T_PIPE_17", "Pipeline: token needs https; secrets redacted", body)
+
     def test_setup_blank_name_uses_clone_folder(self):
         """T_SETUP_01: "Set up new" with a blank name pushes from the folder it cloned into.
 
@@ -1439,6 +1519,7 @@ class TestRunner:
             self.test_pipeline_non_ascii()
             self.test_pipeline_history_bytes_preserved()
             self.test_pipeline_rejects_bad_paths_and_names()
+            self.test_pipeline_token_requires_https()
             self.test_setup_blank_name_uses_clone_folder()
             self.test_setup_origin_mismatch()
         finally:
@@ -1464,7 +1545,8 @@ class TestRunner:
         print("\n=== Core Module Tests ===")
         self.test_core_git_functions()
         self.test_dialog_helpers_url_functions()
-        self.test_askpass_script_security()
+        self.test_credential_scoping()
+        self.test_secret_redaction_and_urls()
         self.test_export_subfolder_helpers()
         self.test_no_force_push_in_source()
         self.test_display_name()

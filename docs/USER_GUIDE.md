@@ -30,7 +30,7 @@ FusionToGitHub integrates Autodesk Fusion 360 with GitHub to provide professiona
 ### Opening the Add-in
 
 1. **Toolbar Method**: Click the "Push to GitHub" button in your Fusion 360 toolbar
-2. **Menu Method**: UTILITIES tab → ADD-INS → Scripts and Add-Ins → Run **Push_To_GitHub**
+2. **Menu Method**: UTILITIES tab → ADD-INS → Scripts and Add-Ins → Run **Push to GitHub**
 3. **Keyboard**: The add-in appears in your recent commands for quick access
 
 ### The Main Dialog
@@ -151,10 +151,15 @@ The add-in validates repositories in real-time:
 - Manage via "Manage Token…" in **Advanced**
 
 **Setting up PAT storage**:
-1. In **Advanced**, check "Use Stored Token"
-2. Click "Manage Token…"
-3. Enter your GitHub Personal Access Token
-4. Credentials are saved for future sessions
+1. In **Advanced**, click "Manage Token…" and answer **Yes** to add a token
+2. Paste the token into the **Token** field (it shows dots, not the token).
+   **Token Username** is optional
+3. Click **Save Token**. The token is stored in Windows Credential Manager and
+   the field is cleared; "Use Stored Token" is ticked for you
+4. To replace or delete it later, click "Manage Token…" again
+
+The token is only sent to this repository's server, over https. See
+[SECURITY.md](../SECURITY.md) for details.
 
 ---
 

@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import traceback
+import webbrowser
 from contextlib import contextmanager
 from datetime import datetime
 from typing import Optional
@@ -38,6 +39,7 @@ try:
         git_available as core_git_available,
         git_run as _git,
         push_export as core_push_export,
+        redact_secrets,
         sanitize_branch_name,
     )
     from dialog_helpers import (
@@ -46,6 +48,7 @@ try:
         derive_repo_name_from_url as _derive_repo_name_from_url,
         expand_export_subfolder,
         normalize_export_subfolder,
+        publication_notice as _publication_notice,
         resolve_new_repo_path as _resolve_new_repo_path,
         setup_new_repository as _setup_new_repository,
         validate_repo_inputs as _validate_repo_inputs,
@@ -61,6 +64,7 @@ except ImportError:
         git_available as core_git_available,
         git_run as _git,
         push_export as core_push_export,
+        redact_secrets,
         sanitize_branch_name,
     )
     from dialog_helpers import (
@@ -69,6 +73,7 @@ except ImportError:
         derive_repo_name_from_url as _derive_repo_name_from_url,
         expand_export_subfolder,
         normalize_export_subfolder,
+        publication_notice as _publication_notice,
         resolve_new_repo_path as _resolve_new_repo_path,
         setup_new_repository as _setup_new_repository,
         validate_repo_inputs as _validate_repo_inputs,
@@ -122,6 +127,7 @@ FORMAT_SETTINGS_OPTIONS = {
 
 LOG_DIR = os.path.expanduser("~/.PushToGitHub_AddIn_Data")
 LOG_FILE_PATH = os.path.join(LOG_DIR, "PushToGitHub.log")
+PRIVACY_URL = "https://github.com/zcohen-nerd/FusionToGitHub/blob/main/PRIVACY.md"
 
 # NOTE: the version suffix in this id is historical. Changing the id resets
 # users' toolbar placement/promotion, so it stays frozen as VERSION advances.
@@ -271,11 +277,82 @@ class FusionPaletteHandler(logging.Handler):
             pass
 
 
+def _make_private(path: str) -> None:
+    """Owner-only access on macOS/Linux; Windows user-profile folders are already private."""
+    if IS_WINDOWS:
+        return
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+class _RedactSecretsFilter(logging.Filter):
+    """Keep URL passwords and GitHub tokens out of the log file and palette (audit SEC-03/09)."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            message = record.getMessage()
+            redacted = redact_secrets(message)
+            if redacted != message:
+                record.msg, record.args = redacted, None
+        except Exception:
+            pass
+        return True
+
+
+class _PrivateRotatingFileHandler(logging.handlers.RotatingFileHandler):
+    """A rotating log whose files are readable only by their owner on macOS/Linux."""
+
+    def _open(self):
+        stream = super()._open()
+        _make_private(self.baseFilename)
+        return stream
+
+
+def clear_log_files(target_ui_ref: Optional[adsk.core.UserInterface]) -> None:
+    """Delete the add-in's log files (the current one and its rotated copies)."""
+    removed = 0
+    errors = []
+    handler = file_log_handler
+    if handler:
+        handler.acquire()
+    try:
+        if handler and handler.stream:
+            handler.stream.close()
+            handler.stream = None  # reopened automatically on the next log line
+        if os.path.isdir(LOG_DIR):
+            base_name = os.path.basename(LOG_FILE_PATH)
+            for name in os.listdir(LOG_DIR):
+                if name.startswith(base_name):
+                    try:
+                        os.remove(os.path.join(LOG_DIR, name))
+                        removed += 1
+                    except OSError as exc:
+                        errors.append(f"{name}: {exc}")
+    finally:
+        if handler:
+            handler.release()
+    if target_ui_ref:
+        if errors:
+            target_ui_ref.messageBox("Some log files could not be deleted:\n" + "\n".join(errors), CMD_NAME)
+        else:
+            target_ui_ref.messageBox(f"Log cleared ({removed} file(s) deleted).", CMD_NAME)
+
+
+def open_privacy_policy(target_ui_ref: Optional[adsk.core.UserInterface]) -> None:
+    try:
+        webbrowser.open(PRIVACY_URL)
+    except Exception:
+        if target_ui_ref:
+            target_ui_ref.messageBox(f"Open this address in your browser:\n{PRIVACY_URL}", CMD_NAME)
+
+
 def _ensure_log_dir_exists() -> bool:
     if os.path.exists(LOG_DIR):
         return True
     try:
-        os.makedirs(LOG_DIR)
+        os.makedirs(LOG_DIR, mode=0o700)
         return True
     except OSError as exc:
         msg = f"Error creating log directory {LOG_DIR}: {exc}"
@@ -298,13 +375,23 @@ def setup_logger():
 
     logger = logging.getLogger(CMD_ID)
     logger.setLevel(logging.DEBUG)
+    logger.addFilter(_RedactSecretsFilter())
+    # Files left by earlier versions become owner-only too.
+    for existing_name in os.listdir(LOG_DIR):
+        if existing_name.startswith(os.path.basename(LOG_FILE_PATH)):
+            _make_private(os.path.join(LOG_DIR, existing_name))
+    if not IS_WINDOWS:
+        try:
+            os.chmod(LOG_DIR, 0o700)
+        except OSError:
+            pass
 
     fmt_string = (
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     formatter = logging.Formatter(fmt_string)
 
-    file_log_handler = logging.handlers.RotatingFileHandler(
+    file_log_handler = _PrivateRotatingFileHandler(
         LOG_FILE_PATH,
         maxBytes=1 * 1024 * 1024,
         backupCount=3,
@@ -626,7 +713,9 @@ def load_config() -> dict:
     if not os.path.exists(CONFIG_PATH):
         with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
             json.dump({}, f)
+        _make_private(CONFIG_PATH)
         return {}
+    _make_private(CONFIG_PATH)
     try:
         with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
             return json.load(f)
@@ -669,6 +758,7 @@ def save_config(config_data: dict) -> None:
         temp_path = CONFIG_PATH + ".tmp"
         with open(temp_path, 'w', encoding='utf-8') as f:
             json.dump(config_data, f, indent=4)
+        _make_private(temp_path)
         os.replace(temp_path, CONFIG_PATH)
         if logger:
             logger.info(f"Configuration saved to {CONFIG_PATH}")
@@ -1185,6 +1275,23 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
             manage_pat_button.isFullWidth = True
             manage_pat_button.isVisible = IS_WINDOWS
 
+            # Token entry, shown by "Manage Token…". The token field is a
+            # password field, so the token is never visible on screen (audit
+            # SEC-07); it is cleared as soon as it has been saved.
+            pat_username_input = flow_inputs.addStringValueInput("patUsername", "Token Username", "")
+            pat_username_input.tooltip = "Optional. Leave blank for a GitHub personal access token."
+            pat_token_input = flow_inputs.addStringValueInput("patToken", "Token", "")
+            try:
+                pat_token_input.isPassword = True
+            except Exception:
+                if logger:
+                    logger.warning("This Fusion version can't mask the token field.")
+            pat_token_input.tooltip = "Paste the token. It is stored in Windows Credential Manager."
+            pat_save_button = flow_inputs.addBoolValueInput("patSave", "Save Token", False, "", False)
+            pat_save_button.isFullWidth = True
+            for pat_entry_input in (pat_username_input, pat_token_input, pat_save_button):
+                pat_entry_input.isVisible = False
+
             flow_status_input = flow_inputs.addTextBoxCommandInput(
                 "flowValidationStatus",
                 "",
@@ -1194,7 +1301,7 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
             )
             flow_status_input.isFullWidth = True
 
-            log_group = inputs.addGroupCommandInput("logGroup", "Logging")
+            log_group = inputs.addGroupCommandInput("logGroup", "Logging & Privacy")
             log_group.isExpanded = False
             log_inputs = log_group.children
 
@@ -1214,6 +1321,17 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                 False,
             )
             open_log_button.isFullWidth = True
+
+            clear_log_button = log_inputs.addBoolValueInput("clearLogFile", "Clear Log", False, "", False)
+            clear_log_button.isFullWidth = True
+            clear_log_button.tooltip = (
+                "Delete the add-in's log files. They contain folder paths, repository "
+                "addresses and Git messages."
+            )
+
+            privacy_button = log_inputs.addBoolValueInput("openPrivacy", "Privacy Policy…", False, "", False)
+            privacy_button.isFullWidth = True
+            privacy_button.tooltip = "What this add-in stores and sends, and how to delete it."
 
             # Apply saved settings for selected repo
             def apply_repo_settings(repo_name: str):
@@ -1253,6 +1371,10 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
 
                 if IS_WINDOWS:
                     use_pat_input.value = bool(det.get("useStoredPat", False))
+                # A half-entered token never carries over to another repository.
+                pat_token_input.value = ""
+                for entry_input in (pat_username_input, pat_token_input, pat_save_button):
+                    entry_input.isVisible = False
 
                 repo_log_level = det.get("logLevel") or meta.get("globalLogLevel") or current_log_level_name
                 for item in logLevelDropdown.listItems:
@@ -1324,64 +1446,78 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                 sel = repoSelectorInput.selectedItem
                 return sel.name if sel else ADD_NEW_OPTION
 
-            def prompt_pat_credentials(existing_username: str = "") -> Optional[dict]:
-                if not IS_WINDOWS:
-                    return None
-                username_value, cancelled = local_ui_ref.inputBox(
-                    "Enter the username associated with the PAT (leave blank to rely on token only):",
-                    CMD_NAME,
-                    existing_username or "",
+            def show_pat_entry(visible: bool, existing_username: str = "") -> None:
+                """Show or hide the masked token fields; always clears the token field."""
+                pat_token_input.value = ""
+                if visible:
+                    pat_username_input.value = existing_username or ""
+                for entry_input in (pat_username_input, pat_token_input, pat_save_button):
+                    entry_input.isVisible = visible and IS_WINDOWS
+                flow_status_input.text = (
+                    "Paste the token into the Token field, then click Save Token." if visible else ""
                 )
-                if cancelled:
-                    return None
-                token_value, token_cancelled = local_ui_ref.inputBox(
-                    "Enter the Personal Access Token (input is visible):",
-                    CMD_NAME,
-                    "",
-                )
-                if token_cancelled:
-                    return None
-                token_value = token_value.strip()
+
+            def save_pat_entry(repo_name: str) -> None:
+                token_value = (pat_token_input.value or "").strip()
                 if not token_value:
-                    local_ui_ref.messageBox("Token cannot be empty.", CMD_NAME)
-                    return None
-                return {"username": username_value.strip(), "token": token_value}
+                    local_ui_ref.messageBox("Paste a token into the Token field first.", CMD_NAME)
+                    return
+                try:
+                    store_pat(repo_name, (pat_username_input.value or "").strip(), token_value)
+                except Exception as exc:
+                    if logger:
+                        logger.error("Could not store the token: %s", exc)
+                    local_ui_ref.messageBox(
+                        f"Windows Credential Manager couldn't store the token:\n{exc}", CMD_NAME
+                    )
+                    return
+                finally:
+                    pat_token_input.value = ""  # never keep the token in the dialog
+                show_pat_entry(False)
+                use_pat_input.value = True
+                local_ui_ref.messageBox(
+                    "Token saved in Windows Credential Manager. It is only sent to this "
+                    "repository's server, over https.",
+                    CMD_NAME,
+                )
 
             def manage_pat_for_repo(repo_name: str):
                 if not IS_WINDOWS:
                     local_ui_ref.messageBox("PAT storage is only available on Windows.", CMD_NAME)
                     return
 
+                if pat_save_button.isVisible:
+                    # Clicking "Manage Token…" again cancels the entry.
+                    show_pat_entry(False)
+                    return
+
                 existing = read_stored_pat(repo_name)
                 if existing:
                     choice = local_ui_ref.messageBox(
-                        "A stored PAT already exists for this repository.\n\nYes: Update token\nNo: Delete token\nCancel: Leave unchanged",
+                        "A stored token already exists for this repository.\n\n"
+                        "Yes: Replace it\nNo: Delete it\nCancel: Leave it unchanged",
                         CMD_NAME,
                         adsk.core.MessageBoxButtonTypes.YesNoCancelButtonType,
                     )
                     if choice == adsk.core.DialogResults.DialogYes:
-                        creds = prompt_pat_credentials(existing.get("username", ""))
-                        if creds:
-                            store_pat(repo_name, creds["username"], creds["token"])
-                            local_ui_ref.messageBox("Personal Access Token updated.", CMD_NAME)
-                            use_pat_input.value = True
+                        show_pat_entry(True, existing.get("username", ""))
                     elif choice == adsk.core.DialogResults.DialogNo:
                         delete_pat(repo_name)
-                        local_ui_ref.messageBox("Stored Personal Access Token removed.", CMD_NAME)
+                        local_ui_ref.messageBox(
+                            "Stored token deleted from this computer. It still works on GitHub "
+                            "until you revoke it there (GitHub → Settings → Developer settings).",
+                            CMD_NAME,
+                        )
                         use_pat_input.value = False
                     return
 
                 add_choice = local_ui_ref.messageBox(
-                    "No stored PAT found for this repository. Would you like to add one now?",
+                    "No stored token for this repository. Add one now?",
                     CMD_NAME,
                     adsk.core.MessageBoxButtonTypes.YesNoButtonType,
                 )
                 if add_choice == adsk.core.DialogResults.DialogYes:
-                    creds = prompt_pat_credentials()
-                    if creds:
-                        store_pat(repo_name, creds["username"], creds["token"])
-                        local_ui_ref.messageBox("Personal Access Token saved.", CMD_NAME)
-                        use_pat_input.value = True
+                    show_pat_entry(True)
 
             class InputChangedHandler(adsk.core.InputChangedEventHandler):
                 def __init__(self, repoSelector):
@@ -1484,6 +1620,22 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                     elif input_id == "openLogFile":
                         ic_args.input.value = False
                         open_log_file(local_ui_ref)
+                    elif input_id == "clearLogFile":
+                        ic_args.input.value = False
+                        if local_ui_ref.messageBox(
+                            "Delete the add-in's log files?",
+                            CMD_NAME,
+                            adsk.core.MessageBoxButtonTypes.YesNoButtonType,
+                        ) == adsk.core.DialogResults.DialogYes:
+                            clear_log_files(local_ui_ref)
+                    elif input_id == "openPrivacy":
+                        ic_args.input.value = False
+                        open_privacy_policy(local_ui_ref)
+                    elif input_id == "patSave":
+                        ic_args.input.value = False
+                        repo_name_for_pat = get_selected_repo_name()
+                        if repo_name_for_pat != ADD_NEW_OPTION:
+                            save_pat_entry(repo_name_for_pat)
                     elif input_id == "managePat":
                         ic_args.input.value = False
                         repo_name_for_pat = get_selected_repo_name()
@@ -1828,6 +1980,23 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                             )
                             execute_args.executeFailed = True
                             return
+
+                        # Once per repository: say plainly that this publishes
+                        # the design, and that a public repository is public.
+                        if not selected_repo_details.get("publicationNoticeAccepted"):
+                            notice_url = selected_repo_details.get("url") or ""
+                            if not notice_url:
+                                origin_proc = _git(git_repo_path, "remote", "get-url", "origin", check=False)
+                                notice_url = (origin_proc.stdout or "").strip()
+                            if not FusionCommandGitUI(current_ui_ref).confirm(
+                                _publication_notice(redact_secrets(notice_url))
+                            ):
+                                current_ui_ref.messageBox("Push cancelled — nothing was pushed.", CMD_NAME)
+                                execute_args.executeFailed = True
+                                return
+                            selected_repo_details["publicationNoticeAccepted"] = True
+                            current_config[selected_repo_name] = selected_repo_details
+                            save_config(current_config)
 
                         progress = current_ui_ref.createProgressDialog()
                         progress.isBackgroundTranslucencyEnabled = True

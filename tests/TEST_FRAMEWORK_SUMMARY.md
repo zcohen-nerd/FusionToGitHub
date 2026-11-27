@@ -54,7 +54,7 @@ This document summarizes the comprehensive testing framework created for the Fus
 | **CLI Interface** | ✅ T_CLI_01, T_PIPE_05 | ✅ CLI functionality | High |
 | **Fusion 360 UI** | ❌ Not possible | ✅ T1-T16 | Manual only |
 | **GitHub Integration** | ⚠️ Local remotes only | ✅ Push/pull tests | Mixed |
-| **Security Features** | ✅ Askpass script (T_CORE_03) | ✅ PAT storage tests | Mixed |
+| **Security Features** | ✅ Credential scoping (T_CORE_03), URL secrets and redaction (T_CORE_05) | ✅ PAT storage tests | Mixed |
 | **Error Handling** | ✅ Conflict/cancel paths | ✅ Comprehensive | Mixed |
 
 ## Testing Workflow

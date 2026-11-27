@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import logging
 import os
 import sys
@@ -66,6 +67,9 @@ class TerminalUI(GitUI):
         return accepted
 
 
+TOKEN_ENV_VAR = "FUSION_TO_GITHUB_TOKEN"
+
+
 def _abs_paths(repo: Path, entries: list[str]) -> list[str]:
     resolved: list[str] = []
     for entry in entries:
@@ -127,7 +131,15 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument("--branch-override", help="Explicit branch name to use instead of template")
     parser.add_argument("--design-name", default="OfflineDesign", help="Name used for placeholder tokens")
     parser.add_argument("--assume-yes", action="store_true", help="Auto-accept confirmation prompts")
-    parser.add_argument("--pat-token", help="Personal access token to feed via askpass")
+    parser.add_argument(
+        "--pat-prompt",
+        action="store_true",
+        help=(
+            "Ask for a personal access token (input hidden). Alternatively set the "
+            f"{TOKEN_ENV_VAR} environment variable. Tokens are never accepted as arguments, "
+            "because other programs can read a process's command line."
+        ),
+    )
     parser.add_argument("--pat-username", default="", help="Username to pair with the PAT (if required)")
     parser.add_argument(
         "--log-level",
@@ -169,8 +181,11 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     ui = TerminalUI(assume_yes=args.assume_yes)
     pat_credentials = None
-    if args.pat_token:
-        pat_credentials = {"username": args.pat_username or "", "token": args.pat_token}
+    token = os.environ.get(TOKEN_ENV_VAR, "")
+    if args.pat_prompt:
+        token = getpass.getpass("Personal access token: ")
+    if token.strip():
+        pat_credentials = {"username": args.pat_username or "", "token": token.strip()}
 
     exports = [(path, _repo_relative(repo_path, path)) for path in files_to_add]
     logger.info("FusionToGitHub CLI harness %s", VERSION)

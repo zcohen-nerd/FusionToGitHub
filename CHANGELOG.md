@@ -51,6 +51,31 @@ this, and the release workflow refuses a tag that differs.
 - The history file (`CHANGELOG.md` in the repository) keeps its existing line
   endings and bytes.
 
+### Security and privacy
+
+- **Stored token, scoped.** A token saved with **Manage Token…** is now
+  offered only to the repository's own server, only over https, and only to
+  the Git commands that talk to it. Git's other credential helpers (including
+  Git Credential Manager) are switched off for those commands, so they can't
+  save a copy or answer with an old credential. This replaces the askpass
+  script.
+- **Masked token entry.** **Manage Token…** shows a password field in the
+  dialog instead of a box that displayed the token.
+- **No tokens in addresses.** Setup refuses a repository address with a
+  password or token in it, and a push warns if an existing repository's
+  address contains one. Passwords and GitHub tokens are hidden in the log and
+  in error messages.
+- **Privacy policy** ([PRIVACY.md](PRIVACY.md)): no telemetry; what is sent to
+  the repository and stored locally; how to delete it. Linked from the new
+  **Logging & Privacy** section, which also has **Clear Log**.
+- **First-push notice.** Before the first push to each repository, the add-in
+  explains that the design is published there and is public if the
+  repository is.
+- On macOS, the settings file and logs are readable only by your account.
+- `push_cli.py` no longer takes a token on the command line; use the
+  `FUSION_TO_GITHUB_TOKEN` environment variable or `--pat-prompt`.
+- [SECURITY.md](SECURITY.md) is rewritten to match the code.
+
 ## 0.3.3 — 2026-11-27
 
 **Safety and installability release. Supersedes the withdrawn 0.3.2.** This is

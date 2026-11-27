@@ -28,9 +28,10 @@ import shutil
 import signal
 import subprocess
 import tempfile
-from contextlib import contextmanager
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Protocol, Sequence, Tuple
+from urllib.parse import urlsplit
 
 VERSION = "0.4.0"
 IS_WINDOWS = os.name == "nt"
@@ -160,6 +161,7 @@ def _run_git_bytes(
     network: bool = False,
     timeout: Optional[float] = None,
     input_bytes: Optional[bytes] = None,
+    config: Sequence[str] = (),
 ) -> Tuple[int, bytes, bytes]:
     env_vars = os.environ.copy()
     # The C locale keeps git's messages in English: the pipeline matches on
@@ -178,6 +180,8 @@ def _run_git_bytes(
     if network:
         # Abort a transfer that stays below 1 KB/s for a minute.
         cmd += ["-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=60"]
+    for item in config:
+        cmd += ["-c", item]
     cmd += list(args)
     limit = timeout if timeout is not None else TIMEOUTS["network" if network else "local"]
 
@@ -228,39 +232,55 @@ def git_run(
     network: bool = False,
     timeout: Optional[float] = None,
     input_text: Optional[str] = None,
+    auth: Optional["GitAuth"] = None,
 ) -> subprocess.CompletedProcess:
     """Run git and return its result with stdout/stderr decoded as UTF-8.
 
     Set *network* for commands that talk to the remote (clone, fetch, push,
-    ls-remote): they get the longer timeout and stall detection. Raises
-    GitTimeoutError when the timeout is hit and, when *check* is true,
-    GitError for a non-zero exit.
+    ls-remote): they get the longer timeout and stall detection. *auth*
+    (from :func:`token_auth`) adds the stored-token credential helper; pass
+    it only to network commands. Raises GitTimeoutError when the timeout is
+    hit and, when *check* is true, GitError for a non-zero exit. Error
+    messages have URL passwords and tokens redacted.
     """
+    merged_env = dict(env or {})
+    config: Sequence[str] = ()
+    if auth is not None:
+        merged_env.update(auth.env)
+        config = auth.config
     returncode, out, err = _run_git_bytes(
         repo_path,
         args,
-        env=env,
+        env=merged_env or None,
         network=network,
         timeout=timeout,
         input_bytes=input_text.encode("utf-8") if input_text is not None else None,
+        config=config,
     )
     # UTF-8 with replacement: decoding with the Windows code page could fail
     # on names like "Łukasz" and silently lose the output (audit REL-03).
     stdout = out.decode("utf-8", errors="replace")
     stderr = err.decode("utf-8", errors="replace")
     if check and returncode != 0:
-        raise GitError(f"git {' '.join(args)} failed:\n{stderr or stdout}")
+        secrets = [auth.token] if auth is not None else []
+        raise GitError(redact_secrets(f"git {' '.join(args)} failed:\n{stderr or stdout}", secrets))
     return subprocess.CompletedProcess([GIT_EXE, *args], returncode, stdout, stderr)
 
 
-def git_output(repo_path: Optional[str], *args: str, env: Optional[Dict[str, str]] = None, network: bool = False) -> str:
-    return (git_run(repo_path, *args, check=True, env=env, network=network).stdout or "").strip()
+def git_output(
+    repo_path: Optional[str],
+    *args: str,
+    env: Optional[Dict[str, str]] = None,
+    network: bool = False,
+    auth: Optional["GitAuth"] = None,
+) -> str:
+    return (git_run(repo_path, *args, check=True, env=env, network=network, auth=auth).stdout or "").strip()
 
 
 def _git_bytes(repo_path: str, *args: str, env: Optional[Dict[str, str]] = None) -> bytes:
     returncode, out, err = _run_git_bytes(repo_path, args, env=env)
     if returncode != 0:
-        raise GitError(f"git {' '.join(args)} failed:\n{err.decode('utf-8', errors='replace')}")
+        raise GitError(redact_secrets(f"git {' '.join(args)} failed:\n{err.decode('utf-8', errors='replace')}"))
     return out
 
 
@@ -271,76 +291,94 @@ def git_available() -> bool:
         return False
 
 
-@contextmanager
-def git_askpass_env(username: str, token: str):
-    """Yield env vars that let git authenticate through a temp askpass script.
+# ---------------------------------------------------------------------------
+# Credentials and secrets
+# ---------------------------------------------------------------------------
 
-    The script itself contains no credentials: it echoes environment
-    variables that exist only in the git subprocess environment, so the
-    token is never written to disk (and needs no shell escaping).
+# Answers git's credential "get" request from environment variables that only
+# the network git process receives. "store" and "erase" requests are ignored,
+# so the token is never copied anywhere.
+_INLINE_CREDENTIAL_HELPER = (
+    '!f() { test "$1" = get || exit 0; '
+    'echo "username=${FUSION_GIT_USERNAME:-x-access-token}"; '
+    'echo "password=${FUSION_GIT_TOKEN}"; }; f'
+)
+
+_URL_USERINFO_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)([^/@\s]+)@")
+_TOKEN_RES = (
+    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"),
+    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"),
+)
+
+
+@dataclass(frozen=True)
+class GitAuth:
+    """A stored token, ready to be offered to git for one host only."""
+
+    host: str
+    token: str = field(repr=False)
+    username: str = ""
+
+    @property
+    def env(self) -> Dict[str, str]:
+        values = {"FUSION_GIT_TOKEN": self.token}
+        if self.username:
+            values["FUSION_GIT_USERNAME"] = self.username
+        return values
+
+    @property
+    def config(self) -> List[str]:
+        # The empty helper first clears every helper configured anywhere
+        # (system, global, repo, including Git Credential Manager), so no
+        # other helper can store a copy of the token or answer with a stale
+        # credential. The inline helper is then registered for this one host,
+        # so the token is never offered to any other server (audit SEC-02/04).
+        # These must be -c arguments: Windows can't pass an empty env value.
+        return ["credential.helper=", f"credential.https://{self.host}.helper={_INLINE_CREDENTIAL_HELPER}"]
+
+
+def token_auth(remote_url: str, token: str, username: str = "") -> GitAuth:
+    """Prepare *token* for pushes to *remote_url*; refuses anything but https."""
+    parsed = urlsplit((remote_url or "").strip())
+    if parsed.scheme.lower() != "https" or not parsed.hostname:
+        raise GitError(
+            "A stored token is only sent to https:// addresses, and this repository's "
+            f"address is '{redact_secrets(remote_url)}'. Untick 'Use Stored Token', or "
+            "change the repository's address to its https:// form."
+        )
+    host = parsed.hostname.lower() + (f":{parsed.port}" if parsed.port else "")
+    return GitAuth(host=host, token=token, username=username or "")
+
+
+def redact_secrets(text: str, extra: Sequence[str] = ()) -> str:
+    """Hide URL passwords/usernames and GitHub tokens in text meant for logs or dialogs."""
+    if not text:
+        return text
+    result = _URL_USERINFO_RE.sub(r"\1***@", text)
+    for pattern in _TOKEN_RES:
+        result = pattern.sub("***", result)
+    for secret in extra:
+        if secret and len(secret) >= 4:
+            result = result.replace(secret, "***")
+    return result
+
+
+def url_has_embedded_secret(url: str) -> bool:
+    """True when an http(s) URL carries a password or token (https://user:token@host/...).
+
+    A plain user name (https://user@host) is allowed; ssh addresses
+    (git@github.com:owner/repo.git) are not affected.
     """
-    if not token:
-        yield {}
-        return
-
-    temp_dir = tempfile.mkdtemp(prefix="fusion_git_auth_")
-    script_path = os.path.join(
-        temp_dir,
-        "askpass.bat" if IS_WINDOWS else "askpass.sh",
-    )
-
-    if IS_WINDOWS:
-        # The prompt kind is decided by an anchored prefix test, not a
-        # substring search: a password prompt like
-        # "Password for 'https://myusername@github.com':" contains the word
-        # "username" and must still yield the token. Delayed expansion
-        # (!VAR!) keeps special characters in the values from being
-        # re-parsed by cmd; 'if defined' avoids the literal '!VAR!' output
-        # cmd produces for undefined delayed variables.
-        script_contents = (
-            "@echo off\n"
-            "setlocal EnableDelayedExpansion\n"
-            'set "PROMPT_ARG=%~1"\n'
-            'if /I "!PROMPT_ARG:~0,12!"=="Username for" (\n'
-            "    if defined FUSION_GIT_ASKPASS_USERNAME (\n"
-            "        echo(!FUSION_GIT_ASKPASS_USERNAME!\n"
-            "    ) else (\n"
-            "        echo(\n"
-            "    )\n"
-            ") else (\n"
-            "    echo(!FUSION_GIT_ASKPASS_TOKEN!\n"
-            ")\n"
-        )
-    else:
-        # Same anchored prefix test as the Windows script (see above).
-        script_contents = (
-            "#!/bin/sh\n"
-            'case "$1" in\n'
-            "  [Uu]\"sername for \"* ) printf '%s\\n' \"$FUSION_GIT_ASKPASS_USERNAME\" ;;\n"
-            "  * ) printf '%s\\n' \"$FUSION_GIT_ASKPASS_TOKEN\" ;;\n"
-            "esac\n"
-        )
-
-    with open(script_path, "w", encoding="utf-8") as askpass_file:
-        askpass_file.write(script_contents)
-    if not IS_WINDOWS:
-        os.chmod(script_path, 0o700)
-
-    env_map = {
-        "GIT_ASKPASS": script_path,
-        "GIT_TERMINAL_PROMPT": "0",
-        "FUSION_GIT_ASKPASS_USERNAME": username or "",
-        "FUSION_GIT_ASKPASS_TOKEN": token,
-    }
-
     try:
-        yield env_map
-    finally:
-        try:
-            os.remove(script_path)
-        except Exception:
-            pass
-        shutil.rmtree(temp_dir, ignore_errors=True)
+        parsed = urlsplit((url or "").strip())
+    except ValueError:
+        return False
+    if parsed.scheme.lower() not in ("http", "https"):
+        return False
+    if parsed.password:
+        return True
+    user = parsed.username or ""
+    return any(pattern.fullmatch(user) for pattern in _TOKEN_RES)
 
 
 # ---------------------------------------------------------------------------
@@ -367,11 +405,11 @@ def normalize_repo_path(rel_path: str) -> str:
 
 
 def remote_branches(
-    repo_path: str, env: Optional[Dict[str, str]] = None
+    repo_path: str, auth: Optional[GitAuth] = None
 ) -> Tuple[Optional[str], Dict[str, str]]:
     """Return (default branch or None, {branch: tip sha}) as GitHub reports them now."""
     listing = git_output(
-        repo_path, "ls-remote", "--symref", "origin", "HEAD", "refs/heads/*", env=env, network=True
+        repo_path, "ls-remote", "--symref", "origin", "HEAD", "refs/heads/*", auth=auth, network=True
     )
     default = None
     heads: Dict[str, str] = {}
@@ -391,12 +429,12 @@ def remote_branches(
     return default, heads
 
 
-def _ensure_commit_available(repo_path: str, branch: str, sha: str, env: Optional[Dict[str, str]]) -> str:
+def _ensure_commit_available(repo_path: str, branch: str, sha: str, auth: Optional[GitAuth]) -> str:
     """Make sure the branch tip is in the local object store; return the tip to build on."""
     if git_run(repo_path, "cat-file", "-e", f"{sha}^{{commit}}", check=False).returncode == 0:
         return sha
     git_run(
-        repo_path, "fetch", "--no-tags", "--quiet", "origin", f"+refs/heads/{branch}:{_BASE_REF}", env=env, network=True
+        repo_path, "fetch", "--no-tags", "--quiet", "origin", f"+refs/heads/{branch}:{_BASE_REF}", auth=auth, network=True
     )
     # The branch may have moved since it was listed; build on what was fetched.
     return git_output(repo_path, "rev-parse", "--verify", f"{_BASE_REF}^{{commit}}")
@@ -568,6 +606,14 @@ def push_export(
         if "origin" not in git_output(repo_path, "remote").splitlines():
             ui.error("This repository has no 'origin' remote, so there is nowhere to push.")
             return None
+        origin_url = git_output(repo_path, "remote", "get-url", "--push", "origin")
+        if url_has_embedded_secret(origin_url):
+            ui.warn(
+                "This repository's GitHub address contains a password or token, which Git keeps "
+                "in plain text in the repository's .git/config file. Remove it from the address "
+                "(git remote set-url origin https://github.com/OWNER/REPO.git) and use "
+                "'Manage Token…' to store the token safely instead."
+            )
 
         override = sanitize_branch_name(branch_override) if branch_override else None
         if override and not is_valid_branch_name(override):
@@ -582,13 +628,13 @@ def push_export(
         if mode == MODE_SNAPSHOT and not override and not is_valid_branch_name(generated_name):
             raise ValueError(f"The branch name template produced '{generated_name}', which git can't use.")
 
-        def network(git_env: Optional[Dict[str, str]]) -> Optional[Dict[str, Any]]:
+        def network(auth: Optional[GitAuth]) -> Optional[Dict[str, Any]]:
             confirmed_reuse = False
             bootstrapped = False
             branch = override or target or generated_name
             for attempt in range(1, MAX_PUSH_ATTEMPTS + 1):
                 step("Checking GitHub…")
-                default, heads = remote_branches(repo_path, git_env)
+                default, heads = remote_branches(repo_path, auth)
 
                 if not heads:
                     # Completely empty repository: give it a first commit on
@@ -607,7 +653,7 @@ def push_export(
                         "origin",
                         f"{init_commit}:refs/heads/{BOOTSTRAP_BRANCH}",
                         check=False,
-                        env=git_env,
+                        auth=auth,
                         network=True,
                     )
                     if proc.returncode != 0 and not _is_push_rejection(proc.stderr or proc.stdout):
@@ -647,7 +693,7 @@ def push_export(
                 base_branch = branch if branch in heads else default
                 base = heads.get(base_branch) if base_branch else None
                 if base and base_branch:
-                    base = _ensure_commit_available(repo_path, base_branch, base, git_env)
+                    base = _ensure_commit_available(repo_path, base_branch, base, auth)
 
                 step("Preparing the commit…")
                 message = (
@@ -671,7 +717,7 @@ def push_export(
                     "origin",
                     f"{commit}:refs/heads/{branch}",
                     check=False,
-                    env=git_env,
+                    auth=auth,
                     network=True,
                 )
                 if proc.returncode == 0:
@@ -701,15 +747,16 @@ def push_export(
             )
             return None
 
+        auth = None
+        if pat_credentials and pat_credentials.get("token"):
+            auth = token_auth(origin_url, pat_credentials["token"], pat_credentials.get("username", ""))
         try:
-            if pat_credentials and pat_credentials.get("token"):
-                with git_askpass_env(pat_credentials.get("username", ""), pat_credentials["token"]) as env_map:
-                    return network(env_map)
-            return network(None)
+            return network(auth)
         finally:
             git_run(repo_path, "update-ref", "-d", _BASE_REF, check=False)
     except (GitError, ValueError, OSError) as exc:
-        msg = f"Push failed:\n{exc}"
+        secrets = [pat_credentials.get("token", "")] if pat_credentials else []
+        msg = redact_secrets(f"Push failed:\n{exc}", secrets)
         ui.error(msg)
         if logger:
             logger.error(msg, exc_info=True)
@@ -736,6 +783,9 @@ __all__ = [
     "git_run",
     "git_output",
     "git_available",
-    "git_askpass_env",
+    "GitAuth",
+    "token_auth",
+    "redact_secrets",
+    "url_has_embedded_secret",
     "push_export",
 ]

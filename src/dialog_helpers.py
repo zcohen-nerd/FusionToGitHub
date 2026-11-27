@@ -10,6 +10,9 @@ import os
 import re
 from datetime import datetime
 from typing import Optional
+from urllib.parse import urlsplit
+
+from fusion_git_core import url_has_embedded_secret
 
 
 # Matches GitHub browser URLs (optionally scheme-less), capturing owner and
@@ -126,7 +129,15 @@ def validate_repo_inputs(
             ok = False
 
     if selection_name == add_new_option:
-        if has_git_url:
+        if has_git_url and url_has_embedded_secret(git_url_val):
+            set_msg(
+                "git",
+                "❌ This address contains a password or token. Paste the plain repository"
+                " address (https://github.com/user/repo); store a token with Manage Token….",
+                "error",
+            )
+            ok = False
+        elif has_git_url:
             pattern = r"^(https://|git@|ssh://).+\.git$"
             if re.match(pattern, git_url_val.strip()):
                 set_msg("git", "✅ Git URL format looks valid.", "success")
@@ -209,24 +220,6 @@ def expand_export_subfolder(
     return normalize_export_subfolder(expanded)
 
 
-def ensure_export_subfolder_exists(repo_path: str, relative_subfolder: str) -> str:
-    """Create the export subfolder inside the repo and return its path.
-
-    Raises ``ValueError`` if the subfolder would resolve outside the
-    repository root.
-    """
-    if not relative_subfolder:
-        return repo_path
-    root = os.path.normpath(repo_path)
-    dest = os.path.normpath(os.path.join(root, relative_subfolder))
-    # Separator-aware containment check: a bare prefix test would accept
-    # sibling paths like "C:\repo-evil" for root "C:\repo".
-    if dest != root and not dest.startswith(root + os.sep):
-        raise ValueError("Export subfolder resolves outside the repository root.")
-    os.makedirs(dest, exist_ok=True)
-    return dest
-
-
 def default_path_for_new_repo(
     proposed_name: str,
     base_dir: str,
@@ -294,6 +287,12 @@ def setup_new_repository(
 
     Returns ``None`` on success or an error message string on failure.
     """
+    if git_url and url_has_embedded_secret(git_url):
+        return (
+            "The repository address contains a password or token, which Git would save in "
+            "plain text. Use the plain address (https://github.com/user/repo) and store the "
+            "token with Manage Token… instead."
+        )
     git_dir_path = os.path.join(local_path, ".git")
     has_git_dir = os.path.isdir(git_dir_path)
     dir_is_empty = not os.path.exists(local_path) or not os.listdir(local_path)
@@ -347,13 +346,36 @@ def setup_new_repository(
     return None
 
 
+def publication_notice(git_url: str) -> str:
+    """The one-time warning shown before the first push to a repository (audit COMP-03)."""
+    try:
+        parsed = urlsplit(git_url or "")
+        where = f"{parsed.hostname}{parsed.path}" if parsed.hostname else (git_url or "this repository")
+    except ValueError:
+        where = git_url or "this repository"
+    if where.endswith(".git"):
+        where = where[: -len(".git")]
+    if git_url and git_url.startswith("git@") and ":" in git_url:
+        host, _, path = git_url[len("git@"):].partition(":")
+        where = f"{host}/{path[:-4] if path.endswith('.git') else path}"
+    return (
+        f"This pushes your design to {where}.\n\n"
+        "If that repository is public, anyone can see and download every version you push, "
+        "including the full Fusion file with its history, and copies may remain in forks or "
+        "clones even after you delete them. Use a private repository for designs you don't "
+        "want to publish.\n\n"
+        "Your Git name and email are also recorded in each commit.\n\n"
+        "Continue? (This is shown once per repository.)"
+    )
+
+
 __all__ = [
     "convert_github_url",
     "default_path_for_new_repo",
     "derive_repo_name_from_url",
-    "ensure_export_subfolder_exists",
     "expand_export_subfolder",
     "normalize_export_subfolder",
+    "publication_notice",
     "resolve_new_repo_path",
     "setup_new_repository",
     "validate_repo_inputs",
