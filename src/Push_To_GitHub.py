@@ -1166,15 +1166,6 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                 "branch template. Enter a name to push to that specific "
                 "branch instead (reusing it if it already exists)."
             )
-            skip_pull_input = flow_inputs.addBoolValueInput(
-                "skipPull",
-                "Force Push (skip pull)",
-                True,
-                "",
-                False,
-            )
-            skip_pull_input.isFullWidth = False
-
             use_pat_input = flow_inputs.addBoolValueInput(
                 "useStoredPat",
                 "Use Stored Token",
@@ -1261,7 +1252,6 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                 if export_input:
                     export_input.value = export_subfolder_value
 
-                skip_pull_input.value = bool(det.get("skipPullDefault", False))
                 if IS_WINDOWS:
                     use_pat_input.value = bool(det.get("useStoredPat", False))
 
@@ -1321,7 +1311,6 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                     export_input = inputs.itemById("exportSubfolder")
                     if export_input:
                         export_input.value = ""
-                    skip_pull_input.value = False
                     if IS_WINDOWS:
                         use_pat_input.value = False
                     branch_preview_input = inputs.itemById("branchPreview")
@@ -1746,8 +1735,6 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                             execute_args.executeFailed = True
                             return
 
-                        skip_pull_selected = bool(cmd_inputs.itemById("skipPull").value)
-
                         branch_preview_input = cmd_inputs.itemById("branchPreview")
                         branch_override_raw = branch_preview_input.value.strip() if branch_preview_input else ""
                         branch_override_sanitized = sanitize_branch_name(branch_override_raw) if branch_override_raw else ""
@@ -1774,8 +1761,10 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                         set_logger_level(log_level_name)
 
                         selected_repo_details["exportSubfolder"] = normalized_export_subfolder
-                        selected_repo_details["skipPullDefault"] = skip_pull_selected
                         selected_repo_details["logLevel"] = log_level_name
+                        # Force push was removed; drop the old per-repo
+                        # setting so a saved "on" value can never come back.
+                        selected_repo_details.pop("skipPullDefault", None)
                         if IS_WINDOWS:
                             selected_repo_details["useStoredPat"] = use_pat_selected
                         # Drop the legacy pre-fill value so older configs stop
@@ -1914,7 +1903,6 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                                 git_ui_adapter,
                                 base_name,
                                 branch_override=branch_override_sanitized or None,
-                                skip_pull=skip_pull_selected,
                                 pat_credentials=pat_credentials,
                                 logger=logger,
                                 materialize_files=materialize_exports,
@@ -1942,10 +1930,10 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                                 status_notes.append("Added a new commit to the existing branch.")
                             if git_result.get("stashed"):
                                 status_notes.append("Auto-stashed local changes and restored them afterward.")
-                            if git_result.get("force_push"):
-                                status_notes.append("Used --force-with-lease (skip pull).")
                             if git_result.get("pull_failed"):
-                                status_notes.append("Initial pull --rebase failed; branch was force-pushed.")
+                                status_notes.append(
+                                    "Couldn't update from GitHub first; pushed without updating."
+                                )
                             if status_notes:
                                 summary_lines.append("")
                                 summary_lines.append("Git flow details:")

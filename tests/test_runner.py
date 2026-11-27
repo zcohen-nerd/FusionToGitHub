@@ -673,7 +673,8 @@ class TestRunner:
                 fh.write("precious uncommitted data")
 
             export_path = os.path.join(work, "model.step")
-            ui = _PipelineTestUI(confirm_answer=True)  # accept stash + force push
+            remote_tip_before = git_run(origin, "rev-parse", branch).stdout.strip()
+            ui = _PipelineTestUI(confirm_answer=True)  # accept stash + continue unsynced
             result = handle_git_operations(
                 work,
                 [],
@@ -689,9 +690,17 @@ class TestRunner:
             if not result:
                 details.append(f"pipeline failed: {ui.errors}")
             else:
-                if not result.get("force_push"):
+                if not result.get("pull_failed"):
                     ok = False
-                    details.append("expected force push after conflict")
+                    details.append("expected the failed pull to be reported")
+                if "force_push" in result:
+                    ok = False
+                    details.append("result still reports a force_push key")
+                # The conflicting remote branch must be untouched.
+                remote_tip_after = git_run(origin, "rev-parse", branch).stdout.strip()
+                if remote_tip_after != remote_tip_before:
+                    ok = False
+                    details.append(f"remote '{branch}' changed (overwrite regression)")
                 for rebase_dir in ("rebase-merge", "rebase-apply"):
                     if os.path.exists(os.path.join(work, ".git", rebase_dir)):
                         ok = False
@@ -993,9 +1002,6 @@ class TestRunner:
                 ok = False
                 details.append(f"second push failed (sync regression): {ui2.errors}")
             else:
-                if result2.get("force_push"):
-                    ok = False
-                    details.append("sync should avoid force push")
                 pushed = git_run(origin, "show", "my-export:model.step", check=False)
                 if pushed.returncode != 0 or pushed.stdout.strip() != "EXPORT v2":
                     ok = False
@@ -1015,6 +1021,122 @@ class TestRunner:
             )
         finally:
             self._cleanup_dir(base_dir)
+
+    def test_pipeline_never_overwrites_remote(self):
+        """T_PIPE_09: pushes the remote is ahead of are refused; the remote is unchanged.
+
+        Regression test for audit finding REL-01 (experiments G-E7c and G-E7d'),
+        where force push overwrote a colleague's commits. Every confirmation is
+        accepted, which is the worst case for the old behaviour.
+        """
+        self.log_test_start("T_PIPE_09", "Pipeline: never overwrites remote commits")
+        base_dir = tempfile.mkdtemp(prefix="fusion_pipe9_")
+        try:
+            from fusion_git_core import git_run, handle_git_operations
+
+            origin, work, branch = self._make_seeded_remote(base_dir)
+            export_path = os.path.join(work, "model.step")
+            ok = True
+            details = []
+
+            def colleague_commit(target_branch, filename, content, create=False):
+                other = os.path.join(base_dir, f"other-{target_branch}-{filename}")
+                if create:
+                    git_run(base_dir, "clone", origin, other)
+                    git_run(other, "checkout", "-b", target_branch)
+                else:
+                    git_run(base_dir, "clone", "--branch", target_branch, origin, other)
+                with open(os.path.join(other, filename), "w", encoding="utf-8") as fh:
+                    fh.write(content)
+                git_run(other, "add", filename)
+                git_run(other, "commit", "-m", f"colleague edit on {target_branch}")
+                git_run(other, "push", "origin", target_branch)
+                return git_run(origin, "rev-parse", target_branch).stdout.strip()
+
+            def push(override, content):
+                ui = _PipelineTestUI(confirm_answer=True)
+                result = handle_git_operations(
+                    work,
+                    [],
+                    "Design update: {filename}",
+                    "fusion-export/{filename}-{timestamp}",
+                    ui,
+                    "TestDesign",
+                    branch_override=override,
+                    materialize_files=self._write_file_materializer(export_path, content),
+                )
+                return result, ui
+
+            # Case A (G-E7c): the override names a branch that exists only on
+            # the remote and holds a colleague's commit; we have fetched it.
+            shared_tip = colleague_commit("shared-export", "colleague.txt", "theirs\n", create=True)
+            git_run(work, "fetch", "origin")
+            result_a, ui_a = push("shared-export", "EXPORT A")
+            if result_a and not result_a.get("cancelled"):
+                ok = False
+                details.append(f"case A: push should be refused, got {result_a!r}")
+            if not any("refused" in e for e in ui_a.errors):
+                ok = False
+                details.append(f"case A: no clear refusal message: {ui_a.errors}")
+            if git_run(origin, "rev-parse", "shared-export").stdout.strip() != shared_tip:
+                ok = False
+                details.append("case A: colleague's commit was overwritten")
+
+            # Case B (G-E7d'): a reused local branch has diverged from the
+            # remote with a conflicting edit, so the sync step fails.
+            result_b1, ui_b1 = push("my-export", "EXPORT v1")
+            if not result_b1:
+                ok = False
+                details.append(f"case B setup push failed: {ui_b1.errors}")
+            colleague_tip = colleague_commit("my-export", "model.step", "COLLEAGUE EDIT")
+            git_run(work, "checkout", "my-export")
+            with open(export_path, "w", encoding="utf-8") as fh:
+                fh.write("LOCAL UNPUSHED EDIT")
+            git_run(work, "commit", "-am", "local unpushed edit")
+            git_run(work, "checkout", branch)
+            result_b2, ui_b2 = push("my-export", "EXPORT v2")
+            if result_b2 and not result_b2.get("cancelled"):
+                ok = False
+                details.append(f"case B: push should be refused, got {result_b2!r}")
+            if git_run(origin, "rev-parse", "my-export").stdout.strip() != colleague_tip:
+                ok = False
+                details.append("case B: colleague's commit was overwritten")
+
+            current = git_run(work, "symbolic-ref", "--short", "HEAD").stdout.strip()
+            if current != branch:
+                ok = False
+                details.append(f"not restored to '{branch}' (on '{current}')")
+
+            self.record_result(
+                "T_PIPE_09", "Pipeline: never overwrites remote commits", ok, "; ".join(details)
+            )
+        except Exception as e:
+            self.record_result("T_PIPE_09", "Pipeline: never overwrites remote commits", False, str(e))
+        finally:
+            self._cleanup_dir(base_dir)
+
+    def test_no_force_push_in_source(self):
+        """T_NOFORCE: no force-push option or setting anywhere in the shipped code."""
+        self.log_test_start("T_NOFORCE", "No force push in source")
+        root = Path(__file__).resolve().parent.parent
+        pattern = re.compile(r"--force|force-with-lease|force-if-includes|\bskip_pull\b|\"skipPull\"")
+        hits = []
+        for py in sorted((root / "src").glob("*.py")):
+            for lineno, line in enumerate(py.read_text(encoding="utf-8").splitlines(), 1):
+                if pattern.search(line):
+                    hits.append(f"{py.name}:{lineno}")
+        # The one allowed mention of the old setting is the line that deletes it.
+        main_src = (root / "src" / "Push_To_GitHub.py").read_text(encoding="utf-8")
+        if 'pop("skipPullDefault", None)' not in main_src:
+            hits.append("Push_To_GitHub.py no longer drops a saved skipPullDefault")
+        stray = [
+            line for line in main_src.splitlines()
+            if "skipPullDefault" in line and 'pop("skipPullDefault", None)' not in line
+            and not line.strip().startswith("#")
+        ]
+        if stray:
+            hits.append(f"skipPullDefault still read or written: {stray}")
+        self.record_result("T_NOFORCE", "No force push in source", not hits, "; ".join(hits))
 
     def run_pipeline_tests(self):
         """Run git pipeline integration tests."""
@@ -1039,6 +1161,7 @@ class TestRunner:
             self.test_pipeline_branch_override_reuse()
             self.test_pipeline_template_branch_uniquify()
             self.test_pipeline_reused_branch_sync()
+            self.test_pipeline_never_overwrites_remote()
         finally:
             for key, value in saved.items():
                 if value is None:
@@ -1062,6 +1185,7 @@ class TestRunner:
         self.test_dialog_helpers_url_functions()
         self.test_askpass_script_security()
         self.test_export_subfolder_helpers()
+        self.test_no_force_push_in_source()
 
     def run_git_tests(self):
         """Run git operation tests"""

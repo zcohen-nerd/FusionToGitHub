@@ -103,7 +103,6 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--branch-override", help="Explicit branch name to use instead of template")
     parser.add_argument("--design-name", default="OfflineDesign", help="Name used for placeholder tokens")
-    parser.add_argument("--skip-pull", action="store_true", help="Skip git pull --rebase and force push")
     parser.add_argument("--assume-yes", action="store_true", help="Auto-accept confirmation prompts")
     parser.add_argument("--pat-token", help="Personal access token to feed via askpass")
     parser.add_argument("--pat-username", default="", help="Username to pair with the PAT (if required)")
@@ -181,7 +180,6 @@ def main(argv: Optional[list[str]] = None) -> int:
             ui,
             args.design_name,
             branch_override=args.branch_override,
-            skip_pull=args.skip_pull,
             pat_credentials=pat_credentials,
             logger=logger,
             materialize_files=materialize,
@@ -203,12 +201,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     ]
     if result.get("reused_branch"):
         summary.append("  • Added a new commit to the existing branch")
-    if result.get("force_push"):
-        summary.append("  • Force push was used (--force-with-lease)")
     if result.get("stashed"):
         summary.append("  • Local changes were auto-stashed and restored")
     if result.get("pull_failed"):
-        summary.append("  • Pull failed before force push; inspect logs")
+        summary.append("  • Could not update from origin first; pushed without updating")
     sys.stdout.write("\n".join(summary) + "\n")
     return 0
 

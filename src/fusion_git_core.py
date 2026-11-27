@@ -89,6 +89,14 @@ def git_available() -> bool:
         return False
 
 
+_PUSH_REJECTION_MARKERS = ("[rejected]", "non-fast-forward", "fetch first")
+
+
+def _is_push_rejection(push_output: str) -> bool:
+    """True when git refused a push because the remote branch has moved on."""
+    return any(marker in push_output for marker in _PUSH_REJECTION_MARKERS)
+
+
 @contextmanager
 def git_askpass_env(username: str, token: str):
     """Yield env vars that let git authenticate through a temp askpass script.
@@ -170,7 +178,6 @@ def handle_git_operations(
     design_basename_for_branch: str,
     *,
     branch_override: Optional[str] = None,
-    skip_pull: bool = False,
     pat_credentials: Optional[Dict[str, str]] = None,
     logger: Optional[logging.Logger] = None,
     materialize_files: Optional[Callable[[], Sequence[str]]] = None,
@@ -183,19 +190,31 @@ def handle_git_operations(
     exports out of the tree until after the stash/pull steps guarantees they
     are committed exactly as exported and never swallowed by the auto-stash.
 
+    The push is always a plain fast-forward push: this pipeline never
+    force-pushes. If the remote branch has commits the local one lacks, the
+    push is rejected and nothing on the remote changes.
+
     Returns a result dict on success, ``{"cancelled": True}`` when the user
     declined a confirmation prompt, and ``None`` on failure.
     """
     our_stash_msg = "fusion_git_addin_autostash"
     original_branch: Optional[str] = None
     stashed = False
-    used_force_push = bool(skip_pull)
     branch_name_final: Optional[str] = None
     timestamp_str: Optional[str] = None
     pull_failure_details: Optional[str] = None
 
+    def _confirm_continue_unsynced(branch: Optional[str], details: str) -> bool:
+        return ui.confirm(
+            f"Could not update '{branch}' from GitHub before exporting.\n\n"
+            f"Details:\n{details}\n\n"
+            "Continue without updating? The export is still pushed normally. If GitHub "
+            "already has newer commits on the export's branch, the push is refused and "
+            "nothing on GitHub changes."
+        )
+
     def _perform(git_env: Optional[Dict[str, str]]):
-        nonlocal original_branch, stashed, used_force_push, branch_name_final, timestamp_str, pull_failure_details, skip_pull  # noqa: E501
+        nonlocal original_branch, stashed, branch_name_final, timestamp_str, pull_failure_details
 
         remotes = git_output(repo_path, "remote", env=git_env).splitlines()
         if "origin" not in remotes:
@@ -266,39 +285,29 @@ def handle_git_operations(
             if logger:
                 logger.info("Detached HEAD → switched to '%s'", default_branch)
 
-        if not skip_pull:
-            try:
-                git_run(repo_path, "pull", "--rebase", "origin", original_branch, env=git_env)
-            except Exception as pull_exc:
-                # A conflicted rebase must never leak out of the pipeline:
-                # abort it so the repository is back in its pre-pull state
-                # before we decide what to do next.
-                git_run(repo_path, "rebase", "--abort", check=False, env=git_env)
-                details = str(pull_exc)
-                if "couldn't find remote ref" in details:
-                    # Brand-new/empty remote: there is simply nothing to
-                    # pull yet, so continue with a regular (non-force) push.
-                    if logger:
-                        logger.info(
-                            "Remote 'origin' has no branch '%s' yet; skipping pull.",
-                            original_branch,
-                        )
-                elif ui.confirm(
-                    "git pull --rebase failed.\n\n"
-                    f"Details:\n{details}\n\n"
-                    "Would you like to skip pulling and force-push this export instead?"
-                ):
-                    pull_failure_details = details
-                    skip_pull = True
-                    used_force_push = True
-                    if logger:
-                        logger.warning("Pull failed; proceeding with force push.")
-                else:
-                    pull_failure_details = details
-                    raise
-
-        if skip_pull:
-            used_force_push = True
+        try:
+            git_run(repo_path, "pull", "--rebase", "origin", original_branch, env=git_env)
+        except Exception as pull_exc:
+            # A conflicted rebase must never leak out of the pipeline:
+            # abort it so the repository is back in its pre-pull state
+            # before we decide what to do next.
+            git_run(repo_path, "rebase", "--abort", check=False, env=git_env)
+            details = str(pull_exc)
+            if "couldn't find remote ref" in details:
+                # Brand-new/empty remote: there is simply nothing to
+                # pull yet, so continue with a regular push.
+                if logger:
+                    logger.info(
+                        "Remote 'origin' has no branch '%s' yet; skipping pull.",
+                        original_branch,
+                    )
+            elif _confirm_continue_unsynced(original_branch, details):
+                pull_failure_details = details
+                if logger:
+                    logger.warning("Pull failed; continuing without updating (plain push).")
+            else:
+                pull_failure_details = details
+                raise
 
         default_branch_name, timestamp_str = generate_branch_name(
             branch_format_str,
@@ -349,35 +358,28 @@ def handle_git_operations(
             # The local branch may be behind origin (e.g. pushed to from
             # another machine); sync it so the export lands on the remote
             # tip instead of the push being rejected as non-fast-forward.
-            if not skip_pull:
-                try:
-                    git_run(repo_path, "pull", "--rebase", "origin", branch_name_final, env=git_env)
-                except Exception as sync_exc:
-                    git_run(repo_path, "rebase", "--abort", check=False, env=git_env)
-                    details = str(sync_exc)
-                    if "couldn't find remote ref" in details:
-                        # Branch only exists locally so far; nothing to sync.
-                        if logger:
-                            logger.info(
-                                "Remote 'origin' has no branch '%s' yet; skipping sync.",
-                                branch_name_final,
-                            )
-                    elif ui.confirm(
-                        f"Could not update branch '{branch_name_final}' from origin.\n\n"
-                        f"Details:\n{details}\n\n"
-                        "Would you like to force-push this export over the remote branch instead?"
-                    ):
-                        pull_failure_details = details
-                        skip_pull = True
-                        used_force_push = True
-                        if logger:
-                            logger.warning(
-                                "Sync of reused branch '%s' failed; proceeding with force push.",
-                                branch_name_final,
-                            )
-                    else:
-                        pull_failure_details = details
-                        raise
+            try:
+                git_run(repo_path, "pull", "--rebase", "origin", branch_name_final, env=git_env)
+            except Exception as sync_exc:
+                git_run(repo_path, "rebase", "--abort", check=False, env=git_env)
+                details = str(sync_exc)
+                if "couldn't find remote ref" in details:
+                    # Branch only exists locally so far; nothing to sync.
+                    if logger:
+                        logger.info(
+                            "Remote 'origin' has no branch '%s' yet; skipping sync.",
+                            branch_name_final,
+                        )
+                elif _confirm_continue_unsynced(branch_name_final, details):
+                    pull_failure_details = details
+                    if logger:
+                        logger.warning(
+                            "Sync of reused branch '%s' failed; continuing with a plain push.",
+                            branch_name_final,
+                        )
+                else:
+                    pull_failure_details = details
+                    raise
         else:
             git_run(repo_path, "checkout", "-b", branch_name_final, env=git_env)
 
@@ -445,16 +447,27 @@ def handle_git_operations(
         git_run(repo_path, "add", *rels, env=git_env)
         git_run(repo_path, "commit", "-m", commit_msg, env=git_env)
 
-        push_args = ["push"]
-        if skip_pull:
-            push_args.append("--force-with-lease")
-        push_args.extend(["-u", "origin", branch_name_final])
-        git_run(repo_path, *push_args, env=git_env)
+        # Plain push only. Never add a force option here: a rejected push must
+        # leave the remote exactly as it was (tests grep for this).
+        push_proc = git_run(
+            repo_path, "push", "-u", "origin", branch_name_final, check=False, env=git_env
+        )
+        if push_proc.returncode != 0:
+            push_output = push_proc.stderr or push_proc.stdout or ""
+            if _is_push_rejection(push_output):
+                raise RuntimeError(
+                    f"GitHub refused the push because branch '{branch_name_final}' on GitHub "
+                    "has commits this computer doesn't have.\n"
+                    "Nothing on GitHub was changed. Your export was committed locally on "
+                    f"'{branch_name_final}'. Push to a new branch name (leave Branch Name "
+                    "Override blank), or update the local branch first.\n\n"
+                    f"Details:\n{push_output}"
+                )
+            raise RuntimeError(f"git push failed:\n{push_output}")
 
         return {
             "branch": branch_name_final,
             "stashed": stashed,
-            "force_push": used_force_push,
             "timestamp": timestamp_str,
             "pull_failed": pull_failure_details,
             "reused_branch": reused_branch,
