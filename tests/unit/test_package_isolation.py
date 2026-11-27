@@ -67,6 +67,12 @@ class SameProcessLoadTests(unittest.TestCase):
         self.assertTrue(result["core_replaced"])
         self.assertEqual(result["buttons"], 1)
         self.assertEqual(result["events"], ["PushToGitHub_Cmd_ZAC_V7_4_PushWorker"])
+        # Every module the add-in reaches (sys.modules, the package's
+        # attributes that "from . import" reads, the entry's globals, the
+        # running bridge's class) is the new file's, not the old one's, even
+        # though the old version had opened its dialog (found in review).
+        self.assertEqual(result["stale_modules_in_use"], [])
+        self.assertGreater(result["modules_checked"], 20)
 
     def test_rollback_to_an_earlier_version_in_the_same_session(self):
         result = run_scenario("downgrade")
@@ -74,6 +80,8 @@ class SameProcessLoadTests(unittest.TestCase):
         self.assertEqual(result["entry_version"], "0.4.0")
         self.assertEqual(result["core_version"], "0.4.0")
         self.assertEqual(result["buttons"], 1)
+        self.assertEqual(result["stale_modules_in_use"], [])
+        self.assertGreater(result["modules_checked"], 20)
 
     def test_two_installed_versions_keep_their_own_modules(self):
         result = run_scenario("two_versions")

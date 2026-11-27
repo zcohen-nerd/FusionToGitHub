@@ -609,6 +609,12 @@ class UserInterface:
     def messageBox(self, text, title="", buttons=MessageBoxButtonTypes.OKButtonType, icon=0):  # noqa: N802
         _on_main_thread("messageBox")
         self.messages.append((text, title, buttons))
+        # Simulation of a modal message box that keeps Fusion's message loop
+        # running, so other events are delivered while it is open (assumed
+        # possible in real Fusion; see README). One-shot: set by a test.
+        while_open, self.while_message_box_open = getattr(self, "while_message_box_open", None), None
+        if while_open is not None:
+            while_open()
         if buttons == MessageBoxButtonTypes.OKButtonType:
             return DialogResults.DialogOK
         self.questions.append(text)

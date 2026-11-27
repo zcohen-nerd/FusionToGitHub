@@ -5,6 +5,7 @@ import tempfile
 import threading
 import time
 import unittest
+from dataclasses import replace
 from unittest import mock
 
 import _paths
@@ -30,14 +31,19 @@ class CancelTests(GitSandbox):
         )
         return result, ui
 
-    def hook_then_cancel(self, hook):
+    def hook_then_cancel(self, hook, only_refs=None):
         """Install a remote *hook* that signals, then waits; cancel once it signals.
 
         Cancelling on the hook's signal (not after a fixed delay) makes the
-        moment of cancellation deterministic on slow machines.
+        moment of cancellation deterministic on slow machines. With
+        *only_refs* (a shell pattern), only pushes of matching refs wait.
         """
         marker = os.path.join(self.base, f"{hook}-started")
-        write_hook(self.origin, hook, f'touch "{marker.replace(chr(92), "/")}"\nsleep 30\nexit 1')
+        stall = f'touch "{marker.replace(chr(92), "/")}"\nsleep 30\nexit 1'
+        if only_refs:
+            stall = (f'while read old new ref; do case "$ref" in {only_refs}) '
+                     f'touch "{marker.replace(chr(92), "/")}"; sleep 30; exit 1;; esac; done\nexit 0')
+        write_hook(self.origin, hook, stall)
         token = threading.Event()
         stop = threading.Event()
 
@@ -91,6 +97,18 @@ class CancelTests(GitSandbox):
         self.assertFalse(result["published"])  # the export itself was not sent
         self.assertTrue(result["repository_initialized"], result)
 
+    def test_cancel_after_the_empty_repository_was_set_up_still_says_so(self):
+        # Found in review: the first commit of an empty repository went
+        # through, then the export push was cancelled; the result said
+        # "nothing was pushed" although GitHub now had that first commit.
+        # pre-receive: the export branch is held *before* GitHub accepts it.
+        result, ui = self.push(self.hook_then_cancel("pre-receive", only_refs="refs/heads/fusion-export/*"))
+        self.assertTrue(result["cancelled"])
+        self.assertFalse(result["published"], result)
+        self.assertTrue(result["repository_initialized"], result)
+        heads = core.git_run(self.origin, "branch", "--format", "%(refname:short)").stdout.split()
+        self.assertIn(core.BOOTSTRAP_BRANCH, heads)
+
     def test_without_a_token_nothing_changes(self):
         result, ui = self.push(None)
         self.assertTrue(result and not result.get("cancelled"), ui.errors)
@@ -111,6 +129,11 @@ FAKE_TOKEN = "ghp_" + "q" * 36
 
 class HookIsolationTests(GitSandbox):
     """R-21: no repository hook runs inside a git process that holds the token."""
+
+    def no_hooks(self):
+        empty = tempfile.mkdtemp(prefix="ftg_nohooks_")
+        self.addCleanup(_paths.force_rmtree, empty)
+        return empty
 
     def commit(self):
         core.git_run(self.work, "-c", "commit.gpgSign=false", "commit", "--allow-empty", "-m", "x",
@@ -148,7 +171,7 @@ class HookIsolationTests(GitSandbox):
         core.git_run(self.work, "remote", "set-url", "origin", "https://git.example.invalid/o/r.git")
         core.git_run(self.work, "config", rewrite, "https://git.example.invalid/")
         core.git_run(self.work, "config", "protocol.ext.allow", "always")
-        auth = core.token_auth("https://git.example.invalid/o/r.git", FAKE_TOKEN)
+        auth = replace(core.token_auth("https://git.example.invalid/o/r.git", FAKE_TOKEN), hooks_dir=self.no_hooks())
         for args in (("ls-remote", "origin"), ("fetch", "origin"), ("push", "origin", "HEAD:refs/heads/x")):
             result = core.git_run(self.work, *args, auth=auth, network=True, check=False)
             self.assertNotEqual(result.returncode, 0, args)
@@ -157,8 +180,54 @@ class HookIsolationTests(GitSandbox):
         core.git_run(self.work, "ls-remote", "origin", network=True, check=False)
         self.assertTrue(os.path.exists(marker), "control: without a token the rewrite should take effect")
 
+    def test_a_token_is_never_given_to_git_with_hooks_enabled(self):
+        auth = core.GitAuth(host="git.example.invalid", token=FAKE_TOKEN)  # no empty hooks folder
+        with self.assertRaises(core.GitError):
+            core.git_run(self.work, "status", auth=auth)
+
+    def set_config(self, *pairs, repo=None):
+        for key, value in pairs:
+            core.git_run(repo or self.work, "config", key, value)
+
+    def test_repository_network_settings_that_could_divert_the_token_are_found(self):
+        # Found in the S4 security review: a repository's own http.proxy plus
+        # http.sslVerify=false sent the token to a TLS-terminating proxy, and
+        # url-specific keys beat any "-c" override, so they are refused.
+        included = os.path.join(self.base, "included.gitconfig")
+        with open(included, "w", encoding="utf-8") as fh:
+            fh.write("[http]\n\tsslCAInfo = /tmp/attacker-ca.pem\n")
+        self.set_config(
+            ("http.https://git.example.invalid/.proxy", "http://127.0.0.1:9"),
+            ("http.sslVerify", "false"),
+            ("remote.origin.proxy", "http://127.0.0.1:9"),
+            ("http.postBuffer", "524288000"),  # harmless, and common
+            ("include.path", included.replace("\\", "/")),
+        )
+        found = {key.lower() for key in core.risky_local_network_config(self.work)}
+        self.assertEqual(found, {"http.https://git.example.invalid/.proxy", "http.sslverify",
+                                 "remote.origin.proxy", "http.sslcainfo"})
+        self.assertNotIn("http.postbuffer", found)
+
+    def test_harmless_repository_settings_are_not_flagged(self):
+        self.set_config(("http.postBuffer", "524288000"), ("remote.origin.prune", "true"))
+        self.assertEqual(core.risky_local_network_config(self.work), [])
+
+    def test_a_token_push_is_refused_before_contacting_the_server(self):
+        core.git_run(self.work, "remote", "set-url", "origin", "https://git.example.invalid/o/r.git")
+        self.set_config(("http.proxy", "http://127.0.0.1:9"))
+        ui = _UI()
+        result = core.push_export(
+            self.work, [(self.export("a.step", "A"), "a.step")], "note", "Part", ui,
+            identity=self.identity, pat_credentials={"token": FAKE_TOKEN},
+        )
+        self.assertIsNone(result)
+        text = "\n".join(ui.errors)
+        self.assertIn("won't send your stored token", text)
+        self.assertIn("http.proxy", text)
+        self.assertNotIn(FAKE_TOKEN, text)
+
     def test_askpass_programs_are_not_inherited_by_token_processes(self):
-        auth = core.GitAuth(host="git.example.invalid", token=FAKE_TOKEN)
+        auth = core.GitAuth(host="git.example.invalid", token=FAKE_TOKEN, hooks_dir=self.no_hooks())
         with mock.patch.dict(os.environ, {"GIT_ASKPASS": "/bin/evil", "SSH_ASKPASS": "/bin/evil"}):
             seen = core.git_run(self.work, "-c", "alias.showenv=!env", "showenv", auth=auth).stdout
             control = core.git_run(self.work, "-c", "alias.showenv=!env", "showenv").stdout
@@ -195,6 +264,30 @@ class DiscoveryTests(unittest.TestCase):
             joined = " | ".join(core.git_candidates())
         self.assertIn(os.path.join(r"C:\Program Files", "Git", "cmd", "git.exe"), joined)
         self.assertIn(os.path.join(r"C:\Users\u\AppData\Local", "Programs", "Git", "cmd", "git.exe"), joined)
+
+
+class SingleLineTests(GitSandbox):
+    """Design and component names can't add lines to HISTORY.md or the commit message."""
+
+    def test_single_line(self):
+        self.assertEqual(core.single_line("Arm\n- **Note:** fake\r\nline"), "Arm - **Note:** fake line")
+        self.assertEqual(core.single_line("A B C\x85D\x00E"), "A B C D E")
+        self.assertEqual(core.single_line("Bra‮ck​et"), "Bracket")
+
+    def test_a_multi_line_design_name_stays_on_one_line_in_history_and_commit(self):
+        ui = _UI()
+        evil = "Part\n- **Note:** forged line\n\nSigned-off-by: Someone <x@example.invalid>"
+        result = core.push_export(
+            self.work, [(self.export("a.step", "A"), "Part/a.step")], "Update {filename}", evil, ui,
+            identity=self.identity, history_file="Part/HISTORY.md", history_title=evil,
+            history_notes=["Contains 1 linked component (Bolt\nM5)"],
+        )
+        self.assertTrue(result and not result.get("cancelled"), ui.errors)
+        message = core.git_run(self.origin, "log", "-1", "--format=%B", result["branch"]).stdout
+        history = core.git_run(self.origin, "show", f"{result['branch']}:Part/HISTORY.md").stdout
+        self.assertNotIn("\nSigned-off-by", message)
+        self.assertNotIn("\n- **Note:** forged line", history)
+        self.assertIn("(Bolt M5)", history)
 
 
 class HistoryNoteTests(GitSandbox):

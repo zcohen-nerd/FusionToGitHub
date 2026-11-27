@@ -379,6 +379,9 @@ class PushController:
                 f"{server or 'an unknown server'}, so the token was not used. Untick 'Use Stored "
                 "Token', or store a token for this server with 'Manage Token…'."
             )
+        risky = git_core.risky_local_network_config(repo_path)
+        if risky:
+            raise PushRefused(git_core.risky_config_message(risky))
         return {"username": pat.get("username", ""), "token": pat["token"]}
 
     def plan(

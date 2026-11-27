@@ -449,9 +449,53 @@ class GitAuth:
             "push.recurseSubmodules=no",
             "submodule.recurse=false",
         ]
-        if self.hooks_dir:
-            values.append(f"core.hooksPath={self.hooks_dir}")
+        if not self.hooks_dir:
+            # Never hand git the token with repository hooks enabled (R-21);
+            # push_export creates the empty folder for each push.
+            raise GitError("Internal error: a stored token is only passed to Git with hooks disabled.")
+        values.append(f"core.hooksPath={self.hooks_dir}")
         return values
+
+
+# Repository-local settings that change where Git connects or which TLS
+# certificates it trusts. Set in a repository's own .git/config, they could
+# route the stored token through someone else's proxy, so the add-in won't
+# send the token while one is present (risk R-21). Settings in the user's
+# global config (a company proxy, for example) are not checked: only the
+# repository's own file, which can arrive with a copied or shared folder.
+# The url-specific forms (http.<url>.proxy) are why "-c" overrides can't
+# solve this: Git prefers the most specific URL match over the command line.
+_RISKY_LOCAL_NETWORK_KEYS = re.compile(
+    r"^(?:http\.(?:.*\.)?(?:proxy|proxyauthmethod|proxysslcert|proxysslkey|proxysslcainfo|proxysslcertpasswordprotected"
+    r"|sslverify|sslcainfo|sslcapath|sslbackend|sslcert|sslkey|curloptresolve|schannelusesslcainfo)"
+    r"|remote\.[^.]+\.(?:proxy|proxyauthmethod))$",
+    re.IGNORECASE,
+)
+
+
+def risky_local_network_config(repo_path: str) -> List[str]:
+    """Settings in the repository's own config (with its includes) that affect where the token goes."""
+    found = []
+    for scope in ("--local", "--worktree"):
+        proc = git_run(repo_path, "config", scope, "--includes", "--null", "--get-regexp", r"^(http|remote)\.",
+                       check=False)
+        if proc.returncode not in (0, 1):  # 1: nothing matched; --worktree may be unavailable
+            continue
+        for entry in (proc.stdout or "").split("\0"):
+            key = entry.split("\n", 1)[0].strip()
+            if key and _RISKY_LOCAL_NETWORK_KEYS.match(key) and key not in found:
+                found.append(key)
+    return found
+
+
+def risky_config_message(keys: Sequence[str]) -> str:
+    return (
+        "This repository's own Git settings (.git/config) change how Git connects to the server: "
+        f"{', '.join(keys)}. The add-in won't send your stored token through them, because they could pass it "
+        "to someone else. If you didn't set them, remove them (for example "
+        f"git config --local --unset {keys[0]}) and check the folder came from a source you trust. If you "
+        "need them, put them in your global Git settings instead."
+    )
 
 
 def token_auth(remote_url: str, token: str, username: str = "") -> GitAuth:
@@ -706,8 +750,10 @@ def _cancelled_result(
     branch tip on GitHub is checked (without the cancel token) to tell the
     user plainly whether the export was published.
     """
+    # An empty repository set up earlier in this push stays set up whatever
+    # happens to the export itself.
     result: Dict[str, Any] = {"cancelled": True, "published": False, "uncertain": False,
-                              "repository_initialized": False,
+                              "repository_initialized": bool(state.get("bootstrapped")),
                               "branch": state.get("branch"), "commit": state.get("commit")}
     phase = state.get("phase")
     if phase not in ("pushing", "bootstrapping") or not state.get("commit"):
@@ -721,15 +767,30 @@ def _cancelled_result(
         if phase == "bootstrapping":
             # Only the empty repository's first commit was being sent; the
             # export itself was not.
-            result["repository_initialized"] = reached
+            result["repository_initialized"] = reached or result["repository_initialized"]
             result["branch"] = result["commit"] = None
         else:
             result["published"] = reached
+            if reached:
+                result["repository_initialized"] = False  # the export itself is the news
     except GitError as exc:
         result["uncertain"] = True
         if logger:
             logger.warning("Couldn't check whether the cancelled push reached GitHub: %s", exc)
     return result
+
+
+# Line breaks and other control characters (C0, DEL, C1, the Unicode line and
+# paragraph separators), and the invisible bidirectional and zero-width
+# characters that can make text read differently from what it is.
+_NOT_ONE_LINE = re.compile("[\x00-\x1f\x7f-\x9f  ]+")
+_INVISIBLE = re.compile("[​-‏‪-‮⁠-⁤⁦-⁩﻿]")
+
+
+def single_line(text: str) -> str:
+    """*text* as one line of visible text (for commit messages and HISTORY.md)."""
+    text = _INVISIBLE.sub("", text or "")
+    return " ".join(_NOT_ONE_LINE.sub(" ", text).split())
 
 
 def push_export(
@@ -784,6 +845,12 @@ def push_export(
 
     if mode not in (MODE_SNAPSHOT, MODE_SINGLE):
         raise ValueError(f"Unknown mode {mode!r}")
+    # Names from the design (its name, linked components' names) go into the
+    # commit message and HISTORY.md: one line each, so a name can't add lines.
+    design_name = single_line(design_name) or "Design"
+    history_notes = [note for note in (single_line(n) for n in history_notes) if note]
+    if history_title is not None:
+        history_title = single_line(history_title)
     # Where the push got to, so a cancellation can be reported truthfully.
     state: Dict[str, Any] = {"phase": "preparing", "branch": None, "commit": None}
 
@@ -870,6 +937,8 @@ def push_export(
                     if proc.returncode != 0 and not _is_push_rejection(proc.stderr or proc.stdout):
                         raise GitError(f"Could not set up the empty repository:\n{proc.stderr or proc.stdout}")
                     bootstrapped = bootstrapped or proc.returncode == 0
+                    if proc.returncode == 0:
+                        state["bootstrapped"] = True  # a later cancel must still say so
                     continue  # look again: someone else may have set it up meanwhile
 
                 if mode == MODE_SINGLE:
@@ -976,6 +1045,9 @@ def push_export(
         hooks_dir = None
         if pat_credentials and pat_credentials.get("token"):
             auth = token_auth(origin_url, pat_credentials["token"], pat_credentials.get("username", ""))
+            risky = risky_local_network_config(repo_path)
+            if risky:
+                raise GitError(risky_config_message(risky))
             hooks_dir = tempfile.mkdtemp(prefix="fusion_git_nohooks_")
             auth = replace(auth, hooks_dir=hooks_dir)
         try:

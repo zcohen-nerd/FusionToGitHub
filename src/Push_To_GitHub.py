@@ -38,8 +38,17 @@ if not __package__:
 ADDIN_DIR = os.path.normcase(os.path.dirname(os.path.abspath(__file__)))
 
 
+def _module_file(module) -> str:
+    """A loaded module's file, read without running any of its code ("" if none)."""
+    try:
+        path = vars(module).get("__file__")
+    except TypeError:  # not a normal module (some libraries put other objects in sys.modules)
+        return ""
+    return path if isinstance(path, str) else ""
+
+
 def _module_dir(module) -> str:
-    path = vars(module).get("__file__") or ""
+    path = _module_file(module)
     return os.path.normcase(os.path.dirname(os.path.abspath(path))) if path else ""
 
 
@@ -66,7 +75,7 @@ def _forget_stale_modules() -> List[str]:
             # same folder, file named like the module) lets a later downgrade
             # to such a version load its own files. Bare-named modules from
             # anywhere else belong to someone else and are left alone.
-            path = vars(module).get("__file__") or ""
+            path = _module_file(module)
             if (path and _module_dir(module) == ADDIN_DIR
                     and os.path.splitext(os.path.basename(path))[0] == name):
                 del sys.modules[name]
@@ -78,6 +87,12 @@ def _forget_stale_modules() -> List[str]:
             conflicts.append(f"{name} ({where})")
             continue
         del sys.modules[name]
+        # "from . import x" reads the package's attribute x before
+        # sys.modules, so the old module must be detached from the package too.
+        short = name[len(prefix):]
+        package = sys.modules.get(__package__)
+        if package is not None and "." not in short and vars(package).get(short) is module:
+            delattr(package, short)
     return conflicts
 
 
@@ -163,7 +178,7 @@ def _other_running_copy():
             continue
         if _module_dir(module) == ADDIN_DIR:
             continue
-        path = attrs.get("__file__") or ""
+        path = _module_file(module)
         return os.path.dirname(os.path.abspath(path)) if path else "an unknown folder"
     return None
 

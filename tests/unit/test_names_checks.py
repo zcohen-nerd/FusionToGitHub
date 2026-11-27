@@ -45,6 +45,14 @@ class PortableNameTests(unittest.TestCase):
     def test_deterministic(self):
         self.assertEqual(pn.portable_name("Arm <v2>"), pn.portable_name("Arm <v2>"))
 
+    def test_invisible_and_line_separator_characters_are_removed(self):
+        # Found in the S4 security review: they survived and could spoof names.
+        self.assertEqual(pn.portable_name("Arm‮gpj.exe"), "Armgpj.exe")
+        self.assertEqual(pn.portable_name("Ar​m"), "Arm")
+        self.assertEqual(pn.portable_name(".​."), "Design")
+        self.assertEqual(pn.portable_name("Arm v2"), "Arm v2")
+        self.assertEqual(pn.portable_name("Arm\x85v2"), "Arm v2")
+
     def test_unique_names_ignore_case(self):
         self.assertEqual(pn.unique_names(["Part.stl", "part.stl", "PART.stl", "Other.stl"]),
                          ["Part.stl", "part (2).stl", "PART (3).stl", "Other.stl"])

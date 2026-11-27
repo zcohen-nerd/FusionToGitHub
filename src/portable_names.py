@@ -17,7 +17,9 @@ WINDOWS_RESERVED = frozenset(
     | {f"LPT{i}" for i in range(1, 10)}
     | {"COM¹", "COM²", "COM³", "LPT¹", "LPT²", "LPT³"}
 )
-_UNSAFE = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f]+')
+_UNSAFE = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f-\x9f]+')
+# Invisible characters that make a name look different from what it is.
+_INVISIBLE = re.compile("[​-‏‪-‮⁠-⁤⁦-⁩﻿]")
 _SPACES = re.compile(r"\s+")
 MAX_NAME_LENGTH = 100
 
@@ -36,7 +38,8 @@ def portable_name(name: str, fallback: str = "Design", max_length: int = MAX_NAM
     - ``.`` and ``..`` can't survive, and an empty result becomes *fallback*.
     """
     text = unicodedata.normalize("NFC", name or "")
-    text = re.sub(r"[\t\r\n\v\f]+", " ", text)  # whitespace controls are spaces
+    text = _INVISIBLE.sub("", text)  # zero-width and bidirectional controls
+    text = re.sub(r"[\t\r\n\v\f  \x85]+", " ", text)  # line and whitespace controls are spaces
     text = _UNSAFE.sub("_", text)
     text = _SPACES.sub(" ", text).strip(" .")
     if len(text) > max_length:

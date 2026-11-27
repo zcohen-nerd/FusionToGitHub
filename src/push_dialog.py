@@ -1176,6 +1176,9 @@ class PushDialog:
         except RuntimeError as exc:
             cleanup.close()
             return self._fail(str(exc))
+        except BaseException:
+            cleanup.close()  # the exported files never reached a worker
+            raise
         if self.logger:
             self.logger.info("Push of '%s' to '%s' started in the background", plan.design_name, repo_name)
         return True

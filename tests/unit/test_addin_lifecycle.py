@@ -96,6 +96,18 @@ class LifecycleTests(AddinTestCase):
         addin.run(None)  # must not raise
         self.assertIn("Another copy", self.last_message())
 
+    def test_objects_in_sys_modules_that_are_not_modules_are_tolerated(self):
+        # Found in the S4 security review: vars() raised for such objects and
+        # would have stopped the add-in loading.
+        class Slotted:
+            __slots__ = ("x",)
+
+        self.load(types.SimpleNamespace(__name__="odd_namespace", __file__=123))
+        sys.modules["odd_slotted"] = Slotted()
+        self.addCleanup(sys.modules.pop, "odd_slotted", None)
+        self.assertEqual(addin._forget_stale_modules(), [])
+        self.assertIsNone(addin._other_running_copy())
+
     def test_a_second_installed_copy_warns_once_and_adds_no_button(self):
         # Another copy (any version) of the add-in already owns the button.
         other, other_control = self.other_copy(owns_command=True)

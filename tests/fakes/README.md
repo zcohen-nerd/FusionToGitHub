@@ -5,7 +5,7 @@ and `tests/unit/test_addin_lifecycle.py` drive the add-in's real dialog and
 lifecycle code outside Fusion. A passing test shows that the add-in's own
 logic is right, *if* Fusion behaves the way these fakes assume. Each
 assumption below must be confirmed in Fusion itself (see the manual
-checklist in `tests/MANUAL_TESTS.md`).
+checklist in `tests/MANUAL_CHECKLIST.md`).
 
 ## Assumptions about Fusion
 
@@ -111,3 +111,7 @@ Assumptions about Fusion, to confirm in Fusion itself:
 25. `exportManager.execute` returns `False`, or raises, when an export fails,
     and Fusion's `.f3d` export does not bundle linked components (there is
     no documented API for a self-contained `.f3z`).
+
+26. A modal `messageBox` may let Fusion deliver other events (custom events
+    from the background push) while it is open. The fake does that only when a
+    test sets `ui.while_message_box_open`; the bridge must cope either way.

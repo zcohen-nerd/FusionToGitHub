@@ -317,7 +317,12 @@ class TestRunner:
             store_file = os.path.join(base, "store.txt").replace("\\", "/")
             git_run(repo, "config", "credential.helper", f"store --file={store_file}", env=isolated)
             token = "ghp_" + "T" * 36
-            auth = token_auth(f"https://{host}/owner/repo.git", token)
+            from dataclasses import replace as dc_replace
+
+            no_hooks = os.path.join(base, "nohooks")
+            os.makedirs(no_hooks)
+            # push_export always gives the token an empty hooks folder (R-21).
+            auth = dc_replace(token_auth(f"https://{host}/owner/repo.git", token), hooks_dir=no_hooks)
 
             fill = git_run(repo, "credential", "fill", check=False, auth=auth, env=isolated,
                            input_text=f"protocol=https\nhost={host}\n\n")

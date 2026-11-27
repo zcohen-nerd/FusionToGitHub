@@ -42,11 +42,18 @@ def runtime_files():
     return dict(script.PACKAGE_FILES)
 
 
-def install(folder, version=None):
-    """Copy the add-in into *folder* (an update replaces the files), optionally faking its VERSION."""
+def install(folder, version=None, marker=None):
+    """Copy the add-in into *folder* (an update replaces the files).
+
+    *version* fakes its VERSION; *marker* is appended to every module as
+    ``S4_TEST_MARKER`` so a test can tell which copy of each module runs.
+    """
     os.makedirs(folder, exist_ok=True)
     for src, arc in runtime_files().items():
         shutil.copyfile(os.path.join(ROOT, src), os.path.join(folder, arc))
+        if marker and arc.endswith(".py"):
+            with open(os.path.join(folder, arc), "a", encoding="utf-8") as fh:
+                fh.write(f'\nS4_TEST_MARKER = "{marker}"\n')
     if version:
         core = os.path.join(folder, "fusion_git_core.py")
         with open(core, encoding="utf-8") as fh:
@@ -111,19 +118,51 @@ def scenario_stale_bare_names(work):
     }
 
 
+def open_dialog(entry):
+    """Open the dialog as a click on the button would (loads push_dialog and friends)."""
+    entry.credential_store = importlib.import_module(f"{entry.__package__}.credentials").MemoryCredentialStore()
+    entry.ui.open_command(entry.CMD_ID)
+
+
+def modules_in_use(entry):
+    """Marker of every add-in module reachable the way the add-in reaches it.
+
+    ``from . import x`` reads the package's attribute ``x`` before
+    sys.modules, so both are checked, along with the entry module's globals.
+    """
+    package = sys.modules[entry.__package__]
+    seen = {}
+    for name in sorted(runtime_names() - {ENTRY}):
+        for where, module in (("sys.modules", sys.modules.get(f"{entry.__package__}.{name}")),
+                              ("package attribute", vars(package).get(name)),
+                              ("entry global", vars(entry).get(name))):
+            if module is not None:
+                seen[f"{name} ({where})"] = vars(module).get("S4_TEST_MARKER")
+    bridge = vars(entry).get("bridge")
+    if bridge is not None:
+        # The globals of the module the running bridge's class came from.
+        seen["bridge class"] = type(bridge).start.__globals__.get("S4_TEST_MARKER")
+    return seen
+
+
 def scenario_update_and_rollback(work, first, second):
     folder = os.path.join(work, "Push_To_GitHub")
-    entry = fusion_load(install(folder, version=first))
+    entry = fusion_load(install(folder, version=first, marker="before"))
     entry.run(None)
+    open_dialog(entry)  # the old version's dialog modules are now loaded too
     entry.stop(None)
     core_before = sys.modules[f"{entry.__package__}.fusion_git_core"]
-    install(folder, version=second)  # the Store (or the user) replaces the files
+    install(folder, version=second, marker="after")  # the Store (or the user) replaces the files
     # Control: the old module is still loaded under the package's name.
     stale_before_rerun = importlib.import_module(f"{entry.__package__}.fusion_git_core").VERSION
     entry = fusion_load(folder)
     entry.run(None)
+    open_dialog(entry)
     core_after = sys.modules[f"{entry.__package__}.fusion_git_core"]
+    in_use = modules_in_use(entry)
     return {
+        "stale_modules_in_use": sorted(k for k, v in in_use.items() if v != "after"),
+        "modules_checked": len(in_use),
         "stale_before_rerun": stale_before_rerun,
         "entry_version": entry.VERSION,
         "core_version": core_after.VERSION,

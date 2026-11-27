@@ -197,12 +197,25 @@ class WorkerBridge:
     @property
     def busy(self) -> bool:
         """True from start() until the job's last message has been handled."""
+        self._drop_lost_job()
         return self.job is not None
+
+    def _drop_lost_job(self) -> None:
+        """Forget a push whose last message couldn't be delivered, so it can't block later pushes."""
+        worker = self.worker
+        if self.job is None or worker is None or worker.terminal_delivered is not False:
+            return
+        if self.logger:
+            self.logger.warning("The previous push ended without reporting back; it no longer blocks new pushes.")
+        self._hide_progress()
+        self.progress = None
+        self.job = self.worker = None
 
     def start(self, controller, plan, job: PushJob, on_finish: Optional[Callable[[], None]] = None) -> PushWorker:
         """Start a background push. Raises WorkerBusy if one is running (or RuntimeError)."""
         if not self.registered:
             raise RuntimeError("The add-in's background push isn't available. Restart the add-in and try again.")
+        self._drop_lost_job()
         if self.job is not None:
             raise WorkerBusy(BUSY_TEXT)
         worker = PushWorker(controller, plan, self.post, self.logger, on_finish=on_finish)
@@ -244,11 +257,13 @@ class WorkerBridge:
                 message.get("text", ""), self.title, adsk.core.MessageBoxButtonTypes.YesNoButtonType
             )
             worker.answer(message.get("id"), answer == adsk.core.DialogResults.DialogYes)
-            self._show_progress(self._progress_message())
+            if self.worker is worker:  # not finished while the question was open
+                self._show_progress(self._progress_message())
         elif kind in ("warn", "error"):
             self._hide_progress()
             self.ui.messageBox(message.get("text", ""), self.title)
-            self._show_progress(self._progress_message())
+            if self.worker is worker:  # not finished while the message was open
+                self._show_progress(self._progress_message())
         elif kind in ("done", "failed"):
             self._finish(message)
 

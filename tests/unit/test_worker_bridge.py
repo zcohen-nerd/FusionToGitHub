@@ -205,6 +205,76 @@ class CancelTests(BridgeTestCase):
         self.wait_for_push(timeout=30)
         self.assertEqual(self.last_message(), fusion_bridge.NOTHING_PUSHED)
 
+    def test_a_late_message_from_an_earlier_push_is_ignored(self):
+        # Found in the S4 test review: nothing proved a "done" from a push
+        # that was shut down can't finish (or answer) the push now running.
+        self.first_push()
+        self.start_push_held_by_hook("pre-receive", "sleep 30\nexit 1")
+        bridge = addin.bridge
+        shown = len(self.ui.messages)
+        bridge.handle(json.dumps({"type": "done", "job": bridge.worker.job - 1,
+                                  "result": {"branch": "stale", "commit": "0" * 40}}))
+        bridge.handle(json.dumps({"type": "confirm", "job": bridge.worker.job - 1, "id": 1, "text": "stale?"}))
+        self.assertTrue(bridge.busy)
+        self.assertTrue(bridge.progress.isShowing)
+        self.assertEqual(len(self.ui.messages), shown)
+        self.press_progress_cancel()
+        self.wait_for_push(timeout=30)
+        self.assertEqual(self.last_message(), fusion_bridge.NOTHING_PUSHED)
+
+    def test_the_bridge_itself_refuses_a_second_push(self):
+        # The dialog checks first; the bridge must refuse too (a race past
+        # the dialog's check), keep the running job, and clean up the export.
+        self.first_push()
+        self.start_push_held_by_hook("pre-receive", "sleep 30\nexit 1")
+        bridge = addin.bridge
+        running = bridge.job
+        with self.assertRaises(push_worker.WorkerBusy):
+            bridge.start(bridge.worker.controller, bridge.worker.plan, fusion_bridge.PushJob(repo_name="x"))
+        self.assertIs(bridge.job, running)
+        second = self.open_dialog()
+        with mock.patch.object(push_worker, "is_busy", return_value=False), \
+                mock.patch.object(fusion_bridge.WorkerBridge, "busy", new_callable=mock.PropertyMock,
+                                  return_value=False):
+            args = press_ok(second)
+        self.assertTrue(args.executeFailed)
+        self.assertEqual(self.last_message(), fusion_bridge.BUSY_TEXT)
+        self.assertIs(bridge.job, running)
+        self.press_progress_cancel()
+        self.wait_for_push(timeout=30)
+
+    def test_a_push_whose_result_was_lost_no_longer_blocks_new_pushes(self):
+        # Found in the S4 review: if the last message can't reach Fusion,
+        # every later push used to be refused until the add-in restarted.
+        command = self.open_dialog()
+        real_post = addin.bridge.post
+
+        def lose_the_result(message):
+            return False if message.get("type") in ("done", "failed") else real_post(message)
+
+        with mock.patch.object(addin.bridge, "post", side_effect=lose_the_result):
+            press_ok(command)
+            push_worker.shutdown_active(30)
+        self.assertIs(addin.bridge.worker.terminal_delivered, False)
+        self.assertFalse(addin.bridge.busy)  # the lost job is dropped
+        self.assertFalse(self.push(self.open_dialog()).executeFailed, self.ui.texts())
+        self.assertIn("Pushed to GitHub", self.last_message())
+
+    def test_a_message_box_that_lets_the_push_finish_leaves_no_progress_window(self):
+        # Fusion may keep delivering events while a message box is open: the
+        # push can finish during a warning. The progress window must then
+        # not be shown again for a push that has ended (S4 review).
+        core.git_run(self.work, "remote", "set-url", "--push", "origin",
+                     f"https://user:{TOKEN}@example.invalid/acme/designs.git")
+        command = self.open_dialog()
+        self.ui.while_message_box_open = lambda: self.app.process_events(
+            timeout=60, until=lambda: not addin.bridge.busy)
+        self.push(command)
+        self.assertFalse(addin.bridge.busy)
+        self.assertIsNone(addin.bridge.progress)
+        self.assertFalse(any(p.isShowing for p in self.ui.progress_dialogs))
+        self.assertIn("Git operations failed", "\n".join(self.ui.texts()))
+
     def test_stop_during_a_push_ends_it_and_leaves_nothing_behind(self):
         self.first_push()
         self.start_push_held_by_hook("pre-receive", "sleep 30\nexit 1")

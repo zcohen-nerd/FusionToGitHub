@@ -117,6 +117,8 @@ class PushWorker:
         self._confirm_timeout = confirm_timeout
         self._tick_seconds = tick_seconds
         self._on_finish = on_finish
+        # None while running; then whether the last message reached Fusion.
+        self.terminal_delivered: Optional[bool] = None
         self._cancel = threading.Event()
         self._finished = threading.Event()  # the push itself has returned
         self._closing = False
@@ -200,6 +202,12 @@ class PushWorker:
         with self._lock:
             request_id = next(self._questions)
             self._pending[request_id] = [event, False]
+        # A cancel or shutdown between the check above and registering this
+        # question would otherwise leave it waiting for the full timeout.
+        if self._cancel.is_set() or self._closing:
+            with self._lock:
+                self._pending.pop(request_id, None)
+            return False
         try:
             if not self.post_message({"type": "confirm", "id": request_id, "text": text}):
                 return False
@@ -225,7 +233,9 @@ class PushWorker:
 
     def _run(self) -> None:
         global _active
-        terminal: Dict[str, Any]
+        # Replaced below; kept if something other than an Exception (for
+        # example SystemExit) ends the push, so the main thread still hears.
+        terminal: Dict[str, Any] = {"type": "failed", "error": "The push stopped unexpectedly."}
         try:
             result = self.controller.execute(
                 self.plan, WorkerGitUI(self), on_step=self._step, cancel=self._cancel
@@ -252,7 +262,11 @@ class PushWorker:
                 with _guard:
                     if _active is self:
                         _active = None
-        self.post_message(terminal)
+                self.terminal_delivered = self.post_message(terminal)
+                if not self.terminal_delivered and self.logger:
+                    # The bridge sees this and stops treating the push as running.
+                    self.logger.error("The push finished but its result couldn't be passed to Fusion: %s",
+                                      terminal.get("type"))
 
     def _step(self, text: str) -> None:
         self.post_message({"type": "step", "text": redact_secrets(text)})
