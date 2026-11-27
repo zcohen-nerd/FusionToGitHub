@@ -118,8 +118,9 @@ AddIns/
 ```
 
 The folder must be named exactly `Push_To_GitHub`, the same as the `.manifest`
-and `.py` files, and must sit directly in AddIns. Fusion names an add-in after
-its folder and expects the manifest and main script to share that name.
+and `.py` files, and must sit directly in AddIns: Fusion expects an add-in's
+folder, manifest and main script to share one name. (In Fusion's Add-Ins list
+the add-in then appears as **Push to GitHub**.)
 
 ### Verify File Permissions (Windows)
 
@@ -138,7 +139,7 @@ its folder and expects the manifest and main script to share that name.
 2. Go to **UTILITIES** tab in ribbon
 3. Click **ADD-INS** button
 4. Click **Scripts and Add-Ins** panel
-5. Find **Push_To_GitHub** in the list
+5. Find **Push to GitHub** in the list
 6. Click **Run** to enable the add-in
 7. **Optional**: Check **"Run on Startup"** for automatic loading
 
@@ -277,7 +278,7 @@ on the repo (or a classic token with `repo` scope)
 
 ### When Updates Available
 
-1. In Fusion, **UTILITIES → ADD-INS**, select **Push_To_GitHub** and click **Stop**.
+1. In Fusion, **UTILITIES → ADD-INS**, select **Push to GitHub** and click **Stop**.
 2. **Close Fusion 360** completely.
 3. **Delete** the old `Push_To_GitHub` folder from the AddIns folder.
 4. **Install the new ZIP** as in Steps 2 and 3.

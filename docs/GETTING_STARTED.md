@@ -60,7 +60,7 @@ Upgrading from an older, hand-copied install? See
 
 1. In Fusion 360, go to **UTILITIES** tab
 2. Click **ADD-INS** button
-3. Find **Push_To_GitHub** in the list
+3. Find **Push to GitHub** in the list
 4. Click **Run** to enable it
 5. You should see a new **"Push to GitHub"** button in your toolbar
 

@@ -34,7 +34,7 @@ python "c:\Users\ZCohe\OneDrive\Documents\Python Scripts\Fusion_to_GitHub\Fusion
 
 1. **Stop the add-in** (if it's running):
    - Go to: `Scripts and Add-Ins` (Shift+S)
-   - Select **Push_To_GitHub**
+   - Select **Push to GitHub**
    - Click "Stop"
 
 2. **Restart Fusion 360 completely** (important!)
@@ -44,7 +44,7 @@ python "c:\Users\ZCohe\OneDrive\Documents\Python Scripts\Fusion_to_GitHub\Fusion
 3. **Run the add-in**:
    - Go to: `Scripts and Add-Ins` (Shift+S)
    - Go to "Add-Ins" tab
-   - Select **Push_To_GitHub**
+   - Select **Push to GitHub**
    - Click "Run"
    - Check the box "Run on Startup" (optional)
 
@@ -89,7 +89,7 @@ The add-in already has comprehensive logging. To see more details:
 If all else fails, do a clean reinstall:
 
 1. **Stop the add-in** in Fusion (**UTILITIES → ADD-INS**, select
-   **Push_To_GitHub**, click **Stop**), then quit Fusion.
+   **Push to GitHub**, click **Stop**), then quit Fusion.
 
 2. **Remove the add-in folder** (this deletes only the add-in's program files):
    ```powershell

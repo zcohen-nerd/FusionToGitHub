@@ -33,7 +33,7 @@
 
 4. **Enable manually**:
    - UTILITIES → ADD-INS → Scripts and Add-Ins
-   - Look for **Push_To_GitHub**
+   - Look for **Push to GitHub**
    - Click "Run" if it appears
 
 ### Add-in shows errors on startup

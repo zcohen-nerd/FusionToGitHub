@@ -74,7 +74,7 @@ That's it. You do not need to learn to use Git — the add-in uses it behind the
 
 4. **Restart Fusion 360.**
 
-5. **Turn the add-in on:** in Fusion, open the **UTILITIES** tab, click **ADD-INS**, find **Push_To_GitHub** in the Add-Ins list, and click **Run**. (Tick "Run on Startup" so it's always available.)
+5. **Turn the add-in on:** in Fusion, open the **UTILITIES** tab, click **ADD-INS**, find **Push to GitHub** in the Add-Ins list, and click **Run**. (Tick "Run on Startup" so it's always available.)
 
 You should now see a **Push to GitHub** button in your toolbar.
 

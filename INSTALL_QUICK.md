@@ -23,7 +23,7 @@
 
    The folder name must be exactly `Push_To_GitHub`, the same as the
    `.manifest` and `.py` files, or Fusion won't load it.
-3. Restart Fusion, then **UTILITIES → ADD-INS**, find **Push_To_GitHub**, and
+3. Restart Fusion, then **UTILITIES → ADD-INS**, find **Push to GitHub**, and
    click **Run**.
 
 Step-by-step instructions with screenshots-in-words, and how to upgrade from an
