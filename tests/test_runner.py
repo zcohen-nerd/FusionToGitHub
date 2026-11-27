@@ -1311,11 +1311,13 @@ class TestRunner:
             typed = os.path.join(base_dir, "Typed", "Folder")
             if resolve_new_repo_path("Other", typed, False, repos_dir, safe_base) != os.path.normpath(typed):
                 details.append("a typed folder was not kept")
-            main_src = (Path(__file__).resolve().parent.parent / "src" / "Push_To_GitHub.py").read_text(
+            # Wiring guard: the dialog must push from the folder it set up
+            # (the full flow is covered in tests/unit/test_dialog.py).
+            dialog_src = (Path(__file__).resolve().parent.parent / "src" / "push_dialog.py").read_text(
                 encoding="utf-8"
             )
-            if "normalized_repo_path = local_path" not in main_src:
-                details.append("Push_To_GitHub.py no longer pushes from the set-up folder")
+            if "normalized_repo_path = local_path" not in dialog_src:
+                details.append("push_dialog.py no longer pushes from the set-up folder")
             return True
 
         self._run_pipeline_case("T_SETUP_01", "Setup: blank name uses the clone folder", body)
@@ -1405,6 +1407,15 @@ class TestRunner:
             names = set(entries)
             if f"{prefix}push_cli.py" in names or f"{prefix}diagnostic.py" in names:
                 problems.append("developer tools are in the package")
+            # Every add-in module in src/ is shipped, except the developer tools.
+            src_dir = Path(__file__).resolve().parent.parent / "src"
+            runtime_modules = {
+                p.name for p in src_dir.glob("*.py")
+                if f"src/{p.name}" not in package.EXCLUDED_FILES
+            }
+            unpackaged = sorted(m for m in runtime_modules if f"{prefix}{m}" not in names)
+            if unpackaged:
+                problems.append(f"modules missing from the package: {unpackaged}")
 
             def with_manifest(**changes):
                 m = dict(manifest)
@@ -1475,17 +1486,25 @@ class TestRunner:
             for lineno, line in enumerate(py.read_text(encoding="utf-8").splitlines(), 1):
                 if pattern.search(line):
                     hits.append(f"{py.name}:{lineno}")
-        # The one allowed mention of the old setting is the line that deletes it.
-        main_src = (root / "src" / "Push_To_GitHub.py").read_text(encoding="utf-8")
-        if 'pop("skipPullDefault", None)' not in main_src:
-            hits.append("Push_To_GitHub.py no longer drops a saved skipPullDefault")
-        stray = [
-            line for line in main_src.splitlines()
-            if "skipPullDefault" in line and 'pop("skipPullDefault", None)' not in line
-            and not line.strip().startswith("#")
-        ]
-        if stray:
-            hits.append(f"skipPullDefault still read or written: {stray}")
+        # The old force-push setting may only appear in the settings store's
+        # list of obsolete keys, which drops it when settings are loaded.
+        sys.path.insert(0, str(root / "src"))
+        try:
+            import settings_store
+        finally:
+            sys.path.pop(0)
+        if "skipPullDefault" not in settings_store.OBSOLETE_PROFILE_KEYS:
+            hits.append("settings_store no longer drops a saved skipPullDefault")
+        if settings_store.migrate({"R": {"path": "x", "skipPullDefault": True}})["repositories"]["R"].get(
+            "skipPullDefault"
+        ) is not None:
+            hits.append("a saved skipPullDefault survives migration")
+        for py in sorted((root / "src").glob("*.py")):
+            for line in py.read_text(encoding="utf-8").splitlines():
+                if "skipPullDefault" in line and not line.strip().startswith("#") and not (
+                    py.name == "settings_store.py" and "OBSOLETE_PROFILE_KEYS" in line
+                ):
+                    hits.append(f"skipPullDefault still read or written in {py.name}: {line.strip()}")
         self.record_result("T_NOFORCE", "No force push in source", not hits, "; ".join(hits))
 
     def run_pipeline_tests(self):

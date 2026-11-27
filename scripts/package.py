@@ -44,6 +44,12 @@ PACKAGE_FILES: Dict[str, str] = {
     "src/Push_To_GitHub.py": "Push_To_GitHub.py",
     "src/fusion_git_core.py": "fusion_git_core.py",
     "src/dialog_helpers.py": "dialog_helpers.py",
+    "src/addin_logging.py": "addin_logging.py",
+    "src/credentials.py": "credentials.py",
+    "src/fusion_export.py": "fusion_export.py",
+    "src/push_controller.py": "push_controller.py",
+    "src/push_dialog.py": "push_dialog.py",
+    "src/settings_store.py": "settings_store.py",
     "src/AddInIcon.svg": "AddInIcon.svg",
     "LICENSE": "LICENSE",
 }
