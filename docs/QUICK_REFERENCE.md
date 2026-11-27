@@ -138,9 +138,8 @@ remembers you. Full guidance: [SECURITY.md](../SECURITY.md).
 - **Nested**: `projects/{filename}/exports/` (deep organization)
 
 ### Git Workflow Override
-- **Branch Override**: Force specific branch name
-- **Force Push (skip pull)**: Skip pull before push
-- **Force Push**: Overwrite remote branch
+- **Branch Override**: Push to a specific branch name (added to it if it already exists)
+- **No force push**: if GitHub has newer commits on the branch, the push is refused and nothing on GitHub changes
 
 ---
 

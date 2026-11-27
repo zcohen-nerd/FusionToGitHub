@@ -88,20 +88,26 @@ The add-in already has comprehensive logging. To see more details:
 
 If all else fails, do a clean reinstall:
 
-1. **Remove the add-in**:
-   ```powershell
-   Remove-Item "$env:APPDATA\Autodesk\Autodesk Fusion 360\API\AddIns\PushToGitHub" -Recurse -Force
-   ```
+1. **Stop the add-in** in Fusion (**UTILITIES → ADD-INS**, select
+   **Push_To_GitHub**, click **Stop**), then quit Fusion.
 
-2. **Clear config**:
+2. **Remove the add-in folder** (this deletes only the add-in's program files):
    ```powershell
-   Remove-Item "$env:USERPROFILE\.fusion_git_repos.json" -Force
-   Remove-Item "$env:USERPROFILE\.PushToGitHub_AddIn_Data" -Recurse -Force
+   Remove-Item "$env:APPDATA\Autodesk\Autodesk Fusion 360\API\AddIns\Push_To_GitHub" -Recurse
    ```
+   If you installed an older version by hand, its folder may be called
+   `FusionToGitHub` or `PushToGitHub` instead; remove that one too, so only
+   one copy is installed.
 
-3. **Reinstall**:
-   - Copy the entire `src` folder to Fusion's add-ins directory
-   - Restart Fusion 360
+3. **Optional: set your settings aside** instead of deleting them. Renaming
+   keeps a copy you can restore later:
+   ```powershell
+   Rename-Item "$env:USERPROFILE\.fusion_git_repos.json" ".fusion_git_repos.json.bak"
+   ```
+   Your local repositories and everything on GitHub are not affected.
+
+4. **Reinstall** from the release ZIP as described in the
+   [README](README.md#installing-the-add-in-5-minutes), then restart Fusion 360.
 
 ## Testing the Fix
 

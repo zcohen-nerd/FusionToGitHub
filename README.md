@@ -34,7 +34,7 @@ The add-in handles all of this for you. You just click the button.
 
 ## What you need before installing
 
-1. **Autodesk Fusion 360** (Windows or Mac)
+1. **Autodesk Fusion 360** on Windows. (macOS is **experimental**: the add-in loads there, but it has not been tested on a Mac.)
 2. **A free GitHub account** — sign up at [github.com](https://github.com/signup) (the free plan is all you need, and your designs can be private)
 3. **Git** — the free program that talks to GitHub:
    - Download from [git-scm.com/downloads](https://git-scm.com/downloads)
@@ -47,15 +47,30 @@ That's it. You do not need to learn to use Git — the add-in uses it behind the
 
 ## Installing the add-in (5 minutes)
 
-1. **Download this project**: click the green **Code** button at the top of this page, then **Download ZIP**, and unzip it anywhere.
+1. **Download the add-in**: open the [latest release](https://github.com/zcohen-nerd/FusionToGitHub/releases/latest) and, under **Assets**, download **`Push_To_GitHub-<version>.zip`** (for example `Push_To_GitHub-0.3.3.zip`).
+   Don't use the green **Code → Download ZIP** button: that is the source code, not the add-in.
 
-2. **Find your Fusion add-ins folder:**
+2. **Open your Fusion add-ins folder:**
    - **Windows**: press `Windows key + R`, paste this, and press Enter:
      `%APPDATA%\Autodesk\Autodesk Fusion 360\API\AddIns`
    - **Mac**: in Finder press `Cmd + Shift + G`, paste this, and press Enter:
      `~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns`
 
-3. **Create a new folder** there called `FusionToGitHub`, and **copy everything from the ZIP's `src` folder into it** — all the files, not just some of them.
+3. **Unzip the file into that folder.**
+   - **Windows**: right-click the ZIP → **Extract All…**, set the destination to the `AddIns` folder from step 2 (remove the `Push_To_GitHub-<version>` part Windows adds to the end), and click **Extract**.
+   - **Mac**: double-click the ZIP, then drag the `Push_To_GitHub` folder it creates into the `AddIns` folder.
+
+   You should end up with exactly this:
+
+   ```
+   AddIns/
+   └── Push_To_GitHub/
+       ├── Push_To_GitHub.manifest
+       ├── Push_To_GitHub.py
+       └── (4 more files)
+   ```
+
+   The folder must be called exactly `Push_To_GitHub`, matching the files inside it, and must sit directly in `AddIns`, not in an extra folder.
 
 4. **Restart Fusion 360.**
 
@@ -63,7 +78,18 @@ That's it. You do not need to learn to use Git — the add-in uses it behind the
 
 You should now see a **Push to GitHub** button in your toolbar.
 
-> **Button not showing up?** Restart Fusion completely and check the [Troubleshooting Guide](docs/TROUBLESHOOTING.md).
+> **Button not showing up?** Check the folder layout in step 3, restart Fusion completely, and see the [Troubleshooting Guide](docs/TROUBLESHOOTING.md).
+
+### Upgrading from an earlier version
+
+Versions before 0.3.3 were installed by copying files by hand, often into a folder called `FusionToGitHub`. To switch to the release ZIP:
+
+1. In Fusion, open **UTILITIES → ADD-INS**, select the old add-in, click **Stop**, and untick **Run on Startup**.
+2. Quit Fusion.
+3. Delete the old add-in folder from the `AddIns` folder. Your saved repositories and settings are kept: they are stored in `.fusion_git_repos.json` in your home folder, not in the add-in folder. A token stored with **Manage Token…** stays in Windows Credential Manager.
+4. Install the new version as described above.
+
+Don't keep two copies installed. Both would load, and you could get two buttons or duplicate pushes.
 
 ---
 
@@ -136,7 +162,7 @@ The default (F3D + STEP + STL) is a good all-round choice.
 
 ## If something goes wrong
 
-The add-in explains problems in plain messages and keeps your work safe: it never deletes or overwrites an earlier backup. The three most common hiccups:
+The add-in explains problems in plain messages and keeps your work safe: it never deletes or overwrites an earlier backup, and it never force-pushes, so it can't overwrite anyone else's work on GitHub either. The three most common hiccups:
 
 | Problem | Fix |
 |---------|-----|
@@ -170,15 +196,17 @@ and how to report a security problem — are in **[SECURITY.md](SECURITY.md)**.
 
 ## Status, supported versions, and known limits
 
-- **Version:** **`0.3.3`**. The runtime constant, the add-in manifest, the CLI
-  `--version`, the UI/log banner, the docs, and the Git tag all report the same
-  string, and a CI test (`tests/test_runner.py`, `T_VERSION`) fails the build if
-  they drift. `0.3.1` is a **corrective release**: earlier `main` carried an
-  internal version label that never matched the `0.3` tag. See
-  [`CHANGELOG.md`](CHANGELOG.md).
-- **Operating system:** Windows or macOS. The optional **stored-token** feature
-  is **Windows-only**; on macOS you rely on Git Credential Manager's browser
-  sign-in.
+- **Version:** **`0.3.3`**. The version is set once, in the add-in manifest;
+  the runtime constant, the CLI `--version`, the log banner, the README and the
+  top `CHANGELOG.md` entry must match it. CI tests (`T_VERSION`, `T_RELEASE`)
+  fail if they drift, and the release workflow refuses a Git tag that doesn't
+  match. See [`CHANGELOG.md`](CHANGELOG.md).
+- **Operating system:** **Windows** is supported. **macOS is experimental**:
+  the add-in is declared for Mac and its automated Git tests run on macOS, but
+  nobody has tested it inside Fusion on a Mac yet. If you try it, please report
+  what happens in an issue. The optional **stored-token** feature is
+  **Windows-only**; on macOS you rely on Git Credential Manager's browser
+  sign-in, which is not included with every macOS Git install.
 - **Autodesk Fusion:** current Fusion, any recent version — it uses the stable
   design-export API (F3D / STEP / STL / IGES / SAT). DWG/DXF are intentionally
   not offered; Fusion's export API does not produce them.
@@ -203,8 +231,8 @@ and how to report a security problem — are in **[SECURITY.md](SECURITY.md)**.
 - **History grows:** every export is kept as its own commit, and CAD
   files are binary — a long-lived backup repo can get large (there is no Git
   LFS integration).
-- **Automated tests:** 18, run in CI on Ubuntu + Windows across Python
-  3.10–3.12 (`python tests/test_runner.py`). The Fusion UI itself is verified
+- **Automated tests:** 25, run in CI on Ubuntu and Windows across Python
+  3.10–3.12, plus macOS (`python tests/test_runner.py`). The Fusion UI itself is verified
   by the manual checklist in [`tests/MANUAL_TESTS.md`](tests/MANUAL_TESTS.md).
 
 ### First success, end to end
@@ -241,8 +269,7 @@ and how to report a security problem — are in **[SECURITY.md](SECURITY.md)**.
 
 - **Commit / branch templates** — customize how snapshot names and notes are generated using `{filename}` and `{timestamp}` placeholders
 - **Export Subfolder** — keep exports organized in a folder inside the repository (e.g. `exports/`)
-- **Branch Name Override** — push to a specific branch name of your choosing; if the branch already exists, the add-in asks and then adds the new version to it
-- **Force Push (skip pull)** — for when your local copy and GitHub disagree and you want your version to win
+- **Branch Name Override** — push to a specific branch name of your choosing; if the branch already exists, the add-in asks and then adds the new version to it. If GitHub has newer commits on that branch than your computer, the push is refused and nothing on GitHub changes
 - **Use Stored Token** (Windows only) — store a GitHub Personal Access Token in Windows Credential Manager so you're never asked to sign in; set it up via **Manage Token…** in the Advanced section. Prefer a **fine-grained** token scoped to just this repo with **Contents: Read and write** — see [SECURITY.md](SECURITY.md).
 - **Log Level** — turn on DEBUG logging when investigating a problem
 
@@ -253,7 +280,7 @@ and how to report a security problem — are in **[SECURITY.md](SECURITY.md)**.
 
 **Project layout**: the add-in lives in [`src/`](src) (`Push_To_GitHub.py` is the Fusion UI; `fusion_git_core.py` and `dialog_helpers.py` are Fusion-free modules), docs in [`docs/`](docs), tests in [`tests/`](tests).
 
-**Testing** — 18 automated tests, including end-to-end git pipeline tests against local repositories:
+**Testing** — 25 automated tests, including end-to-end git pipeline tests against local repositories:
 
 ```
 python tests/test_runner.py
@@ -277,12 +304,9 @@ python src/push_cli.py --repo C:\path\to\repo --files exports/model.step --desig
 
 Free and open source under the [MIT License](LICENSE).
 
-## Packaging a Fusion add-in release
+## Building and releasing
 
-From the repository root, check out the release commit and run this command with Git (Bash or Git Bash). It packages the tracked runtime files under the folder name Fusion expects.
-
-```sh
-git archive --format=zip --prefix=Push_To_GitHub/ --output=Push_To_GitHub-universal.zip --add-file=LICENSE HEAD:src -- Push_To_GitHub.manifest Push_To_GitHub.py AddInIcon.svg diagnostic.py dialog_helpers.py fusion_git_core.py push_cli.py
-```
-
-Upload `Push_To_GitHub-universal.zip` as an asset of a stable GitHub Release. Use a numeric tag such as `v0.3.3` matching the version in `Push_To_GitHub.manifest`.
+Developers: `python scripts/package.py build` builds and checks the add-in ZIP
+from the current commit. Releases are made by pushing a version tag; CI builds
+the ZIP and creates a draft release for review. See
+[CONTRIBUTING.md](CONTRIBUTING.md#releasing).
