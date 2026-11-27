@@ -224,7 +224,7 @@ def _run_git_bytes(
     repo_path: Optional[str],
     args: Sequence[str],
     *,
-    env: Optional[Dict[str, str]] = None,
+    env: Optional[Dict[str, Optional[str]]] = None,
     network: bool = False,
     timeout: Optional[float] = None,
     input_bytes: Optional[bytes] = None,
@@ -240,8 +240,11 @@ def _run_git_bytes(
     env_vars["GIT_TERMINAL_PROMPT"] = "0"
     if network and "GIT_SSH_COMMAND" not in env_vars:
         env_vars["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"
-    if env:
-        env_vars.update(env)
+    for name, value in (env or {}).items():
+        if value is None:
+            env_vars.pop(name, None)  # None removes an inherited variable
+        else:
+            env_vars[name] = value
 
     cmd = [GIT_EXE]
     if network:
@@ -328,7 +331,7 @@ def git_run(
     hit and, when *check* is true, GitError for a non-zero exit. Error
     messages have URL passwords and tokens redacted.
     """
-    merged_env = dict(env or {})
+    merged_env: Dict[str, Optional[str]] = dict(env or {})
     config: Sequence[str] = ()
     if auth is not None:
         merged_env.update(auth.env)
@@ -409,8 +412,20 @@ class GitAuth:
     hooks_dir: str = ""
 
     @property
-    def env(self) -> Dict[str, str]:
-        values = {"FUSION_GIT_TOKEN": self.token}
+    def env(self) -> Dict[str, Optional[str]]:
+        values: Dict[str, Optional[str]] = {
+            "FUSION_GIT_TOKEN": self.token,
+            # Only https may run while the token is in the environment. This
+            # overrides every protocol.*.allow setting, so repository config
+            # (url.*.insteadOf to "ext::<command>", a file:// or ssh:// address
+            # with its upload-pack/receive-pack programs, remote helpers)
+            # can't start a program that would inherit the token (risk R-21).
+            "GIT_ALLOW_PROTOCOL": "https",
+            # No askpass program either (VS Code and others set these); with
+            # core.askPass empty, git asks nobody.
+            "GIT_ASKPASS": None,
+            "SSH_ASKPASS": None,
+        }
         if self.username:
             values["FUSION_GIT_USERNAME"] = self.username
         return values
@@ -423,7 +438,17 @@ class GitAuth:
         # credential. The inline helper is then registered for this one host,
         # so the token is never offered to any other server (audit SEC-02/04).
         # These must be -c arguments: Windows can't pass an empty env value.
-        values = ["credential.helper=", f"credential.https://{self.host}.helper={_INLINE_CREDENTIAL_HELPER}"]
+        values = [
+            "credential.helper=",
+            f"credential.https://{self.host}.helper={_INLINE_CREDENTIAL_HELPER}",
+            # Programs repository config could otherwise start with the token
+            # in their environment (risk R-21): askpass, and git commands in
+            # submodules (their own hooks and config).
+            "core.askPass=",
+            "fetch.recurseSubmodules=false",
+            "push.recurseSubmodules=no",
+            "submodule.recurse=false",
+        ]
         if self.hooks_dir:
             values.append(f"core.hooksPath={self.hooks_dir}")
         return values
