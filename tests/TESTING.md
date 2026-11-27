@@ -57,7 +57,7 @@ This document provides a comprehensive testing strategy for the FusionToGitHub 0
 
 #### 2.2 First Launch Tests
 - [ ] **T007**: First-time dialog launch
-  - Action: Launch "Push to GitHub (ZAC)" from toolbar
+  - Action: Launch "Push to GitHub" from toolbar
   - Expected: Dialog opens with default values
   - Expected: No repository configurations loaded initially
 

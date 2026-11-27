@@ -30,7 +30,7 @@ FusionToGitHub integrates Autodesk Fusion 360 with GitHub to provide professiona
 ### Opening the Add-in
 
 1. **Toolbar Method**: Click the "Push to GitHub" button in your Fusion 360 toolbar
-2. **Menu Method**: UTILITIES tab → ADD-INS → Scripts and Add-Ins → Run "Push to GitHub (ZAC)"
+2. **Menu Method**: UTILITIES tab → ADD-INS → Scripts and Add-Ins → Run **Push_To_GitHub**
 3. **Keyboard**: The add-in appears in your recent commands for quick access
 
 ### The Main Dialog

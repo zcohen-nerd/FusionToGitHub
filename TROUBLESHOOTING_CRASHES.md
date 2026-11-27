@@ -34,7 +34,7 @@ python "c:\Users\ZCohe\OneDrive\Documents\Python Scripts\Fusion_to_GitHub\Fusion
 
 1. **Stop the add-in** (if it's running):
    - Go to: `Scripts and Add-Ins` (Shift+S)
-   - Select "Push to GitHub (ZAC)"
+   - Select **Push_To_GitHub**
    - Click "Stop"
 
 2. **Restart Fusion 360 completely** (important!)
@@ -44,7 +44,7 @@ python "c:\Users\ZCohe\OneDrive\Documents\Python Scripts\Fusion_to_GitHub\Fusion
 3. **Run the add-in**:
    - Go to: `Scripts and Add-Ins` (Shift+S)
    - Go to "Add-Ins" tab
-   - Select "Push to GitHub (ZAC)"
+   - Select **Push_To_GitHub**
    - Click "Run"
    - Check the box "Run on Startup" (optional)
 
@@ -133,8 +133,8 @@ After applying the import fix, test these scenarios:
 
 When reviewing logs, look for:
 
-- ✅ `'Push to GitHub (ZAC)' Logger initialized` - Good start
-- ✅ `'Push to GitHub (ZAC)' Add-In Loaded and running` - Loaded successfully
+- ✅ `'Push to GitHub' Logger initialized` - Good start
+- ✅ `'Push to GitHub' Add-In Loaded and running` - Loaded successfully
 - ❌ `ImportError` - Missing module
 - ❌ `AttributeError` - API object not available
 - ❌ `SyntaxError` - Code has syntax problems

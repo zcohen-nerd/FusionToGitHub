@@ -1,6 +1,5 @@
-"""Push to GitHub (ZAC) — 0.3
+"""Push to GitHub — an Autodesk Fusion add-in.
 Export → changelog → branch → commit → push.
-This release formalizes dependency packaging and adds an offline CLI harness.
 """
 
 from __future__ import annotations
@@ -129,7 +128,7 @@ LOG_FILE_PATH = os.path.join(LOG_DIR, "PushToGitHub.log")
 # NOTE: the version suffix in this id is historical. Changing the id resets
 # users' toolbar placement/promotion, so it stays frozen as VERSION advances.
 CMD_ID = "PushToGitHub_Cmd_ZAC_V7_4"
-CMD_NAME = "Push to GitHub (ZAC)"
+CMD_NAME = "Push to GitHub"
 CMD_TOOLTIP = (
     "Exports/configures, updates changelog, and pushes design to GitHub."
 )

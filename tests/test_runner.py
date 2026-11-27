@@ -1209,6 +1209,27 @@ class TestRunner:
         finally:
             self._cleanup_dir(base_dir)
 
+    def test_display_name(self):
+        """T_NAME: the user-visible name is "Push to GitHub"; the internal command id is frozen."""
+        self.log_test_start("T_NAME", "Display name and frozen command id")
+        root = Path(__file__).resolve().parent.parent
+        problems = []
+        main_src = (root / "src" / "Push_To_GitHub.py").read_text(encoding="utf-8")
+        if 'CMD_NAME = "Push to GitHub"' not in main_src:
+            problems.append("CMD_NAME is not 'Push to GitHub'")
+        # Changing CMD_ID would reset users' toolbar placement; it is not shown to users.
+        if 'CMD_ID = "PushToGitHub_Cmd_ZAC_V7_4"' not in main_src:
+            problems.append("CMD_ID changed")
+        for pattern in ("*.md", "*.py"):
+            for path in root.rglob(pattern):
+                if ".git" in path.parts or "__pycache__" in path.parts:
+                    continue
+                if "(ZAC)" in path.read_text(encoding="utf-8", errors="replace"):
+                    problems.append(f"'(ZAC)' in {path.relative_to(root)}")
+        # This file names the old label on purpose (just above).
+        problems = [p for p in problems if "test_runner.py" not in p]
+        self.record_result("T_NAME", "Display name and frozen command id", not problems, "; ".join(problems))
+
     def test_no_force_push_in_source(self):
         """T_NOFORCE: no force-push option or setting anywhere in the shipped code."""
         self.log_test_start("T_NOFORCE", "No force push in source")
@@ -1281,6 +1302,7 @@ class TestRunner:
         self.test_askpass_script_security()
         self.test_export_subfolder_helpers()
         self.test_no_force_push_in_source()
+        self.test_display_name()
 
     def run_git_tests(self):
         """Run git operation tests"""

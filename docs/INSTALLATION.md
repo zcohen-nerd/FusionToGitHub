@@ -132,7 +132,7 @@ cd FusionToGitHub
 2. Go to **UTILITIES** tab in ribbon
 3. Click **ADD-INS** button
 4. Click **Scripts and Add-Ins** panel
-5. Find **"Push to GitHub (ZAC)"** in list
+5. Find **Push_To_GitHub** in the list
 6. Click **Run** to enable the add-in
 7. **Optional**: Check **"Run on Startup"** for automatic loading
 

@@ -25,7 +25,7 @@
 
 4. **Enable the add-in** in Fusion 360:
    - UTILITIES → ADD-INS → Scripts and Add-Ins
-   - Find "Push to GitHub (ZAC)" and click Run
+   - Find **Push_To_GitHub** and click Run
 
 ### For Development/Testing
 

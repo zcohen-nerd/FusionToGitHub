@@ -29,7 +29,7 @@
 
 4. **Enable manually**:
    - UTILITIES → ADD-INS → Scripts and Add-Ins
-   - Look for "Push to GitHub (ZAC)"
+   - Look for **Push_To_GitHub**
    - Click "Run" if it appears
 
 ### Add-in shows errors on startup
