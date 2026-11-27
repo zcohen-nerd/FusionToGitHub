@@ -2,9 +2,12 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, "release/**"]
   pull_request:
     branches: [main, master]
+  # The release workflow runs this whole file on the tagged commit before it
+  # builds anything, so a release can never skip the tests.
+  workflow_call:
 
 permissions:
   contents: read
@@ -15,6 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -25,13 +30,15 @@ jobs:
         run: pip install ruff==0.16.5
 
       - name: Run ruff check
-        run: ruff check src/ tests/ --output-format=github
+        run: ruff check src/ tests/ scripts/ --output-format=github
 
   docs:
     name: Docs Integrity
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -56,8 +63,15 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
         python-version: ["3.10", "3.11", "3.12"]
+        include:
+          # macOS is Experimental (decision Q5): the Git pipeline tests still
+          # run there, but nothing is tested inside Fusion on a Mac.
+          - os: macos-latest
+            python-version: "3.12"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -66,3 +80,32 @@ jobs:
 
       - name: Run tests
         run: python tests/test_runner.py
+
+  package:
+    name: Package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Check version consistency
+        run: python scripts/check_release.py
+
+      - name: Build and validate the add-in ZIP
+        run: python scripts/package.py build --out dist
+
+      # A test build of every change, for trying in Fusion before release.
+      # This is not a release: nothing is published.
+      - name: Upload test build
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Push_To_GitHub-test-build
+          path: dist/
+          retention-days: 14
+          if-no-files-found: error

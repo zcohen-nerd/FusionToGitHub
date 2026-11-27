@@ -3,7 +3,7 @@
 
     python scripts/check_release.py                      # consistency only
     python scripts/check_release.py --tag 0.3.3          # also: tag matches, changelog dated
-    python scripts/check_release.py --tag 0.3.3 --require-on-main
+    python scripts/check_release.py --tag 0.3.3 --require-on-main --write-notes notes.md
 
 The manifest version is the single source of truth (maintainer decision Q4).
 Everything else must match it:
@@ -39,6 +39,15 @@ def manifest_version(root: Path = ROOT) -> str:
     return str(manifest.get("version", ""))
 
 
+def changelog_section(version: str, root: Path = ROOT) -> str:
+    """Return the CHANGELOG text for *version*, without its heading ('' if absent)."""
+    changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8").replace("\r\n", "\n")
+    match = re.search(
+        rf"^## {re.escape(version)}\b[^\n]*\n(.*?)(?=^## |\Z)", changelog, re.MULTILINE | re.DOTALL
+    )
+    return match.group(1).strip() if match else ""
+
+
 def check(root: Path = ROOT, tag: Optional[str] = None, require_on_main: bool = False) -> List[str]:
     """Return a list of problems; empty means the release surfaces agree."""
     problems: List[str] = []
@@ -63,6 +72,8 @@ def check(root: Path = ROOT, tag: Optional[str] = None, require_on_main: bool = 
     heading_version = heading_text.split()[0] if heading_text else ""
     if heading_version != version:
         problems.append(f"top CHANGELOG heading {heading_text!r} is not for {version}")
+    elif not changelog_section(version, root):
+        problems.append(f"CHANGELOG section for {version} is empty")
 
     readme = (root / "README.md").read_text(encoding="utf-8")
     if f"`{version}`" not in readme:
@@ -104,6 +115,11 @@ def _main(argv: Optional[List[str]] = None) -> int:
         action="store_true",
         help="fail unless the tag (or HEAD) is reachable from origin/main",
     )
+    parser.add_argument(
+        "--write-notes",
+        metavar="PATH",
+        help="after the checks pass, write this version's CHANGELOG section to PATH",
+    )
     args = parser.parse_args(argv)
     problems = check(tag=args.tag, require_on_main=args.require_on_main)
     if problems:
@@ -111,6 +127,10 @@ def _main(argv: Optional[List[str]] = None) -> int:
         for problem in problems:
             print(f"  - {problem}", file=sys.stderr)
         return 1
+    if args.write_notes:
+        Path(args.write_notes).write_text(
+            changelog_section(manifest_version()) + "\n", encoding="utf-8"
+        )
     print(f"Release check passed for {manifest_version()}" + (f" (tag {args.tag})" if args.tag else ""))
     return 0
 

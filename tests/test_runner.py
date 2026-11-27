@@ -1229,6 +1229,9 @@ class TestRunner:
             version = check_release.manifest_version()
             if not any("does not match" in p for p in check_release.check(tag=f"v{version}")):
                 problems.append("a v-prefixed tag was not refused")
+            notes = check_release.changelog_section(version)
+            if not notes or f"## {version}" in notes or "\n## " in notes:
+                problems.append("release notes are empty or include other versions")
             self.record_result("T_RELEASE", "release surfaces agree", not problems, "; ".join(problems))
         except Exception as e:
             self.record_result("T_RELEASE", "release surfaces agree", False, str(e))
