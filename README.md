@@ -101,7 +101,9 @@ You only do this once per project.
 
 1. Go to [github.com/new](https://github.com/new) (sign in if asked)
 2. Give the repository a name, e.g. `my-fusion-designs`
-3. Choose **Private** if you don't want the world to see your designs
+3. Choose **Private** unless you want everyone to see your designs.
+
+   > ⚠️ **A public repository is public.** Anyone can see and download every version you back up, including the full Fusion file, and copies can stay in other people's forks after you delete them. The add-in reminds you before the first push to each repository.
 4. Click **Create repository**
 5. **Copy the page's web address** from your browser's address bar — it looks like
    `https://github.com/yourname/my-fusion-designs`
@@ -188,8 +190,10 @@ Short version:
 - **By default**, the add-in doesn't touch your credentials at all — it runs
   `git`, and Git's own Credential Manager handles the one-time browser sign-in.
 - **Optionally (Windows)**, you can store a Personal Access Token via
-  **Manage Token…**; it goes into Windows Credential Manager and is passed to
-  Git through a throwaway helper that never writes it to disk.
+  **Manage Token…**, in a field that hides what you type. It goes into Windows
+  Credential Manager. On each push it is offered only to your repository's
+  server, only over https, and Git's other credential helpers can't keep a
+  copy.
 - Prefer a **fine-grained token** limited to the one repository, with
   **Contents: Read and write** and nothing else.
 - **Never** put a token in a repo file, a remote URL, a commit message, a
@@ -197,6 +201,10 @@ Short version:
 
 Full details — exactly what is stored where, how to delete vs. revoke a token,
 and how to report a security problem — are in **[SECURITY.md](SECURITY.md)**.
+What the add-in stores and sends in general (no telemetry; your exports, note
+and Git name/email go to your repository and nowhere else) is in
+**[PRIVACY.md](PRIVACY.md)**, also linked from the dialog's **Logging &
+Privacy** section.
 
 ---
 

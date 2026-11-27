@@ -1,171 +1,186 @@
 # Security
 
 FusionToGitHub is a local Autodesk Fusion add-in. It has **no server, no
-account system, and makes no calls to the GitHub API**. Everything it does is
-run the `git` command-line tool that is already installed on your machine. This
-document describes exactly how it handles your GitHub credentials, and how to
-report a problem.
+account system, no telemetry, and makes no calls to the GitHub API**. Everything
+it does is run the `git` command-line tool already installed on your computer.
+This document describes exactly how it handles your GitHub credentials, and how
+to report a problem. What it stores and sends in general is in
+[PRIVACY.md](PRIVACY.md).
 
-If anything here does not match what the code does, that is a bug — please
+If anything here does not match what the code does, that is a bug. Please
 report it (see [Reporting](#reporting-a-problem)).
 
 ---
 
-## How authentication actually works
+## How authentication works
 
-There are two paths, and the add-in picks one automatically:
+There are two paths. You choose with **Use Stored Token** in the dialog's
+**Advanced** section.
 
-### 1. Default: your system Git handles sign-in (browser / device flow)
+### 1. Default: Git signs you in (Git Credential Manager)
 
-If you do **not** turn on "Use Stored Token", the add-in runs `git push` with no
-credential handling of its own. Git then authenticates the way it always does —
-through **Git Credential Manager (GCM)**, which ships with Git for Windows and
-Git for macOS:
+With **Use Stored Token** off, the add-in runs `git` with no credential handling
+of its own. Git authenticates the way it always does, usually through **Git
+Credential Manager (GCM)**:
 
-- The **first** time you push, GCM opens a **browser window** (or offers a
-  **device code**) to sign in to GitHub.
-- GCM stores the resulting credential itself, in the OS keychain — on Windows
-  that is a Windows Credential Manager entry named `git:https://github.com`; on
-  macOS it is the login Keychain.
-- Later pushes reuse that cached credential with no prompt.
+- **Windows:** GCM ships with Git for Windows. The first push opens a browser
+  window (or offers a device code) to sign in to GitHub. GCM keeps the result
+  in Windows Credential Manager as `git:https://github.com`.
+- **macOS (experimental):** GCM is **not** included with every Git install; the
+  Git from Xcode's command line tools and Homebrew's `git` don't include it.
+  Install GCM separately, or use SSH keys, or HTTPS will fail to sign in.
+- Later pushes reuse the stored credential with no prompt.
 
-This entry is created and owned by **Git**, not by this add-in. The add-in never
-sees it.
+That credential is created and owned by Git (or GCM), not by this add-in.
 
-### 2. Optional (Windows only): a Personal Access Token you store yourself
+### 2. Optional (Windows only): a token you store yourself
 
-In the dialog's **Advanced** section, **Use Stored Token** + **Manage Token…**
-let you paste a GitHub Personal Access Token (PAT). When this is on:
+**Manage Token…** shows a **Token** field that hides what you type (dots
+instead of characters), plus an optional **Token Username**. **Save Token**
+stores them:
 
 - The token is written to **Windows Credential Manager** as a *Generic*
-  credential named `FusionToGitHub::<repository-name>` (one per configured
-  repository), persisted for the local machine. Your GitHub username is stored
-  alongside it. This is done with the Win32 `CredWriteW` API in
-  `src/Push_To_GitHub.py` (`store_pat`).
-- On each push, the add-in reads that entry (`read_stored_pat`) and hands the
-  token to Git through an **ephemeral askpass helper**
-  (`src/fusion_git_core.py`, `git_askpass_env`):
-  - A throwaway script (`askpass.bat` / `askpass.sh`) is written to a fresh
-    temp directory. **The script contains no credentials** — it only echoes two
-    environment variables.
-  - Those variables (`FUSION_GIT_ASKPASS_TOKEN`, `FUSION_GIT_ASKPASS_USERNAME`)
-    exist **only in the environment of that one `git` subprocess**. The token
-    is never written to a file.
-  - `GIT_TERMINAL_PROMPT=0` is set so Git can never fall back to an interactive
-    prompt.
-  - When the push finishes (success or failure), the script and its temp
-    directory are **deleted** in a `finally` block.
+  credential named `FusionToGitHub::<repository name>`, one per configured
+  repository (`store_pat` in `src/Push_To_GitHub.py`). The dialog clears the
+  field right after saving.
+- On each push, the add-in reads it (`read_stored_pat`) and gives it to Git
+  through a **temporary credential helper** (`token_auth` in
+  `src/fusion_git_core.py`):
+  - The token is passed only to the commands that talk to GitHub
+    (`ls-remote`, `fetch`, `push`), in environment variables of that one
+    `git` process. Local git commands never receive it. Nothing is written to
+    disk.
+  - For those commands, every other credential helper is switched off
+    (`-c credential.helper=`), so GCM or a `store` helper can't save a copy of
+    the token, and a stale saved credential can't be used instead of it.
+  - The helper is registered for **one host only**: the host of the
+    repository's address (for example `github.com`). The token is never
+    offered to any other server, even if the repository's address is changed.
+  - The token is only sent over **https**. If the repository's address is
+    `http://` or SSH, the push stops with an explanation.
+  - `GIT_TERMINAL_PROMPT=0` is always set, so Git never waits for input.
 
-The offline test harness `src/push_cli.py` also accepts `--pat-token` on the
-command line. That is for testing with a **throwaway** token only — a real token
-on a command line ends up in your shell history and the process list. Do not use
-it with a token you care about.
+One limit: a repository's own **`pre-push` hook**, if it has one, runs during
+the push and could read the token from its environment. Only use a stored token
+with repositories whose hooks you trust. (Commit hooks don't run: the add-in
+builds its commits with `git commit-tree`.)
+
+The developer test harness `src/push_cli.py` (not part of the installed add-in)
+reads a token from the `FUSION_TO_GITHUB_TOKEN` environment variable or from a
+hidden prompt (`--pat-prompt`). It never accepts one as a command-line argument,
+because other programs can read a process's command line.
 
 ### What the add-in never does
 
-- It never calls `api.github.com` and never runs any OAuth flow of its own.
-- It never creates the GitHub repository for you — you create it on github.com
-  first, and the add-in clones / initialises it locally.
-- It never writes your token to its config file, its log file, the repository,
-  or the commit history (see [Where credentials must never go](#where-credentials-must-never-go)).
+- It never calls `api.github.com` and never runs an OAuth flow of its own.
+- It never creates the GitHub repository for you.
+- It never writes your token to its config file, its log, the repository, the
+  commit history, or Git's own credential stores.
+- It never accepts a repository address with a password or token in it, such
+  as `https://user:TOKEN@github.com/you/repo.git`. If an existing repository's
+  address already contains one, every push shows a warning explaining how to
+  remove it.
+- Error messages and the log hide anything that looks like a URL password or a
+  GitHub token (`ghp_…`, `github_pat_…`), and the stored token itself.
 
 ---
 
 ## Least privilege: which token to use
 
-Because the token is handed to Git as an ordinary HTTPS password, **GitHub
-accepts both fine-grained and classic PATs**. Prefer fine-grained.
+GitHub accepts both fine-grained and classic personal access tokens. Prefer
+fine-grained.
 
-### Fine-grained PAT (preferred)
+### Fine-grained token (preferred)
 
 GitHub → *Settings → Developer settings → Personal access tokens →
 Fine-grained tokens → Generate new token*:
 
-- **Resource owner:** your account (or the org that owns the repo).
-- **Repository access:** *Only select repositories* → pick just the repo(s) you
+- **Resource owner:** your account (or the organisation that owns the repo).
+- **Repository access:** *Only select repositories* → just the repositories you
   back up with this add-in.
 - **Permissions:** **Repository permissions → Contents → Read and write**. That
   is the only permission a push needs. (`Metadata: Read-only` is added
   automatically.)
-- **Expiration:** set the shortest that is practical for you and renew it.
+- **Expiration:** the shortest that is practical for you; renew it.
 
-Do **not** grant `Administration`, `Workflows`, `Secrets`, `Actions`, or any
-account/organization permission — the add-in uses none of them.
+Don't grant `Administration`, `Workflows`, `Secrets`, `Actions`, or any
+account or organisation permission. The add-in uses none of them.
 
-### Classic PAT (only if fine-grained is unavailable)
+### Classic token (only if fine-grained is unavailable)
 
-Some organisations still restrict fine-grained tokens. If you must use a classic
-token, the minimum scope is **`repo`**. Be aware this is broad: it grants access
-to **every** repository your account can reach, not just the one you back up.
-Set an expiration.
+The minimum scope is **`repo`** (or **`public_repo`** if every repository you
+push to is public). `repo` is broad: it grants access to **every** repository
+your account can reach. Set an expiration.
 
 ---
 
 ## Where credentials must never go
 
 A GitHub token is a password. Keep it out of anything that can be shared,
-committed, or logged:
+committed or logged:
 
-- **Repository files or committed configuration.** Never put a token in a file
-  in the repo, in `.git/config`, or in a remote URL like
-  `https://TOKEN@github.com/you/repo.git`. Use the add-in's Manage Token…
-  dialog (or GCM) instead — those store it in the OS credential vault, outside
-  git.
-- **Commit messages and branch templates.** These are user-editable in the
-  dialog and are written into history and into `CHANGELOG.md`. Keep tokens out
-  of them.
-- **The log file.** The add-in writes `~/.PushToGitHub_AddIn_Data/PushToGitHub.log`
-  and by design never logs the token. If you ever see a token in that file,
-  that is a security bug — report it and revoke the token.
-- **The config file.** `~/.fusion_git_repos.json` holds repository paths, URLs,
-  and a `useStoredPat` on/off flag — never the token itself. Keep it that way.
-- **Screenshots and screen shares.** The Manage Token… prompt shows the token
-  as **visible text** while you type it (Fusion's dialog API has no masked
-  field). Do not paste a token while sharing your screen or recording.
-- **Issue reports.** When filing a bug, attach the log file and your OS / Fusion
-  / Git versions — never a token, and never a private design file.
+- **Repository files or addresses.** Never put a token in a file in the repo,
+  in `.git/config`, or in a remote address. Use **Manage Token…** (or GCM)
+  instead.
+- **Commit messages and branch templates.** These are written into history and
+  into the repository's `CHANGELOG.md`.
+- **Screenshots and screen shares.** The Token field is masked, but don't paste
+  a token while recording anyway.
+- **Bug reports.** The log (`~/.PushToGitHub_AddIn_Data/PushToGitHub.log`)
+  never contains the token, but it does contain folder paths, repository
+  addresses, your Git messages and design names. **Read it and remove anything
+  private before attaching it**, and never attach a private design file.
 
 If a token is exposed anywhere, **revoke it on GitHub immediately** (below) and
-issue a new one.
+create a new one.
 
 ---
 
 ## Deleting vs. revoking a token
 
-These are different actions and you usually want both:
+These are different actions, and you usually want both:
 
 | Goal | Action |
 |------|--------|
-| Stop this add-in using the stored token | Dialog → Advanced → **Manage Token… → Delete token**. This removes the `FusionToGitHub::<repo>` entry from Windows Credential Manager. It does **not** touch anything on GitHub. |
-| Fully invalidate the token everywhere | GitHub → *Settings → Developer settings → Personal access tokens* → delete the token. Any copy of it, anywhere, immediately stops working. |
-| Clear the *browser sign-in* credential (path 1 above) | Windows: *Credential Manager* → remove `git:https://github.com`. macOS: *Keychain Access* → remove the `github.com` internet password. Or run `git credential-manager github logout`. |
+| Stop this add-in using the stored token | **Advanced → Manage Token… → No (Delete it)**. This removes the `FusionToGitHub::<repo>` entry from Windows Credential Manager. It does **not** affect GitHub. |
+| Make the token useless everywhere | GitHub → *Settings → Developer settings → Personal access tokens* → delete it. Every copy stops working immediately. |
+| Clear the browser sign-in credential (path 1) | Windows: *Credential Manager → Windows Credentials* → remove `git:https://github.com`. macOS: *Keychain Access* → remove the `github.com` entry. Or run `git credential-manager github logout`. |
 
-When you rotate or lose a token, do the GitHub revocation first, then clean up
-the local copies.
+When you rotate or lose a token, revoke it on GitHub first, then clean up the
+local copies.
+
+---
+
+## Local files
+
+| File | Contains | Protection |
+|------|----------|------------|
+| `~/.fusion_git_repos.json` | Saved repositories: folder, address, formats, templates, options | Owner-only (`600`) on macOS. On Windows, your user profile folder is private to you. |
+| `~/.PushToGitHub_AddIn_Data/PushToGitHub.log` (+ up to 3 older copies, 1 MB each) | What the add-in did, with folder paths, addresses and Git messages; secrets redacted | Owner-only on macOS. **Logging & Privacy → Clear Log** deletes them. |
+
+Git hooks, filters and `core.fsmonitor` configured *in a repository* run when
+the add-in runs Git there, as they do for any Git command. Only use the add-in
+with repositories you trust.
 
 ---
 
 ## Reporting a problem
 
-**There is no private reporting channel for this project right now.** GitHub
-"Private vulnerability reporting" is not enabled on the repository and there is
-no published security contact address.
+- If the repository's **Security** tab offers **Report a vulnerability**, use
+  it: that is a private channel to the maintainer.
+- Otherwise, for a **sensitive** issue (for example a way the token could leak),
+  open a minimal [issue](https://github.com/zcohen-nerd/FusionToGitHub/issues)
+  saying only *"security issue, details withheld; please open a private
+  channel"*, with **no technical detail**, and wait for a reply.
+- For anything **not sensitive** (a crash, a confusing message), open a normal
+  issue with `security` in the title. Never include a token or a private
+  design.
 
-- If the issue is **not sensitive** (a crash, a confusing message, a wrong
-  permission recommendation): open a normal
-  [issue](https://github.com/zcohen-nerd/FusionToGitHub/issues) and put
-  `security` in the title. Do not include a token or a private design file.
-- If the issue **is sensitive** (for example, a way the token could be leaked to
-  disk or logs): open a minimal issue that says only *"security issue, details
-  withheld — please enable private vulnerability reporting"* with **no
-  technical detail**, and wait for the maintainer to open a private channel.
-
-*Maintainer note:* enabling **Settings → Security → Private vulnerability
-reporting** would provide a proper channel with no address to maintain; this
-file should then be updated to point at the repository's Security tab.
+*Maintainer note:* turn on **Settings → Code security → Private vulnerability
+reporting** to provide the private channel above.
 
 ## Expectations
 
-Single maintainer, best-effort, no guaranteed response time, no bug bounty.
+Single maintainer, best effort, no guaranteed response time, no bug bounty.
 Confirmed security fixes are noted in the release notes. The software is
 provided without warranty (see [`LICENSE`](LICENSE)).

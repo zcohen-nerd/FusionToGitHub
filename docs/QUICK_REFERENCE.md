@@ -59,7 +59,7 @@ remembers you. Full guidance: [SECURITY.md](../SECURITY.md).
 2. **Repository access:** only the repo you back up
 3. **Permissions:** **Contents → Read and write** (only)
 4. Copy the token
-5. In add-in: Advanced → "Use Stored Token" → "Manage Token…" → paste token
+5. In add-in: Advanced → "Manage Token…" → Yes → paste into **Token** → **Save Token**
 
 ### Permissions needed
 - ✅ **Contents: Read and write** — the only thing a push needs
