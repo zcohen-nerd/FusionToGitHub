@@ -10,7 +10,7 @@ import unittest
 import _paths  # noqa: F401
 import adsk.fusion
 from addin_harness import AddinTestCase, DialogResults
-from adsk.core import press_ok, select_item
+from adsk.core import select_item
 
 import fusion_git_core as core
 
@@ -25,9 +25,9 @@ class DialogExportCase(AddinTestCase):
     def remote_refs(self):
         return core.git_run(self.origin, "for-each-ref", "--format=%(refname) %(objectname)").stdout
 
-    def push(self, expect_ok=True):
+    def push_dialog(self, expect_ok=True):
         command = self.open_dialog()
-        args = press_ok(command)
+        args = self.push(command)  # waits for the background push
         self.assertEqual(args.executeFailed, not expect_ok, self.ui.texts())
         return command
 
@@ -44,13 +44,13 @@ class FailedExportTests(DialogExportCase):
                   meta={"lastSelectedRepo": "Designs"})
         self.design()
         self.answer(YES)  # the one-time publication notice
-        self.push()
+        self.push_dialog()
         before = self.remote_refs()
         history_before = self.history(self.pushed_branch())
         for mode in ("raise", "false", "empty", "missing", "corrupt"):
             with self.subTest(mode=mode):
                 self.design().exportManager.failures = {"stl": mode}
-                self.push(expect_ok=False)
+                self.push_dialog(expect_ok=False)
                 message = self.last_message()
                 self.assertIn("Nothing was pushed because these exports failed:", message)
                 self.assertIn("Bracket.stl", message)
@@ -68,14 +68,14 @@ class LinkedComponentDialogTests(DialogExportCase):
 
     def test_declining_cancels_and_keeps_the_dialog_open(self):
         self.answer(NO)
-        self.push(expect_ok=False)
+        self.push_dialog(expect_ok=False)
         self.assertIn("uses 1 linked component (Bolt M5)", self.ui.questions[0])
         self.assertIn("Push cancelled", self.last_message())
         self.assertEqual(self.remote_branches(), [])
 
     def test_accepting_pushes_and_records_a_history_note(self):
         self.answer(YES, YES)  # linked components, then the publication notice
-        self.push()
+        self.push_dialog()
         history = self.history(self.pushed_branch())
         self.assertIn(
             "- **Note:** Contains 1 linked component (Bolt M5); this .f3d backup may not be self-contained.",
@@ -92,7 +92,7 @@ class StlSettingTests(DialogExportCase):
                      if i.id.startswith("formatSetting_stl_files"))
         select_item(command, files.id, "One file per body")
         self.answer(YES)  # the one-time publication notice
-        self.assertFalse(press_ok(command).executeFailed, self.ui.texts())
+        self.assertFalse(self.push(command).executeFailed, self.ui.texts())
         self.assertEqual(self.profile("Designs")["formatSettings"]["stl"],
                          {"meshRefinement": "high", "files": "perBody"})
         self.assertEqual(self.remote_files(self.pushed_branch()), [
@@ -108,7 +108,7 @@ class StlSettingTests(DialogExportCase):
                     for cell in item(command, "formatSettingsTable").cells.values() if hasattr(cell, "selectedItem")}
         self.assertEqual(selected, {"formatSetting_stl_meshRefinement": "Medium", "formatSetting_stl_files": "One file"})
         self.answer(YES)
-        self.assertFalse(press_ok(command).executeFailed, self.ui.texts())
+        self.assertFalse(self.push(command).executeFailed, self.ui.texts())
         self.assertEqual(self.remote_files(self.pushed_branch()),
                          [".gitattributes", "Bracket/Bracket.stl", "Bracket/HISTORY.md"])
 
@@ -116,7 +116,7 @@ class StlSettingTests(DialogExportCase):
         self.seed({"Designs": self.work_profile(exportFormats=["stl"])}, meta={"lastSelectedRepo": "Designs"})
         self.design().exportManager.stl_unit_type_supported = False
         self.answer(YES)
-        self.push()
+        self.push_dialog()
         self.assertIn("STL files have no units", self.last_message())
 
 
