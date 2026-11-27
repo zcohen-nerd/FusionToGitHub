@@ -43,9 +43,10 @@ THRESHOLDS = {
     "push_dialog.py": 77,
     "fusion_export.py": 68,
     "addin_logging.py": 65,
-    # The real Credential Manager code runs only in the Windows CI jobs
-    # (FTG_REAL_VAULT_TESTS=1); raise this to the CI figure once recorded.
-    "credentials.py": 55,
+    # 92% in the Windows Coverage job, where the real Credential Manager
+    # tests run (FTG_REAL_VAULT_TESTS=1). Locally, without them, it is ~57%:
+    # run the gate in CI, or set the variable on a disposable machine.
+    "credentials.py": 90,
     # Thin Fusion entry point: mostly import fallbacks and Fusion-only
     # branches. Counted in the add-in layer group below.
     "Push_To_GitHub.py": 50,
