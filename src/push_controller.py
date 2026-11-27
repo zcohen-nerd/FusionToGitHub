@@ -382,6 +382,9 @@ class PushController:
         risky = git_core.risky_local_network_config(repo_path)
         if risky:
             raise PushRefused(git_core.risky_config_message(risky))
+        elsewhere = git_core.token_destination_problem(repo_path, self.profile(name).get("url", ""))
+        if elsewhere:
+            raise PushRefused(elsewhere)
         return {"username": pat.get("username", ""), "token": pat["token"]}
 
     def plan(

@@ -226,6 +226,48 @@ class HookIsolationTests(GitSandbox):
         self.assertIn("http.proxy", text)
         self.assertNotIn(FAKE_TOKEN, text)
 
+    def test_http_traces_from_the_users_environment_are_off_and_redacted(self):
+        # R-21 investigation: with GIT_TRACE_CURL / GIT_CURL_VERBOSE and
+        # GIT_TRACE_REDACT=0 in the user's environment, git wrote the
+        # Authorization header (the token in base64) to a file and to stderr,
+        # and from stderr into the add-in's error message.
+        auth = core.GitAuth(host="git.example.invalid", token=FAKE_TOKEN, hooks_dir=self.no_hooks())
+        user_env = {"GIT_TRACE_CURL": "/tmp/x", "GIT_CURL_VERBOSE": "1", "GIT_TRACE_REDACT": "0"}
+        with mock.patch.dict(os.environ, user_env):
+            seen = core.git_run(self.work, "-c", "alias.showenv=!env", "showenv", auth=auth).stdout
+        self.assertIn("GIT_TRACE_REDACT=1", seen)
+        self.assertNotIn("GIT_TRACE_CURL=", seen)
+        self.assertNotIn("GIT_CURL_VERBOSE=", seen)
+        basic = core.token_secrets(FAKE_TOKEN)[1]
+        with self.assertRaises(core.GitError) as raised:
+            core.git_run(self.work, "-c", f"alias.leak=!echo 'Authorization: Basic {basic}' >&2; exit 1", "leak",
+                         auth=auth)
+        self.assertNotIn(basic, str(raised.exception))
+        self.assertNotIn(FAKE_TOKEN, str(raised.exception))
+
+    def test_a_push_to_another_repository_on_the_same_server_is_refused(self):
+        # R-21 investigation: remote.origin.pushurl (or url.*.insteadOf) sent
+        # the synthetic token, and the design, to another repository on the
+        # same host, past the host check.
+        url = "https://git.example.invalid/acme/designs.git"
+        core.git_run(self.work, "remote", "set-url", "origin", url)
+        self.assertEqual(core.token_destination_problem(self.work), "")
+        self.assertEqual(core.token_destination_problem(self.work, "https://GIT.example.invalid/Acme/designs/"), "")
+        self.assertIn("won't send your stored token",
+                      core.token_destination_problem(self.work, "https://git.example.invalid/acme/other.git"))
+        self.set_config(("remote.origin.pushurl", "https://git.example.invalid/attacker/loot.git"))
+        self.assertIn("attacker/loot", core.token_destination_problem(self.work))
+        core.git_run(self.work, "config", "--unset", "remote.origin.pushurl")
+        self.set_config(("url.https://git.example.invalid/attacker/.pushInsteadOf", "https://git.example.invalid/acme/"))
+        self.assertIn("attacker", core.token_destination_problem(self.work))
+        ui = _UI()
+        result = core.push_export(
+            self.work, [(self.export("a.step", "A"), "a.step")], "note", "Part", ui,
+            identity=self.identity, pat_credentials={"token": FAKE_TOKEN},
+        )
+        self.assertIsNone(result)
+        self.assertIn("won't send your stored token", "\n".join(ui.errors))
+
     def test_askpass_programs_are_not_inherited_by_token_processes(self):
         auth = core.GitAuth(host="git.example.invalid", token=FAKE_TOKEN, hooks_dir=self.no_hooks())
         with mock.patch.dict(os.environ, {"GIT_ASKPASS": "/bin/evil", "SSH_ASKPASS": "/bin/evil"}):

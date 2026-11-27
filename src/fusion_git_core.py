@@ -20,6 +20,7 @@ Commit hooks don't run for these commits (they are made with
 
 from __future__ import annotations
 
+import base64
 import glob
 import logging
 import os
@@ -350,7 +351,7 @@ def git_run(
     stdout = out.decode("utf-8", errors="replace")
     stderr = err.decode("utf-8", errors="replace")
     if check and returncode != 0:
-        secrets = [auth.token] if auth is not None else []
+        secrets = auth.secrets if auth is not None else []
         raise GitError(redact_secrets(f"git {' '.join(args)} failed:\n{stderr or stdout}", secrets))
     return subprocess.CompletedProcess([GIT_EXE, *args], returncode, stdout, stderr)
 
@@ -425,10 +426,22 @@ class GitAuth:
             # core.askPass empty, git asks nobody.
             "GIT_ASKPASS": None,
             "SSH_ASKPASS": None,
+            # Tracing set in the user's environment would write the
+            # Authorization header (the token, base64-encoded) to a file or
+            # to stderr, which ends up in error messages and the log. Always
+            # redact, and switch the HTTP traces off for these commands.
+            "GIT_TRACE_REDACT": "1",
+            "GIT_TRACE_CURL": None,
+            "GIT_CURL_VERBOSE": None,
         }
         if self.username:
             values["FUSION_GIT_USERNAME"] = self.username
         return values
+
+    @property
+    def secrets(self) -> List[str]:
+        """Every form of the token that could appear in Git's output, for redaction."""
+        return token_secrets(self.token, self.username)
 
     @property
     def config(self) -> List[str]:
@@ -455,6 +468,53 @@ class GitAuth:
             raise GitError("Internal error: a stored token is only passed to Git with hooks disabled.")
         values.append(f"core.hooksPath={self.hooks_dir}")
         return values
+
+
+def token_secrets(token: str, username: str = "") -> List[str]:
+    """The token, and the base64 "user:token" form an HTTP Authorization header carries."""
+    if not token:
+        return []
+    user = username or "x-access-token"
+    return [token, base64.b64encode(f"{user}:{token}".encode("utf-8")).decode("ascii")]
+
+
+def _repository_key(url: str) -> Tuple[str, str, Optional[int], str]:
+    """(scheme, host, port, path) of a Git address, normalised the way GitHub treats it."""
+    parts = urlsplit((url or "").strip())
+    path = parts.path.rstrip("/")
+    if path.lower().endswith(".git"):
+        path = path[:-4]
+    try:
+        port = parts.port
+    except ValueError:
+        port = -1
+    return (parts.scheme.lower(), (parts.hostname or "").lower(), port, path.casefold())
+
+
+def token_destination_problem(repo_path: str, saved_url: str = "") -> str:
+    """Why the stored token must not be used for this push ("" if it may).
+
+    The token goes to the repository the user chose, and nowhere else on the
+    same server. A repository's own settings can send pushes somewhere else
+    without changing its visible address: remote.origin.pushurl, or
+    url.<base>.insteadOf / pushInsteadOf (risk R-21; reproduced in S4 with a
+    synthetic token, which reached another repository on the same host). So
+    the addresses Git will actually use must all be the configured one, and
+    the GitHub address saved for this repository when there is one.
+    """
+    configured = git_run(repo_path, "config", "--get", "remote.origin.url", check=False).stdout.strip()
+    fetch = git_run(repo_path, "remote", "get-url", "origin", check=False).stdout.strip()
+    push = git_run(repo_path, "remote", "get-url", "--push", "origin", check=False).stdout.strip()
+    expected = saved_url.strip() or configured
+    for actual in (configured, fetch, push):
+        if _repository_key(actual) != _repository_key(expected):
+            return (
+                f"This repository's Git settings would send the push to {redact_secrets(actual)}, not to "
+                f"{redact_secrets(expected)}, so the add-in won't send your stored token. Check the folder's "
+                "Git settings (remote.origin.pushurl, url.*.insteadOf) or the GitHub address saved for this "
+                "repository (Edit Repository…)."
+            )
+    return ""
 
 
 # Repository-local settings that change where Git connects or which TLS
@@ -1048,6 +1108,9 @@ def push_export(
             risky = risky_local_network_config(repo_path)
             if risky:
                 raise GitError(risky_config_message(risky))
+            elsewhere = token_destination_problem(repo_path)
+            if elsewhere:
+                raise GitError(elsewhere)
             hooks_dir = tempfile.mkdtemp(prefix="fusion_git_nohooks_")
             auth = replace(auth, hooks_dir=hooks_dir)
         try:
@@ -1060,7 +1123,8 @@ def push_export(
             if hooks_dir:
                 shutil.rmtree(hooks_dir, ignore_errors=True)
     except (GitError, ValueError, OSError) as exc:
-        secrets = [pat_credentials.get("token", "")] if pat_credentials else []
+        secrets = (token_secrets(pat_credentials.get("token", ""), pat_credentials.get("username", ""))
+                   if pat_credentials else [])
         msg = redact_secrets(f"Push failed:\n{exc}", secrets)
         ui.error(msg)
         if logger:
