@@ -55,6 +55,19 @@ class AddinTestCase(GitSandbox):
         browser = mock.patch("webbrowser.open")
         self.opened_urls = browser.start()
         self.addCleanup(browser.stop)
+        # Registered last, so it runs first: every question must have been
+        # expected (scripted) and every scripted answer used.
+        self.addCleanup(self._check_questions_were_scripted)
+
+    def _check_questions_were_scripted(self):
+        unscripted = list(self.ui.unscripted)
+        unused = list(self.ui.answers)
+        if unscripted or unused:
+            self.fail(
+                "Questions without a scripted answer: "
+                + repr([q.splitlines()[0][:80] for q in unscripted])
+                + f"; scripted answers never used: {unused}"
+            )
 
     # -- helpers ---------------------------------------------------------------
 

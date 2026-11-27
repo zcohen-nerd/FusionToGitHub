@@ -48,6 +48,13 @@ def _make_private(path: str) -> None:
         pass
 
 
+class RedactingFormatter(logging.Formatter):
+    """Redacts the *finished* text, so tracebacks and child loggers are covered too."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        return redact_secrets(super().format(record))
+
+
 class _RedactSecretsFilter(logging.Filter):
     """Keep URL passwords and GitHub tokens out of the log file and palette (audit SEC-03/09)."""
 
@@ -150,7 +157,7 @@ def setup_logger(name: str, app=None, log_levels=None, title: str = TITLE) -> lo
         except OSError:
             pass
 
-    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    formatter = RedactingFormatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
     file_log_handler = _PrivateRotatingFileHandler(
         log_file_path(),
         maxBytes=1 * 1024 * 1024,
@@ -162,7 +169,7 @@ def setup_logger(name: str, app=None, log_levels=None, title: str = TITLE) -> lo
 
     try:
         fusion_palette_handler = FusionPaletteHandler(app, log_levels)
-        fusion_palette_handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+        fusion_palette_handler.setFormatter(RedactingFormatter("%(levelname)s: %(message)s"))
         logger.addHandler(fusion_palette_handler)
     except Exception as exc:
         logger.warning(f"Could not initialize Fusion palette logging: {exc}")

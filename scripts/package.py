@@ -74,6 +74,10 @@ FILE_MODE = 0o100644
 DIR_MODE = 0o040755
 
 
+class PackageError(RuntimeError):
+    """The package can't be built (for example, a listed file isn't committed)."""
+
+
 def asset_name(version: str) -> str:
     return f"{ADDIN_NAME}-{version}.zip"
 
@@ -81,7 +85,7 @@ def asset_name(version: str) -> str:
 def _git(*args: str) -> bytes:
     proc = subprocess.run(["git", *args], cwd=ROOT, capture_output=True)
     if proc.returncode != 0:
-        raise SystemExit(f"git {' '.join(args)} failed:\n{proc.stderr.decode(errors='replace')}")
+        raise PackageError(f"git {' '.join(args)} failed:\n{proc.stderr.decode(errors='replace')}")
     return proc.stdout
 
 
@@ -101,7 +105,7 @@ def build(ref: str = "HEAD", out_dir: Path = ROOT / "dist") -> Path:
     manifest = json.loads(contents["Push_To_GitHub.manifest"].decode("utf-8"))
     version = str(manifest.get("version", ""))
     if not VERSION_RE.match(version):
-        raise SystemExit(f"Manifest version {version!r} is not X.Y.Z")
+        raise PackageError(f"Manifest version {version!r} is not X.Y.Z")
 
     out_dir.mkdir(parents=True, exist_ok=True)
     zip_path = out_dir / asset_name(version)
@@ -260,7 +264,11 @@ def _main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "build":
-        zip_path = build(args.ref, Path(args.out))
+        try:
+            zip_path = build(args.ref, Path(args.out))
+        except PackageError as exc:
+            print(f"Build failed: {exc}", file=sys.stderr)
+            return 1
     else:
         zip_path = Path(args.zip)
     problems = validate(zip_path, args.expect_version)

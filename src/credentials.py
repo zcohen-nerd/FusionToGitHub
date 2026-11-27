@@ -25,9 +25,13 @@ class CredentialStore(Protocol):
     available: bool
 
     def get(self, name: str) -> Optional[Dict[str, str]]:
-        """Return {"username", "token"} for profile *name*, or None."""
+        """Return {"username", "token", "host"} for profile *name*, or None.
 
-    def set(self, name: str, username: str, token: str) -> None: ...
+        "host" is the server the token was saved for ("" for tokens saved by
+        versions before 0.5.0, which didn't record it).
+        """
+
+    def set(self, name: str, username: str, token: str, host: str = "") -> None: ...
 
     def delete(self, name: str) -> None:
         """Remove the token for *name*; no error if there is none."""
@@ -52,10 +56,10 @@ class MemoryCredentialStore:
         item = self.items.get(target_name(name))
         return dict(item) if item else None
 
-    def set(self, name, username, token):
+    def set(self, name, username, token, host=""):
         if not token:
             raise CredentialError("The token is empty.")
-        self.items[target_name(name)] = {"username": username or "", "token": token}
+        self.items[target_name(name)] = {"username": username or "", "token": token, "host": host or ""}
 
     def delete(self, name):
         self.items.pop(target_name(name), None)
@@ -74,7 +78,7 @@ class UnavailableCredentialStore:
     def get(self, name):
         return None
 
-    def set(self, name, username, token):
+    def set(self, name, username, token, host=""):
         raise CredentialError("Storing a token is only supported on Windows.")
 
     def delete(self, name):
@@ -144,11 +148,16 @@ if IS_WINDOWS:
             try:
                 cred = pointer.contents
                 blob = ctypes.string_at(cred.CredentialBlob, cred.CredentialBlobSize)
-                return {"username": cred.UserName or "", "token": blob.decode("utf-16-le")}
+                return {
+                    "username": cred.UserName or "",
+                    "token": blob.decode("utf-16-le"),
+                    # The server the token was saved for (0.5.0+); see set().
+                    "host": cred.Comment or "",
+                }
             finally:
                 _CredFree(pointer)
 
-        def set(self, name, username, token):
+        def set(self, name, username, token, host=""):
             if not token:
                 raise CredentialError("The token is empty.")
             blob = token.encode("utf-16-le")
@@ -157,7 +166,7 @@ if IS_WINDOWS:
             cred.Flags = 0
             cred.Type = _CRED_TYPE_GENERIC
             cred.TargetName = target_name(name)
-            cred.Comment = None
+            cred.Comment = host or None
             cred.LastWritten = _FILETIME(0, 0)
             cred.CredentialBlobSize = len(blob)
             cred.CredentialBlob = ctypes.cast(buffer, ctypes.c_void_p)
@@ -179,7 +188,7 @@ if IS_WINDOWS:
             item = self.get(old)
             if item is None:
                 return
-            self.set(new, item["username"], item["token"])
+            self.set(new, item["username"], item["token"], item.get("host", ""))
             self.delete(old)
 
 

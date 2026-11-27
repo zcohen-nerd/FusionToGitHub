@@ -4,6 +4,7 @@ Behaviour is checked through what a user would see and what ends up on disk
 or on the (local, bare) "GitHub" remote — not through internal calls.
 """
 
+import json
 import os
 import unittest
 from pathlib import Path
@@ -68,7 +69,8 @@ class SelectionAndValidationTests(AddinTestCase):
         }, meta={"lastSelectedRepo": "A"})
         command = self.open_dialog()
         self.assertEqual(item(command, "exportSubfolder").value, "cad")
-        click(command, "managePat")  # no token yet → "Add one now?" (Yes)
+        self.answer(YES)  # no token yet → "Add one now?"
+        click(command, "managePat")
         self.assertTrue(item(command, "patToken").isVisible)
         item(command, "patToken").value = "half-typed"
         select_item(command, "repoSelector", "B")
@@ -115,6 +117,7 @@ class SelectionAndValidationTests(AddinTestCase):
         command = self.open_dialog()
         stl_dropdown = next(i for i in item(command, "formatSettingsTable").cells.values() if i.id.startswith("formatSetting_stl"))
         select_item(command, stl_dropdown.id, "Low (fast)")
+        self.answer(YES)  # the one-time publication notice
         self.assertFalse(press_ok(command).executeFailed, self.ui.texts())
         self.assertEqual(self.profile("Designs")["formatSettings"], {"stl": {"meshRefinement": "low"}})
 
@@ -134,7 +137,11 @@ class TokenTests(AddinTestCase):
         token_input.value = "ghp_" + "t" * 36
         item(command, "patUsername").value = "octocat"
         click(command, "patSave")
-        self.assertEqual(self.creds.get("Designs"), {"username": "octocat", "token": "ghp_" + "t" * 36})
+        # Bound to the repository's server (here from its saved address,
+        # because the sandbox remote is a local folder).
+        self.assertEqual(self.creds.get("Designs"),
+                         {"username": "octocat", "token": "ghp_" + "t" * 36, "host": "github.com"})
+        self.assertIn("for github.com", self.last_message())
         self.assertEqual(token_input.value, "")
         self.assertFalse(token_input.isVisible)
         self.assertTrue(item(command, "useStoredPat").value)
@@ -142,6 +149,7 @@ class TokenTests(AddinTestCase):
 
     def test_empty_token_is_not_saved(self):
         command = self.open_dialog()
+        self.answer(YES)  # "Add one now?"
         click(command, "managePat")
         click(command, "patSave")
         self.assertIsNone(self.creds.get("Designs"))
@@ -236,6 +244,7 @@ class PushTests(AddinTestCase):
         self.design("Bracket")
         command = self.open_dialog()
         item(command, "commitMsgPush").value = "holes 5mm"
+        self.answer(YES)  # the one-time publication notice
         args = press_ok(command)
         self.assertFalse(args.executeFailed, self.ui.texts())
         success = self.last_message()
@@ -280,14 +289,17 @@ class PushTests(AddinTestCase):
         self.seed({"Designs": profile}, meta={"lastSelectedRepo": "Designs"})
         self.design()
         command = self.open_dialog()
+        self.answer(YES)  # the one-time publication notice
         args = press_ok(command)  # inputBox queue empty → cancelled
         self.assertTrue(args.executeFailed)
         self.assertEqual(self.remote_branches(), [])
+        self.assertNotIn("gitIdentity", self.profile("Designs"))
 
     def test_missing_stored_token_is_refused_before_pushing(self):
         self.seed({"Designs": self.work_profile(useStoredPat=True)}, meta={"lastSelectedRepo": "Designs"})
         self.design()
         command = self.open_dialog()
+        self.answer(YES)  # the one-time publication notice
         args = press_ok(command)
         self.assertTrue(args.executeFailed)
         self.assertIn("No stored token", self.last_message())
@@ -298,6 +310,7 @@ class PushTests(AddinTestCase):
         self.seed({"Designs": self.work_profile()}, meta={"lastSelectedRepo": "Designs"})
         self.design()
         command = self.open_dialog()
+        self.answer(YES)  # the one-time publication notice
         args = press_ok(command)
         self.assertTrue(args.executeFailed)
         self.assertTrue(any(t.startswith("Push failed") for t in self.ui.texts()), self.ui.texts())
@@ -356,6 +369,84 @@ class LogAndPrivacyTests(AddinTestCase):
         select_item(command, "logLevel", "DEBUG")
         self.assertEqual(addin_logging.current_log_level_name, "DEBUG")
         select_item(command, "logLevel", "INFO")
+
+
+class ReviewFixDialogTests(AddinTestCase):
+    """Regressions for the S3 independent review findings."""
+
+    TOKEN = "ghp_" + "w" * 36
+
+    def test_token_entry_closes_when_switching_to_setup(self):
+        self.seed({"Designs": self.work_profile()}, meta={"lastSelectedRepo": "Designs"})
+        command = self.open_dialog()
+        self.answer(YES)  # "Add one now?"
+        click(command, "managePat")
+        item(command, "patToken").value = self.TOKEN
+        select_item(command, "repoSelector", ADD_NEW_OPTION)
+        self.assertFalse(item(command, "patToken").isVisible)
+        self.assertEqual(item(command, "patToken").value, "")
+
+    def test_remove_clears_the_setup_form(self):
+        self.seed({"Designs": self.work_profile()}, meta={"lastSelectedRepo": "Designs"})
+        command = self.open_dialog()
+        self.answer(YES)  # remove? (no stored token, so no second question)
+        click(command, "removeRepo")
+        self.assertEqual(selected(command, "repoSelector"), [ADD_NEW_OPTION])
+        self.assertEqual(item(command, "gitUrl").value, "")
+        self.assertEqual(item(command, "newRepoName").value, "")
+
+    def test_edit_keeps_choices_not_yet_pushed(self):
+        self.seed({"Designs": self.work_profile(defaultMessage="saved note")}, meta={"lastSelectedRepo": "Designs"})
+        command = self.open_dialog()
+        item(command, "defaultMessageConfig").value = "unsaved note"
+        click(command, "editRepo")
+        item(command, "editRepoName").value = "Renamed"
+        click(command, "saveRepoEdit")
+        self.assertEqual(selected(command, "repoSelector"), ["Renamed"])
+        self.assertEqual(item(command, "defaultMessageConfig").value, "unsaved note")
+        self.assertIn("Renamed", self.settings()["repositories"])
+
+    def test_identity_for_all_repositories_only_when_chosen(self):
+        profile = self.work_profile()
+        del profile["gitIdentity"]
+        self.seed({"Designs": profile}, meta={"lastSelectedRepo": "Designs"})
+        self.design()
+        command = self.open_dialog()
+        self.ui.input_answers.extend([("Ada Lovelace", False), ("ada@example.invalid", False)])
+        self.answer(YES, YES)  # publication notice; use for all repositories
+        args = press_ok(command)
+        self.assertFalse(args.executeFailed, self.ui.texts())
+        self.assertIn("ada@example.invalid", Path(self.global_config).read_text(encoding="utf-8"))
+        self.assertEqual(self.profile("Designs")["gitIdentity"]["email"], "ada@example.invalid")
+
+    def test_read_only_settings_are_never_overwritten(self):
+        future = {"schemaVersion": 99, "meta": {"lastSelectedRepo": "Designs"},
+                  "repositories": {"Designs": self.work_profile()}}
+        Path(self.settings_path).write_text(json.dumps(future), encoding="utf-8")
+        before = Path(self.settings_path).read_bytes()
+        self.design()
+        command = self.open_dialog()
+        args = press_ok(command)
+        self.assertTrue(args.executeFailed)
+        self.assertEqual(Path(self.settings_path).read_bytes(), before)
+        self.assertEqual(self.remote_branches(), [])
+
+    def test_tracebacks_in_the_log_are_redacted(self):
+        import logging
+
+        import addin_logging
+
+        formatter = addin_logging.RedactingFormatter("%(message)s")
+        try:
+            raise RuntimeError(f"fatal: https://bob:{self.TOKEN}@github.com/a/b.git")
+        except RuntimeError:
+            import sys
+
+            record = logging.LogRecord("t", logging.ERROR, __file__, 1, "push failed", None, sys.exc_info())
+        text = formatter.format(record)
+        self.assertIn("push failed", text)
+        self.assertIn("Traceback", text)
+        self.assertNotIn(self.TOKEN, text)
 
 
 if __name__ == "__main__":

@@ -9,15 +9,20 @@ on a background thread (decision Q6):
 1. ``plan()`` runs on Fusion's main thread. It may ask the user questions
    (identity, the one-time publication notice) and reads settings and the
    stored token. It returns a ``PushPlan``: plain data, no Fusion objects.
-2. ``execute(plan)`` runs git only. It never touches Fusion; its only
-   interaction is through the ``GitUI`` it is given.
+2. ``execute(plan)`` runs git only and makes no Fusion API calls itself. Its
+   interaction goes through the ``GitUI`` it is given, which today shows
+   Fusion message boxes; a background thread must hand those calls back to
+   the main thread (S4).
 
 Profile edits never delete local folders, GitHub repositories, Git history
-or stored tokens unless the caller explicitly asks for that.
+or stored tokens unless the caller explicitly asks for that, and they are
+all-or-nothing: a failed edit or removal leaves settings and tokens as they
+were.
 """
 
 from __future__ import annotations
 
+import copy
 import logging
 import os
 from dataclasses import dataclass, field
@@ -72,6 +77,7 @@ class PushPlan:
     legacy_history_file: Optional[str] = LEGACY_HISTORY_FILE
     identity: Optional[Dict[str, str]] = None
     pat_credentials: Optional[Dict[str, str]] = field(default=None, repr=False)
+    notes: List[str] = field(default_factory=list)
 
 
 def design_destination(profile: Dict[str, Any], design_id: str, design_name: str) -> Tuple[str, str]:
@@ -81,21 +87,47 @@ def design_destination(profile: Dict[str, Any], design_id: str, design_name: str
     even if the design is renamed (decision Q11). An Export Subfolder setting
     is the parent folder; one that already contains ``{filename}`` is used as
     the design's folder itself.
+
+    ``HISTORY.md`` always lives in a folder that is the same on every push: a
+    ``{timestamp}`` part of the template (a new folder per push) applies to
+    the exports only, so the history keeps accumulating in one file.
     """
     template = normalize_export_subfolder(profile.get("exportSubfolder", ""))
     folder_name = design_folder(profile, design_id, design_name)
-    if "{filename}" in template:
-        folder = expand_export_subfolder(template, folder_name)
+
+    def place(tmpl: str) -> str:
+        if "{filename}" in tmpl:
+            return expand_export_subfolder(tmpl, folder_name)
+        return "/".join(p for p in (expand_export_subfolder(tmpl, folder_name), folder_name) if p)
+
+    export_folder = place(template)
+    segments = template.split("/") if template else []
+    stable = []
+    for segment in segments:
+        if "{timestamp}" in segment:
+            break
+        stable.append(segment)
+    stable_template = "/".join(stable)
+    if "{filename}" in template and "{filename}" not in stable_template:
+        # The design's own folder comes after the per-push part; keep the
+        # history next to the stable parent, in a folder named for the design.
+        history_folder = "/".join(p for p in (expand_export_subfolder(stable_template, folder_name), folder_name) if p)
     else:
-        folder = "/".join(p for p in (expand_export_subfolder(template, folder_name), folder_name) if p)
-    return folder, f"{folder}/{HISTORY_FILE_NAME}"
+        history_folder = place(stable_template)
+    return export_folder, f"{history_folder}/{HISTORY_FILE_NAME}"
 
 
-def _host(url: str) -> str:
+def server_of(url: str) -> str:
+    """The server part of a Git address, lower case, with any port ("" if unknown)."""
+    url = (url or "").strip()
     try:
-        if url.startswith("git@") and ":" in url:
-            return url[len("git@"):].split(":", 1)[0].lower()
-        return (urlsplit(url).hostname or "").lower()
+        if "://" not in url and "@" in url and ":" in url.split("@", 1)[1]:
+            return url.split("@", 1)[1].split(":", 1)[0].lower()  # git@host:owner/repo
+        parsed = urlsplit(url)
+        host = (parsed.hostname or "").lower()
+        if host and parsed.port:
+            host += f":{parsed.port}"
+        return host
     except ValueError:
         return ""
 
@@ -113,7 +145,7 @@ class PushController:
         self.logger = logger
         self.git = git
 
-    # -- profiles ----------------------------------------------------------
+    # -- helpers -----------------------------------------------------------
 
     def profile(self, name: str) -> Dict[str, Any]:
         profile = self.store.get(name)
@@ -121,17 +153,63 @@ class PushController:
             raise PushRefused(f"The saved repository '{name}' no longer exists.")
         return profile
 
-    def remove_profile(self, name: str, delete_token: bool = False) -> Dict[str, Any]:
+    def _require_writable(self) -> None:
+        if self.store.report.read_only:
+            raise SettingsError("Settings are read-only for this session, so nothing can be changed.")
+
+    def origin_url(self, repo_path: str) -> str:
+        proc = self.git.git_run(repo_path, "remote", "get-url", "--push", "origin", check=False)
+        return (proc.stdout or "").strip() if proc.returncode == 0 else ""
+
+    def _transaction(self, change: Callable[[], Any]) -> Any:
+        """Apply *change* to the settings and save; on any failure restore them exactly."""
+        self._require_writable()
+        snapshot = copy.deepcopy(self.store.data)
+        invalid = copy.deepcopy(self.store.report.invalid_profiles)
+        try:
+            result = change()
+            self.store.save()
+            return result
+        except BaseException:
+            self.store.data = snapshot
+            self.store.report.invalid_profiles = invalid
+            raise
+
+    # -- stored token ------------------------------------------------------
+
+    def store_token(self, name: str, username: str, token: str) -> str:
+        """Save a token for a profile, bound to the server its repository is on.
+
+        Returns that server. The binding is stored with the token, so it moves
+        with the token on rename and survives removing the profile.
+        """
+        profile = self.profile(name)
+        repo_path = os.path.expanduser(profile.get("path", ""))
+        # The server the push will really use; the saved address only if the
+        # folder's remote has none (the push-time check uses the remote).
+        host = server_of(self.origin_url(repo_path)) or server_of(profile.get("url", ""))
+        if not host:
+            raise CredentialError("This repository has no GitHub address, so a token can't be stored for it.")
+        self.credentials.set(name, username, token, host)
+        return host
+
+    # -- profiles ----------------------------------------------------------
+
+    def remove_profile(self, name: str, delete_token: bool = False) -> Tuple[Dict[str, Any], List[str]]:
         """Forget a saved repository; optionally delete its stored token.
 
         The local folder, the GitHub repository and its history are never
-        touched. Returns the removed profile.
+        touched. The settings are saved first; the token is only deleted once
+        that has succeeded. Returns (removed profile, notes for the user).
         """
-        removed = self.store.remove(name)
+        removed = self._transaction(lambda: self.store.remove(name))
+        notes: List[str] = []
         if delete_token:
-            self.credentials.delete(name)
-        self.store.save()
-        return removed
+            try:
+                self.credentials.delete(name)
+            except CredentialError as exc:
+                notes.append(f"The stored token couldn't be deleted ({exc}); remove it in Windows Credential Manager.")
+        return removed, notes
 
     def edit_profile(
         self,
@@ -141,35 +219,44 @@ class PushController:
         path: Optional[str] = None,
         update_origin: Optional[Callable[[str, str, str], bool]] = None,
     ) -> Tuple[str, List[str]]:
-        """Change a saved repository's name, address or local folder.
+        """Change a saved repository's name, address or local folder, all or nothing.
 
-        Returns (final name, notes for the user). A new address is only
-        written to the local repository's ``origin`` if *update_origin*
-        (repo_path, old_url, new_url) agrees. If the address moves to a
-        different server, "Use Stored Token" is turned off, so a token is
-        never sent to a host it wasn't stored for.
+        Everything is checked before anything changes. The local repository's
+        ``origin`` is rewritten only if *update_origin* (repo_path, old_url,
+        new_url) agrees, and only after the settings were saved. Moving to a
+        different folder or server turns off "Use Stored Token", so a token is
+        never sent somewhere it wasn't stored for. Returns (final name, notes).
         """
-        notes: List[str] = []
+        self._require_writable()
         profile = self.profile(name)
+        notes: List[str] = []
         changes: Dict[str, Any] = {}
+
+        final = name
+        if new_name is not None and new_name.strip() != name:
+            final = self.store.check_name(new_name)
+            if final in self.store.repositories:
+                raise SettingsError(f"A repository named '{final}' already exists.")
+
         if path is not None and path != profile.get("path"):
-            expanded = os.path.expanduser(path)
-            if not os.path.isdir(os.path.join(expanded, ".git")):
+            if not os.path.isdir(os.path.join(os.path.expanduser(path), ".git")):
                 raise SettingsError(f"'{path}' is not a Git repository folder.")
             changes["path"] = path
-        if url is not None and url != profile.get("url", ""):
+            if profile.get("useStoredPat"):
+                changes["useStoredPat"] = False
+                notes.append(
+                    "'Use Stored Token' was turned off because the repository now uses a different "
+                    "folder. Turn it on again once you've checked the token is right for it."
+                )
+
+        old_url = profile.get("url", "")
+        repo_path = os.path.expanduser(changes.get("path", profile.get("path", "")))
+        repoint = False
+        if url is not None and url != old_url:
             if git_core.url_has_embedded_secret(url):
                 raise SettingsError("The address contains a password or token; use the plain address.")
-            old_url = profile.get("url", "")
-            repo_path = os.path.expanduser(changes.get("path", profile.get("path", "")))
-            if update_origin is not None and update_origin(repo_path, old_url, url):
-                proc = self.git.git_run(repo_path, "remote", "set-url", "origin", url, check=False)
-                if proc.returncode != 0:
-                    raise SettingsError(f"Couldn't update the folder's GitHub address: {proc.stderr.strip()}")
-                notes.append("The local folder now points to the new address.")
-            else:
-                notes.append("The local folder still points to the old address.")
-            if profile.get("useStoredPat") and _host(old_url) != _host(url):
+            repoint = bool(update_origin and update_origin(repo_path, old_url, url))
+            if profile.get("useStoredPat") and server_of(old_url) != server_of(url):
                 changes["useStoredPat"] = False
                 notes.append(
                     "'Use Stored Token' was turned off because the repository moved to another "
@@ -177,16 +264,31 @@ class PushController:
                 )
             changes["url"] = url
             changes["publicationNoticeAccepted"] = False  # a new destination: say it again
-        if changes:
-            self.store.update(name, changes)
-        final = name
-        if new_name is not None and new_name.strip() != name:
-            final = self.store.rename(name, new_name)
+
+        def apply() -> str:
+            if changes:
+                self.store.update(name, changes)
+            if final != name:
+                self.store.rename(name, final)
+            return final
+
+        self._transaction(apply)
+
+        # The settings are saved; now the parts outside them.
+        if final != name:
             try:
                 self.credentials.rename(name, final)
             except CredentialError as exc:
                 notes.append(f"The stored token couldn't be moved to the new name: {exc}")
-        self.store.save()
+        if "url" in changes:
+            if repoint:
+                proc = self.git.git_run(repo_path, "remote", "set-url", "origin", url, check=False)
+                if proc.returncode == 0:
+                    notes.append("The local folder now points to the new address.")
+                else:
+                    notes.append(f"The local folder's address couldn't be updated: {(proc.stderr or '').strip()}")
+            else:
+                notes.append("The local folder still points to the old address.")
         return final, notes
 
     # -- push: main-thread phase -------------------------------------------
@@ -195,14 +297,12 @@ class PushController:
         return not profile.get("publicationNoticeAccepted")
 
     def publication_notice_text(self, profile: Dict[str, Any], repo_path: str) -> str:
-        url = profile.get("url") or ""
-        if not url:
-            proc = self.git.git_run(repo_path, "remote", "get-url", "origin", check=False)
-            url = (proc.stdout or "").strip()
+        url = profile.get("url") or self.origin_url(repo_path)
         return publication_notice(git_core.redact_secrets(url))
 
     def resolve_identity(
-        self, name: str, profile: Dict[str, Any], repo_path: str, ask: Optional[IdentityPrompt]
+        self, name: str, profile: Dict[str, Any], repo_path: str, ask: Optional[IdentityPrompt],
+        notes: Optional[List[str]] = None,
     ) -> Optional[Dict[str, str]]:
         """The name and email to commit with (decision Q14).
 
@@ -231,11 +331,48 @@ class PushController:
         if not user_name or "@" not in email:
             raise PushRefused("A name and a valid email address are both needed.")
         identity = {"name": user_name, "email": email}
-        if use_everywhere:
-            for key, value in (("user.name", user_name), ("user.email", email)):
-                self.git.git_run(repo_path, "config", "--global", key, value)
         self.store.update(name, {"gitIdentity": identity})
+        if use_everywhere:
+            try:
+                for key, value in (("user.name", user_name), ("user.email", email)):
+                    self.git.git_run(repo_path, "config", "--global", key, value)
+            except git_core.GitError as exc:
+                message = (
+                    "Your name and email were saved for this repository, but couldn't be saved "
+                    f"for all repositories: {exc}"
+                )
+                if notes is not None:
+                    notes.append(message)
+                if self.logger:
+                    self.logger.warning(message)
         return identity
+
+    def _token_for(self, name: str, repo_path: str) -> Dict[str, str]:
+        """The stored token, after checking it was stored for this repository's server."""
+        if not self.credentials.available:
+            raise PushRefused("Stored tokens aren't supported on this computer; untick 'Use Stored Token'.")
+        try:
+            pat = self.credentials.get(name)
+        except CredentialError as exc:
+            raise PushRefused(f"The stored token couldn't be read: {exc}") from exc
+        if not pat:
+            raise PushRefused("No stored token was found. Use 'Manage Token…' to add one first.")
+        server = server_of(self.origin_url(repo_path))
+        bound = (pat.get("host") or "").lower()
+        if not bound:
+            # Saved before 0.5.0, without its server: bind it to this one now.
+            try:
+                self.credentials.set(name, pat.get("username", ""), pat["token"], server)
+            except CredentialError as exc:
+                if self.logger:
+                    self.logger.warning("Couldn't record the stored token's server: %s", exc)
+        elif bound != server:
+            raise PushRefused(
+                f"The stored token was saved for {bound}, but this repository's address is on "
+                f"{server or 'an unknown server'}, so the token was not used. Untick 'Use Stored "
+                "Token', or store a token for this server with 'Manage Token…'."
+            )
+        return {"username": pat.get("username", ""), "token": pat["token"]}
 
     def plan(
         self,
@@ -252,27 +389,23 @@ class PushController:
             raise PushRefused(f"The folder '{repo_path}' for '{request.profile_name}' is not a Git repository.")
         if not exported_files:
             raise PushRefused("No files were exported, so there is nothing to push.")
+        notes: List[str] = []
+        try:
+            if self.needs_publication_notice(profile):
+                if not confirm(self.publication_notice_text(profile, repo_path)):
+                    raise PushCancelled()
+                self.store.update(request.profile_name, {"publicationNoticeAccepted": True})
 
-        if self.needs_publication_notice(profile):
-            if not confirm(self.publication_notice_text(profile, repo_path)):
-                raise PushCancelled()
-            self.store.update(request.profile_name, {"publicationNoticeAccepted": True})
+            identity = self.resolve_identity(request.profile_name, profile, repo_path, ask_identity, notes)
+            pat = self._token_for(request.profile_name, repo_path) if profile.get("useStoredPat") else None
 
-        identity = self.resolve_identity(request.profile_name, profile, repo_path, ask_identity)
-
-        pat = None
-        if profile.get("useStoredPat"):
-            if not self.credentials.available:
-                raise PushRefused("Stored tokens aren't supported on this computer; untick 'Use Stored Token'.")
-            pat = self.credentials.get(request.profile_name)
-            if not pat:
-                raise PushRefused("No stored token was found. Use 'Manage Token…' to add one first.")
-
-        profile = self.profile(request.profile_name)  # re-read: updates above changed it
-        folder, history_file = design_destination(profile, request.design_id, request.design_name)
-        exports = [(path, f"{folder}/{os.path.basename(path)}") for path in exported_files]
-        self.store.update(request.profile_name, {"designs": profile.get("designs", {})})
-        self.store.save()
+            profile = self.profile(request.profile_name)  # re-read: updates above changed it
+            folder, history_file = design_destination(profile, request.design_id, request.design_name)
+            exports = [(path, f"{folder}/{os.path.basename(path)}") for path in exported_files]
+            self.store.update(request.profile_name, {"designs": profile.get("designs", {})})
+            self.store.save()
+        except (SettingsError, OSError, git_core.GitError, ValueError) as exc:
+            raise PushRefused(f"The push couldn't be prepared: {git_core.redact_secrets(str(exc))}") from exc
 
         override = (request.branch_override or "").strip()
         return PushPlan(
@@ -290,14 +423,18 @@ class PushController:
             history_title=f"History: {request.design_name}",
             identity=identity,
             pat_credentials=pat,
+            notes=notes,
         )
 
-    # -- push: git phase (no Fusion; background-safe) -----------------------
+    # -- push: git phase ----------------------------------------------------
 
     def execute(
         self, plan: PushPlan, ui: git_core.GitUI, on_step: Optional[Callable[[str], None]] = None
     ) -> Optional[Dict[str, Any]]:
-        """Run the push. Returns push_export's result: a dict, {"cancelled": True}, or None."""
+        """Run the push. Returns push_export's result: a dict, {"cancelled": True}, or None.
+
+        Makes no Fusion calls itself; *ui* and *on_step* are the only callbacks.
+        """
         return self.git.push_export(
             plan.repo_path,
             plan.exports,
@@ -326,4 +463,5 @@ __all__ = [
     "PushRefused",
     "PushRequest",
     "design_destination",
+    "server_of",
 ]

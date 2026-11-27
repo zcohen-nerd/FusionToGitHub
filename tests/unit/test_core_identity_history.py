@@ -7,12 +7,11 @@ never read or changed.
 
 import hashlib
 import os
-import shutil
 import tempfile
 import unittest
 from unittest import mock
 
-import _paths  # noqa: F401
+import _paths
 import fusion_git_core as core
 
 
@@ -38,6 +37,10 @@ class GitSandbox(unittest.TestCase):
 
     def setUp(self):
         self.base = tempfile.mkdtemp(prefix="ftg_core_")
+        # Registered first, so it runs last: after later clean-ups (for
+        # example closing the add-in's log file, which Windows won't let us
+        # delete while it is open).
+        self.addCleanup(_paths.force_rmtree, self.base)
         self.global_config = os.path.join(self.base, "global.gitconfig")
         open(self.global_config, "w").close()
         isolated = {
@@ -59,9 +62,6 @@ class GitSandbox(unittest.TestCase):
         core.git_run(self.base, "init", "--bare", "-b", "main", self.origin)
         core.git_run(self.base, "clone", self.origin, self.work)
         self.identity = {"name": "Ada Lovelace", "email": "ada@example.invalid"}
-
-    def tearDown(self):
-        shutil.rmtree(self.base, ignore_errors=True)
 
     def export(self, name, content):
         folder = os.path.join(self.base, "exports")

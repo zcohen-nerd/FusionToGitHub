@@ -1,7 +1,8 @@
 """Credential store behaviour.
 
-The Windows Credential Manager test only runs in CI (the CI environment
-variable is set), so it never writes to a developer's own credential vault.
+The Windows Credential Manager test only runs when FTG_REAL_VAULT_TESTS=1
+(set by the Windows CI jobs), so it never writes to a developer's own vault
+by accident.
 """
 
 import os
@@ -24,13 +25,15 @@ class CredentialStoreContract:
         renamed = name + "-renamed"
         try:
             self.assertIsNone(store.get(name))
-            store.set(name, "octocat", "ghp_" + "x" * 36)
-            self.assertEqual(store.get(name), {"username": "octocat", "token": "ghp_" + "x" * 36})
-            store.set(name, "", "ghp_" + "y" * 36)  # replacing
+            store.set(name, "octocat", "ghp_" + "x" * 36)  # as before 0.5.0: no server
+            self.assertEqual(store.get(name), {"username": "octocat", "token": "ghp_" + "x" * 36, "host": ""})
+            store.set(name, "", "ghp_" + "y" * 36, "github.com")  # replacing, bound to a server
             self.assertEqual(store.get(name)["token"], "ghp_" + "y" * 36)
+            self.assertEqual(store.get(name)["host"], "github.com")
             store.rename(name, renamed)
             self.assertIsNone(store.get(name))
             self.assertEqual(store.get(renamed)["token"], "ghp_" + "y" * 36)
+            self.assertEqual(store.get(renamed)["host"], "github.com")  # the binding moves too
             store.delete(renamed)
             store.delete(renamed)  # deleting twice is fine
             self.assertIsNone(store.get(renamed))
@@ -49,7 +52,10 @@ class MemoryStoreTests(CredentialStoreContract, unittest.TestCase):
         self.assertEqual(cr.target_name("My Repo"), "FusionToGitHub::My Repo")
 
 
-@unittest.skipUnless(os.name == "nt" and os.environ.get("CI"), "Windows Credential Manager: CI only")
+@unittest.skipUnless(
+    os.name == "nt" and os.environ.get("FTG_REAL_VAULT_TESTS") == "1",
+    "real Windows Credential Manager: only with FTG_REAL_VAULT_TESTS=1 (CI)",
+)
 class WindowsStoreTests(CredentialStoreContract, unittest.TestCase):
     def make(self):
         return cr.default_store()

@@ -30,10 +30,11 @@ import copy
 import json
 import os
 import re
-import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+
+from fusion_git_core import url_has_embedded_secret
 
 SCHEMA_VERSION = 1
 LEGACY_META_KEY = "__meta__"
@@ -62,6 +63,16 @@ class LoadReport:
     read_only: bool = False
 
 
+def _write_private(path: str, data: bytes) -> None:
+    """Write *data* to a new file that is owner-only from the moment it exists (POSIX)."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0)
+    fd = os.open(path, flags, 0o600)
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(data)
+        fh.flush()
+        os.fsync(fh.fileno())
+
+
 def _now_stamp() -> str:
     return datetime.now().strftime("%Y%m%d-%H%M%S")
 
@@ -76,6 +87,8 @@ def validate_profile(profile: Any) -> List[str]:
             problems.append(f"'{key}' is not text")
     if not profile.get("path"):
         problems.append("has no local folder ('path')")
+    if isinstance(profile.get("url"), str) and url_has_embedded_secret(profile["url"]):
+        problems.append("has a password or token in its GitHub address ('url')")
     formats = profile.get("exportFormats", [])
     if not isinstance(formats, list) or not all(isinstance(f, str) for f in formats):
         problems.append("'exportFormats' is not a list of names")
@@ -103,8 +116,11 @@ def migrate(raw: Dict[str, Any]) -> Dict[str, Any]:
     """Convert any supported older layout to the current schema (returns a new dict)."""
     if raw.get("schemaVersion") == SCHEMA_VERSION:
         data = copy.deepcopy(raw)
-        data.setdefault("meta", {})
-        data.setdefault("repositories", {})
+        # A hand-edited file can have the right version but the wrong shapes.
+        if not isinstance(data.get("meta"), dict):
+            data["meta"] = {}
+        if not isinstance(data.get("repositories"), dict):
+            data["repositories"] = {}
         return data
     # Version 0 (before 0.5.0): {"<repo name>": {...}, "__meta__": {...}}
     meta = raw.get(LEGACY_META_KEY, {})
@@ -152,10 +168,28 @@ class SettingsStore:
         return parsed
 
     def _preserve(self, path: str, suffix: str) -> Optional[str]:
-        """Copy *path* to ``<settings file>.<suffix>-<timestamp>``; None if that failed."""
+        """Copy *path* to ``<settings file>.<suffix>-<timestamp>``; None if that failed.
+
+        If an identical copy was already kept (the same damaged file seen on
+        an earlier load), that copy is returned instead of making another.
+        """
+        content = b""
+        try:
+            with open(path, "rb") as fh:
+                content = fh.read()
+            directory = os.path.dirname(os.path.abspath(self.path)) or "."
+            prefix = os.path.basename(self.path) + f".{suffix}-"
+            for name in sorted(os.listdir(directory)):
+                if name.startswith(prefix):
+                    existing = os.path.join(directory, name)
+                    with open(existing, "rb") as fh:
+                        if fh.read() == content:
+                            return existing
+        except OSError:
+            pass
         target = f"{self.path}.{suffix}-{_now_stamp()}"
         try:
-            shutil.copyfile(path, target)
+            _write_private(target, content)
             self._make_private(target)
             return target
         except OSError:
@@ -265,7 +299,8 @@ class SettingsStore:
             backup = self.path + ".v0-backup"
             if not os.path.exists(backup):
                 try:
-                    shutil.copyfile(self.path, backup)
+                    with open(self.path, "rb") as fh:
+                        _write_private(backup, fh.read())
                 except OSError as exc:
                     raise SettingsError(
                         f"Couldn't back up the old settings file before converting it: {exc}"
@@ -275,10 +310,7 @@ class SettingsStore:
         directory = os.path.dirname(os.path.abspath(self.path)) or "."
         os.makedirs(directory, exist_ok=True)
         payload = json.dumps(self.data, indent=4, ensure_ascii=False).encode("utf-8")
-        with open(self.temp_path, "wb") as fh:
-            fh.write(payload)
-            fh.flush()
-            os.fsync(fh.fileno())
+        _write_private(self.temp_path, payload)
         self._make_private(self.temp_path)
         os.replace(self.temp_path, self.path)
         if not IS_WINDOWS:
@@ -320,6 +352,11 @@ class SettingsStore:
 
     def add(self, name: str, profile: Dict[str, Any]) -> str:
         clean = self.check_name(name)
+        if clean in self.report.invalid_profiles:
+            raise SettingsError(
+                f"'{clean}' is the name of a saved repository that is hidden because its settings "
+                "have problems. Choose another name, or fix that entry in the settings file."
+            )
         if clean in self.repositories:
             raise SettingsError(f"A repository named '{clean}' already exists.")
         problems = validate_profile(profile)
@@ -397,6 +434,15 @@ def design_folder(profile: Dict[str, Any], design_id: str, design_name: str) -> 
     if isinstance(entry, dict) and entry.get("folder"):
         entry["name"] = design_name
         return entry["folder"]
+    if not design_id.startswith("name:"):
+        # The same design pushed before it was saved to the cloud had a
+        # name-based id; it now has a stable one. Keep its folder and history.
+        for provisional in (f"name:{design_name}", f"name:{safe_folder_name(design_name)}"):
+            earlier = designs.get(provisional)
+            if isinstance(earlier, dict) and earlier.get("folder"):
+                designs[design_id] = designs.pop(provisional)
+                designs[design_id]["name"] = design_name
+                return designs[design_id]["folder"]
     base = safe_folder_name(design_name)
     taken = {v.get("folder", "").lower() for v in designs.values() if isinstance(v, dict)}
     folder, n = base, 2

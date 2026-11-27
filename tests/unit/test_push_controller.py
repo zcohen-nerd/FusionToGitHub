@@ -2,13 +2,21 @@
 
 import os
 import unittest
+from unittest import mock
 
 import _paths  # noqa: F401
 from test_core_identity_history import GitSandbox, _UI
 
 import fusion_git_core as core
-from credentials import MemoryCredentialStore
-from push_controller import PushCancelled, PushController, PushRefused, PushRequest, design_destination
+from credentials import CredentialError, MemoryCredentialStore
+from push_controller import (
+    PushCancelled,
+    PushController,
+    PushRefused,
+    PushRequest,
+    design_destination,
+    server_of,
+)
 from settings_store import SettingsError, SettingsStore
 
 
@@ -188,6 +196,133 @@ class ProfileTests(ControllerTestCase):
         self.store.add("Other", {"path": self.work})
         with self.assertRaises(SettingsError):
             self.controller.edit_profile("Designs", new_name="Other")
+
+
+class ReviewFixTests(ControllerTestCase):
+    """Regressions for the S3 independent review findings."""
+
+    TOKEN = "ghp_" + "h" * 36
+
+    def use_https_origin(self, url="https://github.com/acme/designs.git"):
+        # Only the push address changes; nothing here contacts a server.
+        core.git_run(self.work, "remote", "set-url", "--push", "origin", url)
+
+    def ready_profile(self, **changes):
+        changes.setdefault("gitIdentity", {"name": "A", "email": "a@b.invalid"})
+        changes.setdefault("publicationNoticeAccepted", True)
+        self.store.update("Designs", changes)
+
+    def test_token_is_bound_to_its_server_and_refused_elsewhere(self):
+        self.use_https_origin()
+        self.ready_profile(useStoredPat=True)
+        self.assertEqual(self.controller.store_token("Designs", "", self.TOKEN), "github.com")
+        self.assertEqual(self.creds.get("Designs")["host"], "github.com")
+        plan = self.controller.plan(self.request(), [self.export("a.step", "A")], confirm=self.confirm_yes)
+        self.assertEqual(plan.pat_credentials["token"], self.TOKEN)
+        # The same profile pointed at a clone on another server: refused.
+        self.use_https_origin("https://git.evil.example.invalid/acme/designs.git")
+        with self.assertRaises(PushRefused) as ctx:
+            self.controller.plan(self.request(), [self.export("a.step", "A")], confirm=self.confirm_yes)
+        self.assertIn("saved for github.com", str(ctx.exception))
+        self.assertNotIn(self.TOKEN, str(ctx.exception))
+
+    def test_kept_token_is_not_inherited_by_a_new_profile_on_another_server(self):
+        self.use_https_origin()
+        self.ready_profile(useStoredPat=True)
+        self.controller.store_token("Designs", "", self.TOKEN)
+        self.controller.remove_profile("Designs", delete_token=False)
+        self.store.add("Designs", {"path": self.work, "url": "https://git.evil.example.invalid/x.git",
+                                   "useStoredPat": True, "publicationNoticeAccepted": True,
+                                   "gitIdentity": {"name": "A", "email": "a@b.invalid"}})
+        self.use_https_origin("https://git.evil.example.invalid/x.git")
+        with self.assertRaises(PushRefused):
+            self.controller.plan(self.request(), [self.export("a.step", "A")], confirm=self.confirm_yes)
+
+    def test_token_saved_before_0_5_is_bound_on_first_use(self):
+        self.use_https_origin()
+        self.ready_profile(useStoredPat=True)
+        self.creds.set("Designs", "", self.TOKEN)  # no host, as 0.4.0 stored it
+        self.controller.plan(self.request(), [self.export("a.step", "A")], confirm=self.confirm_yes)
+        self.assertEqual(self.creds.get("Designs")["host"], "github.com")
+
+    def test_failed_edit_changes_nothing(self):
+        self.store.add("Other", {"path": self.work})
+        self.store.save()
+        origin_before = core.git_run(self.work, "remote", "get-url", "origin").stdout
+        profile_before = dict(self.store.get("Designs"))
+        asked = []
+        with self.assertRaises(SettingsError):
+            self.controller.edit_profile("Designs", new_name="Other", url="https://github.com/acme/new.git",
+                                         update_origin=lambda *a: asked.append(1) or True)
+        self.assertEqual(asked, [])  # refused before asking anything
+        self.assertEqual(self.store.get("Designs"), profile_before)
+        self.assertEqual(core.git_run(self.work, "remote", "get-url", "origin").stdout, origin_before)
+        reloaded = SettingsStore(self.settings_path)
+        reloaded.load()
+        self.assertEqual(reloaded.get("Designs")["url"], profile_before["url"])
+
+    def test_edit_rolls_back_when_the_save_fails(self):
+        before = dict(self.store.get("Designs"))
+        with mock.patch.object(self.store, "save", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                self.controller.edit_profile("Designs", new_name="Renamed", url="https://github.com/acme/x.git",
+                                             update_origin=lambda *a: True)
+        self.assertEqual(self.store.get("Designs"), before)
+        self.assertIsNone(self.store.get("Renamed"))
+        self.assertNotIn("x.git", core.git_run(self.work, "remote", "get-url", "origin").stdout)
+
+    def test_folder_change_turns_off_the_stored_token(self):
+        other = os.path.join(self.base, "other-clone")
+        core.git_run(self.base, "clone", self.origin, other)
+        self.store.update("Designs", {"useStoredPat": True})
+        _, notes = self.controller.edit_profile("Designs", path=other)
+        self.assertFalse(self.store.get("Designs")["useStoredPat"])
+        self.assertTrue(any("different folder" in n for n in notes))
+
+    def test_remove_deletes_the_token_only_after_settings_are_saved(self):
+        self.creds.set("Designs", "", self.TOKEN)
+        self.store.report.read_only = True
+        with self.assertRaises(SettingsError):
+            self.controller.remove_profile("Designs", delete_token=True)
+        self.assertIsNotNone(self.creds.get("Designs"))  # token untouched
+        self.assertIsNotNone(self.store.get("Designs"))  # entry untouched
+        self.store.report.read_only = False
+        with mock.patch.object(self.creds, "delete", side_effect=CredentialError("vault locked")):
+            removed, notes = self.controller.remove_profile("Designs", delete_token=True)
+        self.assertIsNone(self.store.get("Designs"))
+        self.assertTrue(any("vault locked" in n for n in notes))
+
+    def test_global_identity_failure_still_saves_it_for_the_repository(self):
+        broken_global = os.path.join(self.base, "not-a-file")
+        os.makedirs(broken_global)  # git can't write a directory
+        with mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": broken_global}):
+            plan = self.controller.plan(self.request(), [self.export("a.step", "A")], confirm=self.confirm_yes,
+                                        ask_identity=self.ask_identity(everywhere=True))
+        self.assertEqual(plan.identity["email"], "ada@example.invalid")
+        self.assertEqual(self.store.get("Designs")["gitIdentity"]["email"], "ada@example.invalid")
+        self.assertTrue(any("all repositories" in n for n in plan.notes))
+
+    def test_server_of(self):
+        cases = {
+            "https://github.com/a/b.git": "github.com",
+            "https://GitHub.com:8443/a/b.git": "github.com:8443",
+            "git@github.com:a/b.git": "github.com",
+            "ssh://git@github.com/a/b.git": "github.com",
+            "C:/local/repo": "",
+            "": "",
+        }
+        for url, expected in cases.items():
+            self.assertEqual(server_of(url), expected, url)
+
+    def test_timestamp_subfolder_keeps_one_history_per_design(self):
+        profile = {"path": "x", "exportSubfolder": "exports/{timestamp}"}
+        folder, history = design_destination(profile, "id1", "Arm")
+        self.assertTrue(folder.startswith("exports/") and folder.endswith("/Arm") and folder != "exports/Arm")
+        self.assertEqual(history, "exports/Arm/HISTORY.md")
+        profile2 = {"path": "x", "exportSubfolder": "{filename}/v{timestamp}"}
+        folder2, history2 = design_destination(profile2, "id1", "Arm")
+        self.assertTrue(folder2.startswith("Arm/v"))
+        self.assertEqual(history2, "Arm/HISTORY.md")
 
 
 if __name__ == "__main__":

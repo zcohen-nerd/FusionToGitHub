@@ -47,7 +47,7 @@ from fusion_export import (
     get_fusion_design,
     temporary_export_dir,
 )
-from fusion_git_core import git_available, git_run, sanitize_branch_name
+from fusion_git_core import GitError, git_available, git_run, redact_secrets, sanitize_branch_name
 from push_controller import (
     DEFAULT_BRANCH_FORMAT,
     DEFAULT_COMMIT_TEMPLATE,
@@ -375,6 +375,8 @@ class PushDialog:
         self.edit_repo_button.isVisible = not show_new_repo
         self.remove_repo_button.isVisible = not show_new_repo
         self.show_edit_fields(False)
+        if hasattr(self, "pat_token_input"):
+            self.show_pat_entry(False)
 
     # ------------------------------------------------------------------
     # Export format settings table
@@ -568,18 +570,19 @@ class PushDialog:
             self.message("Paste a token into the Token field first.")
             return
         try:
-            self.creds.set(repo_name, (self.pat_username_input.value or "").strip(), token_value)
-        except (CredentialError, OSError) as exc:
+            host = self.controller.store_token(repo_name, (self.pat_username_input.value or "").strip(), token_value)
+        except (CredentialError, PushRefused, OSError) as exc:
             if self.logger:
-                self.logger.error("Could not store the token: %s", exc)
-            self.message(f"Windows Credential Manager couldn't store the token:\n{exc}")
+                self.logger.error("Could not store the token: %s", redact_secrets(str(exc), [token_value]))
+            self.message(f"The token couldn't be stored:\n{redact_secrets(str(exc), [token_value])}")
             return
         finally:
             self.pat_token_input.value = ""  # never keep the token in the dialog
         self.show_pat_entry(False)
         self.use_pat_input.value = True
         self.message(
-            "Token saved in Windows Credential Manager. It is only sent to this repository's server, over https."
+            f"Token saved in Windows Credential Manager for {host}. It is only ever sent to that "
+            "server, over https."
         )
 
     def manage_pat_for_repo(self, repo_name: str) -> None:
@@ -590,7 +593,11 @@ class PushDialog:
             # Clicking "Manage Token…" again cancels the entry.
             self.show_pat_entry(False)
             return
-        existing = self.creds.get(repo_name)
+        try:
+            existing = self.creds.get(repo_name)
+        except CredentialError as exc:
+            self.message(f"Windows Credential Manager couldn't be read:\n{exc}")
+            return
         if existing:
             choice = self.ui.messageBox(
                 "A stored token already exists for this repository.\n\n"
@@ -601,7 +608,11 @@ class PushDialog:
             if choice == adsk.core.DialogResults.DialogYes:
                 self.show_pat_entry(True, existing.get("username", ""))
             elif choice == adsk.core.DialogResults.DialogNo:
-                self.creds.delete(repo_name)
+                try:
+                    self.creds.delete(repo_name)
+                except CredentialError as exc:
+                    self.message(f"The stored token couldn't be deleted:\n{exc}")
+                    return
                 self.message(
                     "Stored token deleted from this computer. It still works on GitHub until you revoke "
                     "it there (GitHub → Settings → Developer settings)."
@@ -616,9 +627,15 @@ class PushDialog:
         if repo_name == ADD_NEW_OPTION:
             self.message("Add the repository before enabling stored PAT usage.")
             self.use_pat_input.value = False
-        elif self.use_pat_input.value and not self.creds.get(repo_name):
-            self.message("No stored Personal Access Token was found. Use 'Manage Personal Access Token…' to add one first.")
-            self.use_pat_input.value = False
+        elif self.use_pat_input.value:
+            try:
+                found = self.creds.get(repo_name)
+            except CredentialError as exc:
+                self.message(f"Windows Credential Manager couldn't be read:\n{exc}")
+                found = None
+            if not found:
+                self.message("No stored token was found. Use 'Manage Token…' to add one first.")
+                self.use_pat_input.value = False
 
     # ------------------------------------------------------------------
     # Edit / remove a saved repository
@@ -665,7 +682,13 @@ class PushDialog:
         self.show_edit_fields(False)
         self._fill_repo_selector(final_name)
         self.update_new_repo_visibility(final_name)
-        self.apply_repo_settings(final_name)
+        # Only the fields the edit changed; formats, templates and other
+        # choices made in the dialog but not yet pushed are kept.
+        profile = self.store.get(final_name) or {}
+        self.repo_path_input.value = profile.get("path", "")
+        self.git_url_input.value = profile.get("url", "")
+        if self.creds.available:
+            self.use_pat_input.value = bool(profile.get("useStoredPat", False))
         self.message("\n".join(["Repository updated."] + notes))
 
     def remove_selected(self) -> None:
@@ -678,21 +701,33 @@ class PushDialog:
         ):
             return
         delete_token = False
-        if self.creds.available and self.creds.get(name):
+        has_token = False
+        if self.creds.available:
+            try:
+                has_token = bool(self.creds.get(name))
+            except CredentialError as exc:
+                if self.logger:
+                    self.logger.warning("Couldn't check for a stored token: %s", exc)
+        if has_token:
             delete_token = self.ask_yes_no(
                 "Also delete the token stored for this repository?\n\n"
                 "Choose No to keep it in Windows Credential Manager."
             )
         try:
-            self.controller.remove_profile(name, delete_token=delete_token)
+            _removed, notes = self.controller.remove_profile(name, delete_token=delete_token)
         except (SettingsError, CredentialError, OSError) as exc:
             self.message(f"The repository was not removed:\n{exc}")
             return
         self._fill_repo_selector(None)
         self.auto_path = True
         self.update_new_repo_visibility(ADD_NEW_OPTION)
+        self.git_url_input.value = ""
+        self.new_repo_name_input.value = ""
         self.ensure_new_repo_defaults()
-        self.message(f"'{name}' was removed from the add-in." + (" Its stored token was deleted." if delete_token else ""))
+        done = f"'{name}' was removed from the add-in."
+        if delete_token and not notes:
+            done += " Its stored token was deleted."
+        self.message("\n".join([done] + notes))
 
     # ------------------------------------------------------------------
     # Input changes
@@ -832,7 +867,7 @@ class PushDialog:
             if result is False:
                 execute_args.executeFailed = True
         except Exception:
-            self.message("ExecuteHandler failed:\n{}".format(traceback.format_exc()))
+            self.message("ExecuteHandler failed:\n{}".format(redact_secrets(traceback.format_exc())))
             if self.logger:
                 self.logger.exception("ExecuteHandler failed")
             try:
@@ -1060,8 +1095,8 @@ class PushDialog:
                 return False
             except PushRefused as exc:
                 return self._fail(str(exc))
-            except (SettingsError, ValueError) as exc:
-                return self._fail(f"Push not started:\n{exc}")
+            except (SettingsError, ValueError, OSError, CredentialError, GitError) as exc:
+                return self._fail(f"Push not started:\n{redact_secrets(str(exc))}")
 
             def report_step(text: str) -> None:
                 progress.message = text
@@ -1078,7 +1113,7 @@ class PushDialog:
 
         exported_names = [rel for _, rel in plan.exports]
         if git_result and not git_result.get("cancelled"):
-            self._report_success(repo_name, git_result, exported_names, export_warnings)
+            self._report_success(repo_name, git_result, exported_names, export_warnings + list(plan.notes))
             return True
         if git_result:
             # The user declined a confirmation prompt; keep the dialog open.

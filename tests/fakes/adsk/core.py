@@ -99,6 +99,22 @@ class CommandEventArgs:
 
 
 class CommandInput:
+    # Real Fusion raises when a deleted input is used; so does this stand-in,
+    # so a stale reference kept after deleteMe() can't pass a test.
+    _ALWAYS_USABLE = frozenset({"isValid", "id", "deleteMe"})
+
+    def __getattribute__(self, name):
+        if not name.startswith("_") and name not in CommandInput._ALWAYS_USABLE:
+            if not object.__getattribute__(self, "__dict__").get("isValid", True):
+                raise RuntimeError(f"input '{object.__getattribute__(self, 'id')}' was deleted and can't be used")
+        return object.__getattribute__(self, name)
+
+    def __setattr__(self, name, value):
+        if not name.startswith("_") and name not in CommandInput._ALWAYS_USABLE:
+            if not self.__dict__.get("isValid", True):
+                raise RuntimeError(f"input '{self.__dict__.get('id')}' was deleted and can't be changed")
+        object.__setattr__(self, name, value)
+
     def __init__(self, registry, input_id, name):
         self._registry = registry
         self.id = input_id
@@ -466,8 +482,10 @@ class ProgressDialog:
 class UserInterface:
     """Records every message and answers questions from scripted queues.
 
-    ``answers``: results for messageBox calls with Yes/No-type buttons
-    (default ``default_answer`` when the queue is empty). ``input_answers``:
+    ``answers``: results for messageBox calls with Yes/No-type buttons. A
+    question with no scripted answer is recorded in ``unscripted`` and gets
+    ``DialogNo``, the cautious answer; the test harness fails any test that
+    leaves unscripted questions or unused answers. ``input_answers``:
     (value, cancelled) tuples for inputBox. ``folder_answers``: folders the
     folder dialog "chooses".
     """
@@ -476,7 +494,7 @@ class UserInterface:
         self.messages = []  # (text, title, buttons)
         self.questions = []  # text of messageBoxes that asked something
         self.answers = deque()
-        self.default_answer = DialogResults.DialogYes
+        self.unscripted = []
         self.input_answers = deque()
         self.input_prompts = []
         self.folder_answers = deque()
@@ -492,7 +510,10 @@ class UserInterface:
         if buttons == MessageBoxButtonTypes.OKButtonType:
             return DialogResults.DialogOK
         self.questions.append(text)
-        return self.answers.popleft() if self.answers else self.default_answer
+        if self.answers:
+            return self.answers.popleft()
+        self.unscripted.append(text)
+        return DialogResults.DialogNo
 
     def inputBox(self, prompt, title="", default_value=""):  # noqa: N802
         self.input_prompts.append(prompt)

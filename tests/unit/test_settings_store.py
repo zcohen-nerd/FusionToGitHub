@@ -2,12 +2,11 @@
 
 import json
 import os
-import shutil
 import tempfile
 import unittest
 from unittest import mock
 
-import _paths  # noqa: F401  (puts src/ on sys.path)
+import _paths  # also puts src/ on sys.path
 import settings_store as ss
 
 V0 = {
@@ -28,7 +27,7 @@ class SettingsStoreTests(unittest.TestCase):
         self.path = os.path.join(self.dir, ".fusion_git_repos.json")
 
     def tearDown(self):
-        shutil.rmtree(self.dir, ignore_errors=True)
+        _paths.force_rmtree(self.dir)
 
     def write(self, content, raw=False, path=None):
         with open(path or self.path, "wb") as fh:
@@ -84,11 +83,15 @@ class SettingsStoreTests(unittest.TestCase):
             self.assertEqual(fh.read(), b'{"Designs": {"path": "C:/x"')
         self.assertTrue(any("couldn't be read" in m for m in report.messages))
         self.assertFalse(report.read_only)
+        # Opening again with the same damaged file reuses the copy.
+        again = ss.SettingsStore(self.path).load()
+        self.assertEqual(again.backup_path, report.backup_path)
+        self.assertEqual(len([f for f in self.files() if ".corrupt-" in f]), 1)
 
     def test_corrupt_file_without_backup_is_never_overwritten(self):
         self.write(b"not json", raw=True)
         store = ss.SettingsStore(self.path)
-        with mock.patch.object(ss.shutil, "copyfile", side_effect=OSError("disk full")):
+        with mock.patch.object(ss, "_write_private", side_effect=OSError("disk full")):
             report = store.load()
         self.assertTrue(report.read_only)
         with self.assertRaises(ss.SettingsError):
@@ -196,6 +199,62 @@ class SettingsStoreTests(unittest.TestCase):
         self.assertEqual(ss.design_folder(profile, "id-3", 'Bad:Name/"x"'), "Bad_Name_x_")
         self.assertEqual(ss.design_folder(profile, "id-4", "CON"), "CON_")
         self.assertEqual(profile["designs"]["id-1"]["name"], "Bracket v2 renamed")
+
+
+class ReviewFixSettingsTests(unittest.TestCase):
+    """Regressions for the S3 independent review findings."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="ftg_settings_")
+        self.path = os.path.join(self.dir, ".fusion_git_repos.json")
+
+    def tearDown(self):
+        _paths.force_rmtree(self.dir)
+
+    def write(self, data):
+        with open(self.path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+
+    def test_wrong_shapes_with_the_right_version_never_crash(self):
+        for bad in ({"schemaVersion": 1, "repositories": [], "meta": None},
+                    {"schemaVersion": 1, "repositories": {"A": "not an object"}}):
+            with self.subTest(bad=bad):
+                self.write(bad)
+                store = ss.SettingsStore(self.path)
+                store.load()
+                self.assertEqual(store.profile_names(), [])
+                self.assertIsInstance(store.meta, dict)
+
+    def test_profile_with_a_token_in_its_address_is_hidden(self):
+        self.write({"schemaVersion": 1, "meta": {}, "repositories": {
+            "Leaky": {"path": "C:/x", "url": "https://u:ghp_" + "k" * 36 + "@github.com/a/b.git"}}})
+        store = ss.SettingsStore(self.path)
+        report = store.load()
+        self.assertEqual(store.profile_names(), [])
+        self.assertIn("Leaky", report.invalid_profiles)
+
+    def test_adding_the_name_of_a_hidden_profile_explains_why(self):
+        self.write({"schemaVersion": 1, "meta": {}, "repositories": {"Broken": {"path": 1}}})
+        store = ss.SettingsStore(self.path)
+        store.load()
+        with self.assertRaises(ss.SettingsError) as ctx:
+            store.add("Broken", {"path": "C:/y"})
+        self.assertIn("hidden", str(ctx.exception))
+
+    def test_unsaved_design_keeps_its_folder_once_saved_to_the_cloud(self):
+        profile = {"path": "x"}
+        self.assertEqual(ss.design_folder(profile, "name:Bracket", "Bracket"), "Bracket")
+        self.assertEqual(ss.design_folder(profile, "urn:adsk.wipprod:dm.lineage:abc", "Bracket"), "Bracket")
+        self.assertNotIn("name:Bracket", profile["designs"])
+        # A different, unrelated design with that name still gets its own folder.
+        self.assertEqual(ss.design_folder(profile, "urn:other", "Bracket"), "Bracket (2)")
+
+    @unittest.skipIf(os.name == "nt", "POSIX permissions")
+    def test_backup_copies_are_owner_only(self):
+        with open(self.path, "w", encoding="utf-8") as fh:
+            fh.write("{broken")
+        report = ss.SettingsStore(self.path).load()
+        self.assertEqual(os.stat(report.backup_path).st_mode & 0o777, 0o600)
 
 
 if __name__ == "__main__":
