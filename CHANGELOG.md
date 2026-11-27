@@ -20,8 +20,8 @@ without restarting Fusion.**
   background thread never calls Fusion. Only one push runs at a time.
 - **Cancel a push.** The progress window's Cancel button stops Git
   straight away. The message then says truthfully whether anything reached
-  GitHub: nothing pushed, pushed before the cancel took effect, or couldn't
-  tell.
+  GitHub: nothing pushed, pushed before the cancel took effect, only an
+  empty repository's first commit, or couldn't tell.
 - **Linked components are detected.** Fusion's API can only export `.f3d`,
   which may not include components linked from other designs. When a design
   has linked components the add-in names them and asks before pushing, and
@@ -43,7 +43,8 @@ without restarting Fusion.**
   100 MB, no two files overwriting each other) before anything is pushed. If
   one fails, nothing is pushed and `HISTORY.md` isn't changed. Previously a
   failed format was skipped. These checks don't prove a file opens in CAD
-  software.
+  software. (Formats this add-in can't export at all, such as DWG/DXF from
+  older settings, are still left out with a note, as before.)
 - **File and folder names work on every system.** Design and body names
   are made safe the same way on Windows and macOS: characters Windows
   doesn't allow become `_`, Windows device names (`CON`, `NUL`, …) get a
@@ -51,8 +52,17 @@ without restarting Fusion.**
   case get " (2)".
 - **Hooks don't run during a push with a stored token**, and a repository's
   configuration can no longer start any program while the token is present
-  (only https is allowed). Pushes through Git Credential Manager are
-  unchanged. See SECURITY.md.
+  (only https is allowed). A push with a stored token is refused if the
+  repository's own `.git/config` sets a proxy or changes certificate checks,
+  because those could pass the token to someone else; the message says which
+  setting to remove. Pushes through Git Credential Manager are unchanged.
+  See SECURITY.md.
+- Design and component names are written to the commit message and
+  `HISTORY.md` as a single line, so a name can't add lines there.
+- New file and folder names are made with stricter rules (see below). A
+  design whose name has repeated spaces, line breaks, or invisible or unusual
+  Unicode characters may get a slightly different file name than in earlier
+  versions; its folder is kept, because folders are remembered per design.
 - Git is found in more places: an explicit `FUSION_TO_GITHUB_GIT` setting,
   Homebrew on macOS (before the Xcode placeholder), and per-user and GitHub
   Desktop installs on Windows.

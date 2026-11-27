@@ -44,7 +44,7 @@ The formal list of known risks to FusionToGitHub users and to the project
 | R-18 | Fusion test doubles diverge from real Fusion | 3×3 = 9 Medium | Open (new in S3; 25 assumptions in S4) | Manual checklist every release |
 | R-19 | Settings migration loses saved repositories | 1×3 = 3 Low | Mitigated (new in S3) | Confirm on a real 0.4.0 settings file |
 | R-20 | Per-design folders surprise existing users | 3×2 = 6 Low | Open (new in S3) | Release notes; S5 docs |
-| R-21 | Repository hooks or config can run a program that reads the stored token | 1×4 = 4 Low | Mitigated (S4: hooks off, https only) | Independent security review; live push with a token |
+| R-21 | A repository's own hooks or settings could expose the stored token | 1×4 = 4 Low | Mitigated (S4: hooks off, https only, proxy/TLS settings refused) | Live push with a token; maintainer decision on the residual |
 | R-22 | Masked token field unsupported in some Fusion builds | 2×3 = 6 Low | Open (new in S3) | Manual check of the Token field |
 | R-23 | Stored token sent to a server it wasn't stored for | 1×4 = 4 Low | **Resolved** (0.5.0) | — |
 | R-24 | Two saved repositories for one GitHub repository allocate design folders independently | 2×2 = 4 Low | Open (new in S3) | Seed folder names from the repository's tree (S5) |
@@ -106,7 +106,7 @@ The formal list of known risks to FusionToGitHub users and to the project
 - **Needs:** maintainer acceptance.
 
 ### R-15 — Two copies installed after an upgrade — Mitigated
-- **Mitigation:** upgrade instructions say to remove the old folder first. Since S4, a copy that finds another running copy of any version (an entry module with the same command id, outside its own folder) warns once and adds no button, event or handler; its `stop()` leaves the other copy alone. The check only reads other modules' attributes and changes nothing.
+- **Mitigation:** upgrade instructions say to remove the old folder first. Since S4, a copy that finds another running copy of any version (an entry module with the same command id, outside its own folder) warns once and adds no button, event or handler; its `stop()` leaves the other copy alone. The check only reads other modules' attributes and changes nothing. Limits: a copy that crashed without stopping still counts as running until Fusion restarts (a false warning, no harm). If a pre-0.6.0 copy started after this one took over, that copy's own `stop()` can remove this copy's button, because older versions don't have the guard.
 - **Evidence:** `tests/unit/test_addin_lifecycle.py`, `two_versions` in `tests/unit/test_package_isolation.py`.
 - **Resolved when:** the live duplicate check (checklist K) passes.
 
@@ -125,17 +125,24 @@ The formal list of known risks to FusionToGitHub users and to the project
 - **Mitigation:** CHANGELOG and release notes explain the change.
 - **Resolved when:** S5's documentation and success dialog show where files go.
 
-### R-21 — Repository hooks or config can run a program that reads the stored token — Mitigated (S4)
-- **Cause:** the token is passed to the network `git` process in its environment. Anything that process starts inherits it: a repository's `pre-push` hook, and (found in S4) a program named in repository config. A reproduction with a fake token showed `url.<x>.insteadOf = ext::<command>` plus `protocol.ext.allow=always` in `.git/config` running that command during `ls-remote` and `push`, with the token visible.
+### R-21 — A repository's own hooks or settings could expose the stored token — Mitigated (S4)
+- **Cause:** the token is passed to the network `git` process in its environment, and that process obeys the repository's own `.git/config`. Three routes were found and reproduced with a fake token and fake hosts:
+  - a `pre-push` hook (it inherits the environment);
+  - a program named in repository config: `url.<x>.insteadOf = ext::<command>` plus `protocol.ext.allow=always` ran that command during `ls-remote` and `push`, with the token visible (found in S4);
+  - routing through someone else's proxy: `http.proxy` plus `http.sslVerify=false` sent the token, inside the `Authorization` header, to a TLS-terminating proxy. URL-specific forms (`http.https://github.com/.proxy`) beat any `-c` override on the command line. This needs no program at all (found by the S4 security review).
 - **Mitigation (S4):** for every Git command that carries the token:
-  - `core.hooksPath` points at an empty temporary folder, so no hook runs;
+  - `core.hooksPath` points at an empty temporary folder, so no hook runs; a token can't be passed to Git without that folder;
   - `GIT_ALLOW_PROTOCOL=https` overrides every `protocol.*.allow` setting, so `ext::`, `file`, `ssh` and remote helpers can't run;
   - inherited `GIT_ASKPASS` and `SSH_ASKPASS` are removed and `core.askPass` is empty;
-  - submodule recursion is off for fetch and push;
-  - `GIT_SSH_COMMAND` (set for all network commands) already overrides `core.sshCommand`, and the credential helper list is reset (R-07).
-- **Behaviour change:** a repository's `pre-push` hook no longer runs when the add-in pushes with a stored token. It still runs for pushes through Git Credential Manager, which carry no token. Documented in SECURITY.md.
-- **Evidence:** `HookIsolationTests` in `tests/unit/test_core_cancel_hooks.py` (hook and `ext::` reproductions, each with a control run proving the attack works without the mitigation).
-- **Residual:** anything that can write a repository's `.git` folder can already run code as the user. The add-in can't defend against that, and doesn't need to keep the token from it. Review again if the add-in gains another Git command that carries the token.
+  - submodule recursion is off for fetch and push; the credential helper list is reset and the token is offered to one host only (R-07, R-23);
+  - the push is **refused**, before anything is sent, while the repository's own config (with its includes) sets a proxy (`http.*proxy*`, `remote.*.proxy`) or TLS trust (`http.*sslVerify`, `sslCAInfo`, `sslCAPath`, `sslBackend`, client certificates, `curloptResolve`). It is checked in the dialog (dialog stays open, with an explanation) and again in the push. Global settings, such as a company proxy, are not affected.
+- **Behaviour changes:** a repository's `pre-push` hook no longer runs when the add-in pushes with a stored token (pushes through Git Credential Manager, which carry no token, are unchanged). A repository with its own proxy or TLS settings can't be used with a stored token until they're moved to the global config. Documented in SECURITY.md.
+- **Evidence:** `HookIsolationTests` in `tests/unit/test_core_cancel_hooks.py`: the hook and `ext::` reproductions, each with a control run that shows the attack works without the mitigation, plus the detection of proxy and TLS settings (including through `include.path`) and the refusal.
+- **Residual (open, not accepted):**
+  - other repository settings that change a connection without running a program, for example `http.extraHeader` or cookie files, are not refused, because they can't redirect the token;
+  - anything that can write a repository's `.git` folder can usually also run code as the user some other way.
+
+  Review again whenever a Git command that carries the token is added. Any acceptance of the residual is the maintainer's decision.
 
 ### R-23 — Stored token sent to a server it wasn't stored for — Resolved (0.5.0)
 - **Found by:** the S3 independent security review. Tokens were stored per repository name; pointing a saved repository at a clone on another server, or re-adding a removed repository's name, could have reused the token there.
@@ -158,7 +165,8 @@ The formal list of known risks to FusionToGitHub users and to the project
   - a same-named package from another folder is refused instead of mixed;
   - `scripts/package.py` rejects a bare sibling import in the ZIP.
 - **Evidence:** `tests/unit/test_package_isolation.py`, run in fresh isolated interpreters. It reproduces the reported failure with the real 0.3.3 and 0.4.0 files as a control, then shows 0.3.3 → 0.6.0 → 0.4.0 → 0.6.0 → 0.3.3 working in one process. It also covers stale bare names, two installed versions, an unrelated add-in's same-named module (untouched), repeated start/stop and standalone execution.
-- **Assumption:** the tests emulate Fusion as its add-in template implies: the folder is loaded as a package, and Run re-executes the main file. Autodesk doesn't document this.
+- **Assumption:** the tests emulate Fusion as its add-in template implies: the folder is loaded as a package, and Run re-executes the main file. Autodesk doesn't document this. If Fusion instead loaded the main file as a plain top-level module, the add-in would refuse to start (by design, with a message). Checklist K finds out either way, and it must pass before release.
+- **Found in review (fixed):** forgetting a module in `sys.modules` isn't enough, because `from . import x` reads the package's attribute `x` first. The old version's dialog, bridge and logging modules came back after an update. The purge now also detaches them from the package; the update and rollback scenarios check every module the add-in reaches (26 references).
 - **Resolved when:** the live checks (checklist K: stop → update → run, Community Store update, rollback, restarts, Run on Startup) pass in Fusion, ideally including DiegoV71's macOS Store retest.
 
 ### R-26 — A failed or partial export pushed as a complete backup — Mitigated (S4)

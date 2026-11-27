@@ -72,6 +72,17 @@ stores them:
     transport is allowed (`GIT_ALLOW_PROTOCOL=https`), so an address
     rewritten to `ext::<command>`, `file://` or SSH can't start a program.
     No askpass program is inherited, and submodules aren't fetched or pushed.
+  - **A repository's own proxy or certificate settings stop the push.** If
+    the repository's `.git/config` (or a file it includes) sets a proxy
+    (`http.proxy`, `http.<url>.proxy`, `remote.<name>.proxy`) or changes TLS
+    trust (`http.sslVerify`, `http.sslCAInfo`, client certificates, and
+    similar), those settings could pass the token to someone else, so the
+    add-in refuses to send it and says which setting to remove. Proxy
+    settings in your *global* Git config (for example a company proxy) are
+    used as normal.
+  - The token goes only to the host of the repository's **push** address,
+    after any `insteadOf` rewriting; if that host differs from the one the
+    token was saved for, it isn't used.
 
 The developer test harness `src/push_cli.py` (not part of the installed add-in)
 reads a token from the `FUSION_TO_GITHUB_TOKEN` environment variable or from a
