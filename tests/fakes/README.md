@@ -67,3 +67,47 @@ checklist in `tests/MANUAL_TESTS.md`).
 20. Command definitions and toolbar controls created by another add-in (for
     example a second installed copy using the same command id) are visible
     through `commandDefinitions.itemById`.
+
+## Exports and design structure (S4)
+
+`adsk.fusion` in these fakes is a simulation of the design structure and the
+export manager. It writes small files that only *look like* each format, so
+the add-in's basic file checks (`src/export_checks.py`) can run:
+
+| Format | What the fake writes |
+|--------|----------------------|
+| f3d    | a ZIP with one `Manifest.dat` entry |
+| step   | an `ISO-10303-21;` header and footer |
+| stl    | a complete binary STL (80-byte header, count, 2 triangles) |
+| iges   | one 80-column start (`S`) record |
+| sat    | a line of text |
+
+None of these files can be opened in a CAD program. Failure injection:
+`design.exportManager.failures[fmt]` is `"raise"`, `"false"`, `"empty"`,
+`"missing"` or `"corrupt"`; `fail_formats` is the older spelling of
+`"false"`. `exportManager.stl_unit_type_supported = False` simulates a Fusion
+version whose `STLExportOptions` has no `unitType`.
+
+`Component.add_occurrence(component, linked=..., broken=...)` and
+`Occurrence.add_occurrence(...)` build assemblies; they are test helpers, not
+Fusion API (Fusion uses `occurrences.addNewComponent` and friends).
+
+Assumptions about Fusion, to confirm in Fusion itself:
+
+21. `rootComponent.allOccurrences` lists every occurrence at every depth,
+    and `Occurrence.isReferencedComponent` is `True` for a component inserted
+    from another document. Reading it can raise for a reference Fusion can't
+    resolve (the fake's `broken=True`). The fake also marks the children of a
+    linked occurrence as linked.
+22. `Occurrence.fullPathName` is the `+`-separated path of occurrence names
+    (`Arm:1+Bolt:2`), and `Occurrence.bRepBodies` returns proxies of the
+    component's bodies whose `isVisible` reflects the occurrence's visibility.
+23. `createSTLExportOptions(body, path)` exports one body, and a body proxy
+    exports at its position in the assembly (a community report says bodies
+    in components may export at the component's own origin instead).
+24. `STLExportOptions.unitType` exists in recent Fusion builds and accepts
+    `adsk.fusion.DistanceUnits.MillimeterDistanceUnits`; older builds have no
+    such attribute.
+25. `exportManager.execute` returns `False`, or raises, when an export fails,
+    and Fusion's `.f3d` export does not bundle linked components (there is
+    no documented API for a self-contained `.f3z`).

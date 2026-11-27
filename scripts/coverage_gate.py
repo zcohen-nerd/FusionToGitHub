@@ -43,7 +43,7 @@ THRESHOLDS = {
     "export_checks.py": 90,
     "dialog_helpers.py": 78,
     "push_dialog.py": 77,
-    "fusion_export.py": 68,
+    "fusion_export.py": 85,
     "addin_logging.py": 65,
     # 92% in the Windows Coverage job, where the real Credential Manager
     # tests run (FTG_REAL_VAULT_TESTS=1). Locally, without them, it is ~57%:

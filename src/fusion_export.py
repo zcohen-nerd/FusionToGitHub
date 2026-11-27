@@ -3,7 +3,19 @@
 These functions use the Fusion API (``adsk``) and must run on Fusion's main
 thread. They are exercised outside Fusion through the test doubles in
 tests/fakes, which simulate the API; that is not a substitute for checking
-exports in Fusion itself.
+exports in Fusion itself (tests/MANUAL_CHECKLIST.md).
+
+Policy (S4):
+
+- Every requested export must succeed and pass the basic file checks in
+  ``export_checks``; otherwise :class:`ExportResult` lists failures and the
+  caller pushes nothing. A partial backup is never published.
+- File names are deterministic and portable (``portable_names``), and no two
+  files can overwrite each other, even on case-insensitive file systems.
+- Fusion has no documented API for a self-contained ``.f3z`` archive, so
+  the backup is always ``.f3d``. Linked (externally referenced) components
+  are detected and reported, so the backup is never presented as complete
+  when it may not be.
 """
 
 from __future__ import annotations
@@ -14,7 +26,11 @@ import re
 import shutil
 import tempfile
 from contextlib import contextmanager
-from typing import List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
+
+from export_checks import check_exports
+from portable_names import portable_name, unique_names
 
 try:
     import adsk.core
@@ -22,25 +38,72 @@ try:
 except ImportError:  # pragma: no cover - only outside Fusion without the fakes
     pass
 
+STL_SINGLE = "single"
+STL_PER_BODY = "perBody"
+
 FORMAT_SETTINGS_DEFAULT = {
-    "stl": {"meshRefinement": "high"},
+    "stl": {"meshRefinement": "high", "files": STL_SINGLE},
     "step": {"protocol": "AP214"},
 }
 
+# format -> setting key -> [(label shown in the dialog, stored value)]
 FORMAT_SETTINGS_OPTIONS = {
-    "stl": [
-        ("High (refined mesh)", "high"),
-        ("Medium", "medium"),
-        ("Low (fast)", "low"),
-    ],
-    "step": [
-        ("AP203", "AP203"),
-        ("AP214 (default)", "AP214"),
-    ],
+    "stl": {
+        "meshRefinement": [
+            ("High (refined mesh)", "high"),
+            ("Medium", "medium"),
+            ("Low (fast)", "low"),
+        ],
+        "files": [
+            ("One file", STL_SINGLE),
+            ("One file per body", STL_PER_BODY),
+        ],
+    },
+    "step": {
+        "protocol": [
+            ("AP203", "AP203"),
+            ("AP214 (default)", "AP214"),
+        ],
+    },
 }
+
+# Row labels in the dialog's settings table; the default is the format name.
+FORMAT_SETTING_LABELS = {("stl", "files"): "STL files"}
 
 AVAILABLE_FORMATS = ["f3d", "step", "iges", "sat", "stl"]
 DEFAULT_FORMATS = ["f3d", "step", "stl"]
+
+# Spellings saved configurations may use for the same format.
+FORMAT_ALIASES = {"stp": "step", "igs": "iges"}
+SUPPORTED_FORMATS = ("f3d", "step", "iges", "sat", "stl")
+
+# File names are capped below the usual 255-character limit so a design
+# folder plus file name still fits comfortably in a Windows path.
+MAX_FILE_STEM = 120
+
+STL_UNITS_WARNING = (
+    "STL files have no units. This version of Fusion can't be told to write millimetres, "
+    "so the STL files use the design's units; check the scale when you import them."
+)
+
+
+@dataclass
+class ExportResult:
+    """What an export produced. Push only when :attr:`ok` is true."""
+
+    files_by_format: Dict[str, List[str]] = field(default_factory=dict)
+    failures: List[str] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
+    # Display names of linked (externally referenced) components, deduped.
+    linked_components: List[str] = field(default_factory=list)
+
+    @property
+    def files(self) -> List[str]:
+        return [path for paths in self.files_by_format.values() for path in paths]
+
+    @property
+    def ok(self) -> bool:
+        return not self.failures and bool(self.files)
 
 
 @contextmanager
@@ -107,79 +170,310 @@ def design_identity(design) -> Tuple[str, str]:
     return display_name, (design_id or f"name:{display_name}")
 
 
-def export_fusion_design(
-    design,
-    export_dir: str,
-    base_name: str,
-    formats_to_export: list,
-    target_ui_ref,
-    format_settings=None,
-    title: str = "Push to GitHub",
-    logger: Optional[logging.Logger] = None,
-) -> List[str]:
-    """Export *design* in each format into *export_dir*; return the files that were written."""
-    em = design.exportManager
-    root = design.rootComponent
-    exported = []
-    format_settings = format_settings or {}
+# ----------------------------------------------------------------------
+# Walking the design (every access guarded: Fusion can raise on nested
+# references and on components that failed to load)
+# ----------------------------------------------------------------------
 
-    def file_ok(p):
-        return os.path.exists(p) and os.path.getsize(p) > 0
 
-    for fmt in [f.lower() for f in formats_to_export]:
-        path = os.path.join(export_dir, f"{base_name}.{fmt}")
+def _items(collection) -> list:
+    """The members of a Fusion collection (``count``/``item``), or [] if it can't be read."""
+    if collection is None:
+        return []
+    try:
+        return [collection.item(i) for i in range(collection.count)]
+    except Exception:
         try:
-            opts = None
-            if fmt == "f3d":
-                try:
-                    opts = em.createFusionArchiveExportOptions(path)
-                except TypeError:
-                    opts = em.createFusionArchiveExportOptions(path, root)
-            elif fmt in ("step", "stp"):
-                opts = em.createSTEPExportOptions(path, root)
-            elif fmt in ("iges", "igs"):
-                opts = em.createIGESExportOptions(path, root)
-            elif fmt == "sat":
-                opts = em.createSATExportOptions(path, root)
-            elif fmt == "stl":
-                opts = em.createSTLExportOptions(root, path)
-                refinement = format_settings.get("stl", {}).get(
-                    "meshRefinement",
-                    FORMAT_SETTINGS_DEFAULT.get("stl", {}).get("meshRefinement", "high"),
-                )
-                refinement = (refinement or "high").lower()
-                refinement_map = {
-                    "high": adsk.fusion.MeshRefinementSettings.MeshRefinementHigh,
-                    "medium": adsk.fusion.MeshRefinementSettings.MeshRefinementMedium,
-                    "low": adsk.fusion.MeshRefinementSettings.MeshRefinementLow,
-                }
-                opts.meshRefinement = refinement_map.get(
-                    refinement, adsk.fusion.MeshRefinementSettings.MeshRefinementHigh
-                )
-            else:
-                if logger:
-                    logger.warning("Unsupported/unavailable export format: %s", fmt)
-                continue
+            return list(collection)
+        except Exception:
+            return []
 
-            if fmt in ("step", "stp") and opts:
-                protocol = format_settings.get("step", {}).get("protocol", "AP214")
-                if hasattr(opts, "applicationProtocol"):
-                    try:
-                        opts.applicationProtocol = str(protocol)
-                    except Exception:
-                        if logger:
-                            logger.debug("Failed to set STEP protocol to %s.", protocol, exc_info=True)
 
-            if opts and em.execute(opts) and file_ok(path):
-                exported.append(path)
-                if logger:
-                    logger.info("Exported: %s (%d bytes)", path, os.path.getsize(path))
-            else:
-                target_ui_ref.messageBox(f"Export failed or empty file for {fmt}: {path}", title)
-                if logger:
-                    logger.warning("Export failed/empty for %s -> %s", fmt, path)
+def _attr(obj, name, default=None):
+    try:
+        return getattr(obj, name)
+    except Exception:
+        return default
+
+
+def _occurrence_label(occurrence) -> str:
+    component = _attr(occurrence, "component")
+    return str(_attr(component, "name") or _attr(occurrence, "name") or "unnamed component")
+
+
+def find_linked_components(design, logger: Optional[logging.Logger] = None) -> Tuple[List[str], List[str]]:
+    """Return (linked component names, warnings).
+
+    A linked component is one inserted from another Fusion document
+    (``Occurrence.isReferencedComponent``). Its geometry may not be inside
+    the ``.f3d`` export, so the backup might not restore on its own.
+    """
+    names: List[str] = []
+    unknown: List[str] = []
+    root = _attr(design, "rootComponent")
+    occurrences = _attr(root, "allOccurrences")
+    if root is None or occurrences is None:
+        return [], ["Couldn't check this design for linked components."]
+    for occurrence in _items(occurrences):
+        try:
+            linked = bool(occurrence.isReferencedComponent)
         except Exception:
             if logger:
-                logger.exception("Export error for %s", fmt)
-            target_ui_ref.messageBox(f"Error exporting {fmt} for '{base_name}'", title)
-    return exported
+                logger.debug("isReferencedComponent failed", exc_info=True)
+            unknown.append(_occurrence_label(occurrence))
+            continue
+        if linked:
+            label = _occurrence_label(occurrence)
+            if label not in names:
+                names.append(label)
+    warnings = []
+    if unknown:
+        warnings.append(
+            "Couldn't tell whether these components are linked from other designs: "
+            + ", ".join(sorted(set(unknown)))
+        )
+    return names, warnings
+
+
+def _occurrence_path(occurrence) -> List[str]:
+    """Names from the root to *occurrence* ("Arm:1+Bolt:2" -> ["Arm 1", "Bolt 2"])."""
+    full = _attr(occurrence, "fullPathName") or _attr(occurrence, "name") or "Component"
+    return [part.replace(":", " ") for part in str(full).split("+") if part]
+
+
+def _visible(body) -> bool:
+    value = _attr(body, "isVisible", True)
+    return True if value is None else bool(value)
+
+
+def stl_bodies(design) -> Tuple[List[Tuple[List[str], object]], int]:
+    """Visible bodies to export one STL each: ([(occurrence path, body)], hidden count).
+
+    Root bodies have an empty path. Bodies inside components come from each
+    occurrence's ``bRepBodies`` (Fusion returns proxies in assembly context).
+    """
+    root = design.rootComponent
+    found: List[Tuple[List[str], object]] = []
+    hidden = 0
+    for body in _items(_attr(root, "bRepBodies")):
+        if _visible(body):
+            found.append(([], body))
+        else:
+            hidden += 1
+    for occurrence in _items(_attr(root, "allOccurrences")):
+        path = _occurrence_path(occurrence)
+        for body in _items(_attr(occurrence, "bRepBodies")):
+            if _visible(body):
+                found.append((path, body))
+            else:
+                hidden += 1
+    return found, hidden
+
+
+def per_body_file_names(base: str, bodies: List[Tuple[List[str], object]]) -> List[str]:
+    """Deterministic, unique (ignoring case) STL file names, one per body.
+
+    Root bodies: ``"<design> - <body>.stl"``; bodies in components:
+    ``"<design> - <occurrence path> - <body>.stl"``.
+    """
+    names = []
+    for path, body in bodies:
+        body_name = str(_attr(body, "name") or "Body")
+        stem = " - ".join([base, *path, body_name])
+        names.append(portable_name(stem, fallback="Body", max_length=MAX_FILE_STEM) + ".stl")
+    return unique_names(names)
+
+
+# ----------------------------------------------------------------------
+# Export options
+# ----------------------------------------------------------------------
+
+
+def _mesh_refinement(settings: Dict[str, str]):
+    refinement = (settings.get("meshRefinement") or FORMAT_SETTINGS_DEFAULT["stl"]["meshRefinement"]).lower()
+    refinement_map = {
+        "high": adsk.fusion.MeshRefinementSettings.MeshRefinementHigh,
+        "medium": adsk.fusion.MeshRefinementSettings.MeshRefinementMedium,
+        "low": adsk.fusion.MeshRefinementSettings.MeshRefinementLow,
+    }
+    return refinement_map.get(refinement, adsk.fusion.MeshRefinementSettings.MeshRefinementHigh)
+
+
+def _set_stl_millimetres(options) -> bool:
+    """Ask Fusion for millimetres; False when this Fusion version can't do it."""
+    units = getattr(getattr(adsk.fusion, "DistanceUnits", None), "MillimeterDistanceUnits", None)
+    if units is None or not hasattr(options, "unitType"):
+        return False
+    try:
+        options.unitType = units
+        return True
+    except Exception:
+        return False
+
+
+def _stl_options(em, geometry, path, settings, result: ExportResult):
+    options = em.createSTLExportOptions(geometry, path)
+    options.meshRefinement = _mesh_refinement(settings)
+    if not _set_stl_millimetres(options) and STL_UNITS_WARNING not in result.warnings:
+        result.warnings.append(STL_UNITS_WARNING)
+    return options
+
+
+def _options_for(em, root, fmt: str, path: str, settings: Dict[str, str], logger):
+    if fmt == "f3d":
+        try:
+            return em.createFusionArchiveExportOptions(path)
+        except TypeError:
+            return em.createFusionArchiveExportOptions(path, root)
+    if fmt == "step":
+        options = em.createSTEPExportOptions(path, root)
+        protocol = settings.get("protocol", FORMAT_SETTINGS_DEFAULT["step"]["protocol"])
+        if hasattr(options, "applicationProtocol"):
+            try:
+                options.applicationProtocol = str(protocol)
+            except Exception:
+                if logger:
+                    logger.debug("Failed to set STEP protocol to %s.", protocol, exc_info=True)
+        return options
+    if fmt == "iges":
+        return em.createIGESExportOptions(path, root)
+    return em.createSATExportOptions(path, root)
+
+
+def _run(em, options, fmt: str, path: str, result: ExportResult, logger) -> bool:
+    """Execute one export; record a failure and return False if Fusion reports one."""
+    name = os.path.basename(path)
+    try:
+        succeeded = em.execute(options)
+    except Exception as exc:
+        if logger:
+            logger.exception("Export error for %s", name)
+        result.failures.append(f"The {fmt.upper()} export of {name} failed: {exc}")
+        return False
+    if not succeeded:
+        if logger:
+            logger.warning("Fusion reported a failed export: %s", name)
+        result.failures.append(f"Fusion reported that the {fmt.upper()} export of {name} failed")
+        return False
+    if logger and os.path.exists(path):
+        logger.info("Exported: %s (%d bytes)", path, os.path.getsize(path))
+    return True
+
+
+# ----------------------------------------------------------------------
+# The export
+# ----------------------------------------------------------------------
+
+
+def export_design(
+    design,
+    temp_dir: str,
+    base_name: str,
+    formats,
+    format_settings: Optional[Dict[str, Dict[str, str]]] = None,
+    logger: Optional[logging.Logger] = None,
+) -> ExportResult:
+    """Export *design* in each requested format into *temp_dir*.
+
+    Never raises for a failed export: failures are collected in the result,
+    and the caller must not push unless ``result.ok``. Every file is checked
+    with ``export_checks.check_exports`` (basic validation, not proof that
+    the file restores the design).
+    """
+    result = ExportResult()
+    settings = format_settings or {}
+    base = portable_name(base_name, fallback="Design", max_length=MAX_FILE_STEM)
+    em = design.exportManager
+    root = design.rootComponent
+
+    requested: List[Tuple[str, str]] = []  # (canonical format, file extension)
+    for raw in formats or []:
+        ext = str(raw).lower().strip()
+        fmt = FORMAT_ALIASES.get(ext, ext)
+        if fmt not in SUPPORTED_FORMATS:
+            result.warnings.append(f"{ext.upper()} skipped: this add-in can't export that format.")
+            continue
+        if (fmt, ext) not in requested:
+            requested.append((fmt, ext))
+
+    succeeded: List[str] = []
+    for fmt, ext in requested:
+        fmt_settings = settings.get(fmt) or settings.get(ext) or {}
+        written: List[str] = []
+        ok = True
+        try:
+            if fmt == "stl" and fmt_settings.get("files") == STL_PER_BODY:
+                bodies, hidden = stl_bodies(design)
+                if not bodies:
+                    result.failures.append("The STL export found no visible bodies to export one file per body")
+                    continue
+                if hidden:
+                    result.warnings.append(f"{hidden} hidden bodies were not exported as STL files.")
+                for (_, body), name in zip(bodies, per_body_file_names(base, bodies)):
+                    path = os.path.join(temp_dir, name)
+                    options = _stl_options(em, body, path, fmt_settings, result)
+                    ok = _run(em, options, fmt, path, result, logger) and ok
+                    written.append(path)
+            else:
+                path = os.path.join(temp_dir, f"{base}.{ext}")
+                if fmt == "stl":
+                    options = _stl_options(em, root, path, fmt_settings, result)
+                else:
+                    options = _options_for(em, root, fmt, path, fmt_settings, logger)
+                ok = _run(em, options, fmt, path, result, logger)
+                written.append(path)
+        except Exception as exc:  # setting up the options failed
+            if logger:
+                logger.exception("Export setup failed for %s", fmt)
+            result.failures.append(f"The {fmt.upper()} export couldn't be prepared: {exc}")
+            continue
+        if ok:
+            result.files_by_format.setdefault(fmt, []).extend(written)
+            succeeded.append(fmt)
+
+    result.failures.extend(check_exports(result.files_by_format, list(dict.fromkeys(succeeded))))
+
+    if any(fmt == "f3d" for fmt, _ in requested):
+        linked, warnings = find_linked_components(design, logger)
+        result.linked_components = linked
+        result.warnings.extend(warnings)
+    return result
+
+
+def linked_components_question(names: List[str]) -> str:
+    shown = ", ".join(names[:5]) + (f", and {len(names) - 5} more" if len(names) > 5 else "")
+    count = len(names)
+    noun = "linked component" if count == 1 else "linked components"
+    return (
+        f"This design uses {count} {noun} ({shown}).\n\n"
+        "Fusion's .f3d export may not include them, so this backup might not restore on its own. "
+        "Push anyway?"
+    )
+
+
+def linked_components_note(names: List[str]) -> str:
+    count = len(names)
+    noun = "linked component" if count == 1 else "linked components"
+    return f"Contains {count} {noun} ({', '.join(names)}); this .f3d backup may not be self-contained."
+
+
+__all__ = [
+    "AVAILABLE_FORMATS",
+    "DEFAULT_FORMATS",
+    "ExportResult",
+    "FORMAT_SETTINGS_DEFAULT",
+    "FORMAT_SETTINGS_OPTIONS",
+    "FORMAT_SETTING_LABELS",
+    "STL_PER_BODY",
+    "STL_SINGLE",
+    "design_identity",
+    "determine_valid_export_formats",
+    "export_design",
+    "find_linked_components",
+    "get_fusion_design",
+    "linked_components_note",
+    "linked_components_question",
+    "per_body_file_names",
+    "stl_bodies",
+    "temporary_export_dir",
+]
