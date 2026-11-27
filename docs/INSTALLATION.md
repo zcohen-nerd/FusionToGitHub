@@ -5,7 +5,7 @@
 ### Required Software
 - **Autodesk Fusion 360** (Personal or Commercial license)
 - **Git** (2.20 or later recommended)
-- **Windows 10/11** or **macOS 10.15+**
+- **Windows 10/11**. macOS is **experimental**: the add-in loads there but has not been tested in Fusion on a Mac.
 - **GitHub account** (free or paid)
 
 ### System Specifications
@@ -67,19 +67,15 @@ guide**; in brief:
 
 ---
 
-## 📦 Step 2: Download FusionToGitHub
+## 📦 Step 2: Download the Add-in
 
-### Option A: Download Release (Recommended)
-1. Go to the GitHub repository
-2. Click **Releases** on the right side
-3. Download latest version as ZIP file
-4. Extract ZIP to temporary location
+1. Open the [latest release](https://github.com/zcohen-nerd/FusionToGitHub/releases/latest).
+2. Under **Assets**, download **`Push_To_GitHub-<version>.zip`**.
 
-### Option B: Clone Repository
-```bash
-git clone https://github.com/YOUR_USERNAME/FusionToGitHub.git
-cd FusionToGitHub
-```
+Don't use the green **Code → Download ZIP** button or clone the repository to
+install: those give you the source code, laid out differently from what Fusion
+expects. (Developers can build the same ZIP from source with
+`python scripts/package.py build`; see [CONTRIBUTING.md](../CONTRIBUTING.md).)
 
 ---
 
@@ -100,20 +96,30 @@ cd FusionToGitHub
 
 ### Install Files
 
-1. **Create folder**: `FusionToGitHub` in the AddIns directory
-2. **Copy add-in runtime files** into this folder (from the repository `src/` directory):
-   ```
-   FusionToGitHub/
-   ├── Push_To_GitHub.py
-   ├── Push_To_GitHub.manifest
-   ├── AddInIcon.svg
-   ├── fusion_git_core.py
-   ├── dialog_helpers.py
-   ├── push_cli.py
-   └── diagnostic.py
-   ```
+Unzip the downloaded file **into the AddIns folder**:
 
-   Documentation and test files can remain in your project workspace; they do not need to be copied into the Fusion add-in runtime folder.
+- **Windows**: right-click the ZIP → **Extract All…**, set the destination to
+  the AddIns folder above (remove the `Push_To_GitHub-<version>` part Windows
+  adds to the end), and click **Extract**.
+- **macOS**: double-click the ZIP, then drag the `Push_To_GitHub` folder it
+  creates into the AddIns folder.
+
+You should end up with exactly this:
+
+```
+AddIns/
+└── Push_To_GitHub/
+    ├── Push_To_GitHub.manifest
+    ├── Push_To_GitHub.py
+    ├── fusion_git_core.py
+    ├── dialog_helpers.py
+    ├── AddInIcon.svg
+    └── LICENSE
+```
+
+The folder must be named exactly `Push_To_GitHub`, the same as the `.manifest`
+and `.py` files, and must sit directly in AddIns. Fusion names an add-in after
+its folder and expects the manifest and main script to share that name.
 
 ### Verify File Permissions (Windows)
 
@@ -132,7 +138,7 @@ cd FusionToGitHub
 2. Go to **UTILITIES** tab in ribbon
 3. Click **ADD-INS** button
 4. Click **Scripts and Add-Ins** panel
-5. Find **"Push to GitHub (ZAC)"** in list
+5. Find **Push_To_GitHub** in the list
 6. Click **Run** to enable the add-in
 7. **Optional**: Check **"Run on Startup"** for automatic loading
 
@@ -271,15 +277,25 @@ on the repo (or a classic token with `repo` scope)
 
 ### When Updates Available
 
-1. **Download new version** (same as Step 2)
-2. **Close Fusion 360** completely
-3. **Replace files** in add-in folder
-4. **Restart Fusion 360**
-5. **Test with automated tests**
+1. In Fusion, **UTILITIES → ADD-INS**, select **Push_To_GitHub** and click **Stop**.
+2. **Close Fusion 360** completely.
+3. **Delete** the old `Push_To_GitHub` folder from the AddIns folder.
+4. **Install the new ZIP** as in Steps 2 and 3.
+5. **Restart Fusion 360**.
+
+### Upgrading from a manual install (before 0.3.3)
+
+Older instructions had you copy the source files into a folder called
+`FusionToGitHub` (or similar). Stop that add-in in **UTILITIES → ADD-INS**,
+untick **Run on Startup**, quit Fusion, and delete that folder before installing
+the ZIP. Don't keep two copies: both would load, and you could get two buttons
+or duplicate pushes.
 
 ### Preserve Settings
 
-Your repository configurations are stored separately and won't be lost during updates.
+Your repository configurations are stored separately
+(`~/.fusion_git_repos.json`) and won't be lost during updates. A token stored
+with **Manage Token…** stays in Windows Credential Manager.
 
 ---
 
@@ -289,8 +305,8 @@ Your repository configurations are stored separately and won't be lost during up
 
 1. **Close Fusion 360**
 2. **Delete add-in folder**:
-   - Windows: `%APPDATA%\Autodesk\Autodesk Fusion 360\API\AddIns\FusionToGitHub`
-   - macOS: `~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns/FusionToGitHub`
+   - Windows: `%APPDATA%\Autodesk\Autodesk Fusion 360\API\AddIns\Push_To_GitHub`
+   - macOS: `~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns/Push_To_GitHub`
 3. **Optional**: Remove stored credentials from Windows Credential Manager
 4. **Optional**: Keep local Git repositories for manual use
 

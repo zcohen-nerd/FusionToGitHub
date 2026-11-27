@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FusionToGitHub 0.3.1 - Automated Test Runner
+FusionToGitHub - Automated Test Runner
 
 This script automates the execution of testable components from the TESTING.md
 systematic test plan. It focuses on programmatically verifiable tests while
@@ -128,8 +128,8 @@ class TestRunner:
         self.log_test_start("T004", "fusion_git_core module import")
         try:
             import fusion_git_core
-            # fusion_git_core.VERSION is the single source of truth for the
-            # add-in version. Cross-surface consistency is T_VERSION's job; here
+            # The manifest version is the single source of truth (decision Q4);
+            # T_VERSION and T_RELEASE check that this constant matches it. Here
             # we only assert it is set and shaped like a semantic version.
             version_ok = bool(re.match(r"^\d+\.\d+(?:\.\d+)?$", fusion_git_core.VERSION))
             msg = f"Version: {fusion_git_core.VERSION}"
@@ -138,7 +138,7 @@ class TestRunner:
             self.record_result("T004", "fusion_git_core module import", False, str(e))
 
     def test_t_version_consistency(self):
-        """T_VERSION: every user-visible version surface matches fusion_git_core.VERSION"""
+        """T_VERSION: every user-visible version surface matches the manifest version"""
         self.log_test_start("T_VERSION", "version consistency across all surfaces")
         try:
             import fusion_git_core
@@ -673,7 +673,8 @@ class TestRunner:
                 fh.write("precious uncommitted data")
 
             export_path = os.path.join(work, "model.step")
-            ui = _PipelineTestUI(confirm_answer=True)  # accept stash + force push
+            remote_tip_before = git_run(origin, "rev-parse", branch).stdout.strip()
+            ui = _PipelineTestUI(confirm_answer=True)  # accept stash + continue unsynced
             result = handle_git_operations(
                 work,
                 [],
@@ -689,9 +690,17 @@ class TestRunner:
             if not result:
                 details.append(f"pipeline failed: {ui.errors}")
             else:
-                if not result.get("force_push"):
+                if not result.get("pull_failed"):
                     ok = False
-                    details.append("expected force push after conflict")
+                    details.append("expected the failed pull to be reported")
+                if "force_push" in result:
+                    ok = False
+                    details.append("result still reports a force_push key")
+                # The conflicting remote branch must be untouched.
+                remote_tip_after = git_run(origin, "rev-parse", branch).stdout.strip()
+                if remote_tip_after != remote_tip_before:
+                    ok = False
+                    details.append(f"remote '{branch}' changed (overwrite regression)")
                 for rebase_dir in ("rebase-merge", "rebase-apply"):
                     if os.path.exists(os.path.join(work, ".git", rebase_dir)):
                         ok = False
@@ -993,9 +1002,6 @@ class TestRunner:
                 ok = False
                 details.append(f"second push failed (sync regression): {ui2.errors}")
             else:
-                if result2.get("force_push"):
-                    ok = False
-                    details.append("sync should avoid force push")
                 pushed = git_run(origin, "show", "my-export:model.step", check=False)
                 if pushed.returncode != 0 or pushed.stdout.strip() != "EXPORT v2":
                     ok = False
@@ -1015,6 +1021,329 @@ class TestRunner:
             )
         finally:
             self._cleanup_dir(base_dir)
+
+    def test_pipeline_never_overwrites_remote(self):
+        """T_PIPE_09: pushes the remote is ahead of are refused; the remote is unchanged.
+
+        Regression test for audit finding REL-01 (experiments G-E7c and G-E7d'),
+        where force push overwrote a colleague's commits. Every confirmation is
+        accepted, which is the worst case for the old behaviour.
+        """
+        self.log_test_start("T_PIPE_09", "Pipeline: never overwrites remote commits")
+        base_dir = tempfile.mkdtemp(prefix="fusion_pipe9_")
+        try:
+            from fusion_git_core import git_run, handle_git_operations
+
+            origin, work, branch = self._make_seeded_remote(base_dir)
+            export_path = os.path.join(work, "model.step")
+            ok = True
+            details = []
+
+            def colleague_commit(target_branch, filename, content, create=False):
+                other = os.path.join(base_dir, f"other-{target_branch}-{filename}")
+                if create:
+                    git_run(base_dir, "clone", origin, other)
+                    git_run(other, "checkout", "-b", target_branch)
+                else:
+                    git_run(base_dir, "clone", "--branch", target_branch, origin, other)
+                with open(os.path.join(other, filename), "w", encoding="utf-8") as fh:
+                    fh.write(content)
+                git_run(other, "add", filename)
+                git_run(other, "commit", "-m", f"colleague edit on {target_branch}")
+                git_run(other, "push", "origin", target_branch)
+                return git_run(origin, "rev-parse", target_branch).stdout.strip()
+
+            def push(override, content):
+                ui = _PipelineTestUI(confirm_answer=True)
+                result = handle_git_operations(
+                    work,
+                    [],
+                    "Design update: {filename}",
+                    "fusion-export/{filename}-{timestamp}",
+                    ui,
+                    "TestDesign",
+                    branch_override=override,
+                    materialize_files=self._write_file_materializer(export_path, content),
+                )
+                return result, ui
+
+            # Case A (G-E7c): the override names a branch that exists only on
+            # the remote and holds a colleague's commit; we have fetched it.
+            shared_tip = colleague_commit("shared-export", "colleague.txt", "theirs\n", create=True)
+            git_run(work, "fetch", "origin")
+            result_a, ui_a = push("shared-export", "EXPORT A")
+            if result_a and not result_a.get("cancelled"):
+                ok = False
+                details.append(f"case A: push should be refused, got {result_a!r}")
+            if not any("refused" in e for e in ui_a.errors):
+                ok = False
+                details.append(f"case A: no clear refusal message: {ui_a.errors}")
+            if git_run(origin, "rev-parse", "shared-export").stdout.strip() != shared_tip:
+                ok = False
+                details.append("case A: colleague's commit was overwritten")
+
+            # Case B (G-E7d'): a reused local branch has diverged from the
+            # remote with a conflicting edit, so the sync step fails.
+            result_b1, ui_b1 = push("my-export", "EXPORT v1")
+            if not result_b1:
+                ok = False
+                details.append(f"case B setup push failed: {ui_b1.errors}")
+            colleague_tip = colleague_commit("my-export", "model.step", "COLLEAGUE EDIT")
+            git_run(work, "checkout", "my-export")
+            with open(export_path, "w", encoding="utf-8") as fh:
+                fh.write("LOCAL UNPUSHED EDIT")
+            git_run(work, "commit", "-am", "local unpushed edit")
+            git_run(work, "checkout", branch)
+            result_b2, ui_b2 = push("my-export", "EXPORT v2")
+            if result_b2 and not result_b2.get("cancelled"):
+                ok = False
+                details.append(f"case B: push should be refused, got {result_b2!r}")
+            if git_run(origin, "rev-parse", "my-export").stdout.strip() != colleague_tip:
+                ok = False
+                details.append("case B: colleague's commit was overwritten")
+
+            current = git_run(work, "symbolic-ref", "--short", "HEAD").stdout.strip()
+            if current != branch:
+                ok = False
+                details.append(f"not restored to '{branch}' (on '{current}')")
+
+            self.record_result(
+                "T_PIPE_09", "Pipeline: never overwrites remote commits", ok, "; ".join(details)
+            )
+        except Exception as e:
+            self.record_result("T_PIPE_09", "Pipeline: never overwrites remote commits", False, str(e))
+        finally:
+            self._cleanup_dir(base_dir)
+
+    def test_setup_blank_name_uses_clone_folder(self):
+        """T_SETUP_01: "Set up new" with a blank name pushes from the folder it cloned into.
+
+        Regression test for audit finding BUG-01. The dialog validates the
+        suggested folder (…/NewRepo) before the name is derived from the URL;
+        the add-in then cloned into …/<name> but pushed from …/NewRepo.
+        """
+        self.log_test_start("T_SETUP_01", "Setup: blank name uses the clone folder")
+        base_dir = tempfile.mkdtemp(prefix="fusion_setup1_")
+        try:
+            from dialog_helpers import (
+                default_path_for_new_repo,
+                derive_repo_name_from_url,
+                resolve_new_repo_path,
+                setup_new_repository,
+                validate_repo_inputs,
+            )
+            from fusion_git_core import git_run, handle_git_operations
+
+            def safe_base(name):
+                return re.sub(r"[^\w\-]", "_", name)
+
+            add_new = "__add_new__"
+            repos_dir = os.path.join(base_dir, "FusionGitRepos")
+            origin_dir = os.path.join(base_dir, "MyDesigns.git")
+            git_run(base_dir, "init", "--bare", origin_dir)
+            # A URL, as users paste: forward slashes on every OS.
+            origin = Path(origin_dir).as_uri()
+
+            ok = True
+            details = []
+
+            # What the dialog does: suggest a folder for the blank name and
+            # validate it, then derive the name from the URL when OK is clicked.
+            suggested = default_path_for_new_repo("", repos_dir, safe_base)
+            validated = validate_repo_inputs(add_new, suggested, origin, add_new)["path"]
+            name = derive_repo_name_from_url(origin)
+            local_path = resolve_new_repo_path(name, validated, True, repos_dir, safe_base)
+
+            if name != "MyDesigns":
+                ok = False
+                details.append(f"derived name {name!r}")
+            if os.path.normcase(local_path) != os.path.normcase(
+                os.path.normpath(os.path.join(repos_dir, "MyDesigns"))
+            ):
+                ok = False
+                details.append(f"clone folder {local_path!r} does not follow the derived name")
+
+            error = setup_new_repository(name, local_path, origin, git_run)
+            if error:
+                ok = False
+                details.append(f"setup failed: {error}")
+            elif os.path.isdir(os.path.join(validated, ".git")):
+                ok = False
+                details.append("test premise broken: the suggested folder is a repo too")
+            else:
+                ui = _PipelineTestUI()
+                result = handle_git_operations(
+                    local_path,
+                    [],
+                    "Design update: {filename}",
+                    "fusion-export/{filename}-{timestamp}",
+                    ui,
+                    "TestDesign",
+                    materialize_files=self._write_file_materializer(
+                        os.path.join(local_path, "model.step"), "FIRST EXPORT"
+                    ),
+                )
+                if not result:
+                    ok = False
+                    details.append(f"first push failed: {ui.errors}")
+
+            # A folder the user typed or browsed to always wins.
+            typed = os.path.join(base_dir, "Typed", "Folder")
+            if resolve_new_repo_path("Other", typed, False, repos_dir, safe_base) != os.path.normpath(typed):
+                ok = False
+                details.append("a typed folder was not kept")
+
+            # Wiring guard: the add-in must push from the folder it set up.
+            main_src = (Path(__file__).resolve().parent.parent / "src" / "Push_To_GitHub.py").read_text(
+                encoding="utf-8"
+            )
+            if "normalized_repo_path = local_path" not in main_src:
+                ok = False
+                details.append("Push_To_GitHub.py no longer pushes from the set-up folder")
+
+            self.record_result(
+                "T_SETUP_01", "Setup: blank name uses the clone folder", ok, "; ".join(details)
+            )
+        except Exception as e:
+            self.record_result("T_SETUP_01", "Setup: blank name uses the clone folder", False, str(e))
+        finally:
+            self._cleanup_dir(base_dir)
+
+    @staticmethod
+    def _import_release_scripts():
+        scripts_dir = str(Path(__file__).resolve().parent.parent / "scripts")
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        import check_release
+        import package
+
+        return package, check_release
+
+    def test_release_consistency(self):
+        """T_RELEASE: manifest, VERSION, CHANGELOG, README and add-in ID agree (check_release)."""
+        self.log_test_start("T_RELEASE", "release surfaces agree")
+        try:
+            _, check_release = self._import_release_scripts()
+            problems = check_release.check()
+            # A tag that differs from the manifest must be refused.
+            version = check_release.manifest_version()
+            if not any("does not match" in p for p in check_release.check(tag=f"v{version}")):
+                problems.append("a v-prefixed tag was not refused")
+            notes = check_release.changelog_section(version)
+            if not notes or f"## {version}" in notes or "\n## " in notes:
+                problems.append("release notes are empty or include other versions")
+            self.record_result("T_RELEASE", "release surfaces agree", not problems, "; ".join(problems))
+        except Exception as e:
+            self.record_result("T_RELEASE", "release surfaces agree", False, str(e))
+
+    def test_package_build_and_validation(self):
+        """T_PACKAGE: the ZIP builds reproducibly, passes validation, and broken ZIPs fail it."""
+        self.log_test_start("T_PACKAGE", "package build and validation")
+        out = tempfile.mkdtemp(prefix="fusion_pkg_")
+        try:
+            import zipfile
+
+            package, _ = self._import_release_scripts()
+            problems = []
+
+            first = package.build("HEAD", Path(out) / "a")
+            second = package.build("HEAD", Path(out) / "b")
+            if first.read_bytes() != second.read_bytes():
+                problems.append("two builds of the same commit differ")
+            errors = package.validate(first)
+            if errors:
+                problems.append(f"real package invalid: {errors}")
+
+            with zipfile.ZipFile(first) as good:
+                entries = {info.filename: good.read(info) for info in good.infolist()}
+            prefix = f"{package.ADDIN_NAME}/"
+            manifest_name = f"{prefix}{package.ADDIN_NAME}.manifest"
+            manifest = json.loads(entries[manifest_name])
+            names = set(entries)
+            if f"{prefix}push_cli.py" in names or f"{prefix}diagnostic.py" in names:
+                problems.append("developer tools are in the package")
+
+            def with_manifest(**changes):
+                m = dict(manifest)
+                for key, value in changes.items():
+                    if value is None:
+                        m.pop(key, None)
+                    else:
+                        m[key] = value
+                return {**entries, manifest_name: json.dumps(m).encode()}
+
+            broken_cases = {
+                "missing module": {k: v for k, v in entries.items() if not k.endswith("dialog_helpers.py")},
+                "syntax error": {**entries, f"{prefix}fusion_git_core.py": b"def broken(:\n"},
+                "invalid GUID": with_manifest(id="not-a-guid"),
+                "different GUID": with_manifest(id="00000000-0000-4000-8000-000000000000"),
+                "bad version": with_manifest(version="banana"),
+                "missing type": with_manifest(type=None),
+                "extra file": {**entries, f"{prefix}push_cli.py": b"print('dev tool')\n"},
+                "foreign import": {
+                    **entries,
+                    f"{prefix}dialog_helpers.py": entries[f"{prefix}dialog_helpers.py"] + b"\nimport requests\n",
+                },
+            }
+            for label, files in broken_cases.items():
+                path = Path(out) / f"broken-{label.replace(' ', '-')}.zip"
+                with zipfile.ZipFile(path, "w") as z:
+                    for name, data in files.items():
+                        z.writestr(name, data)
+                if not package.validate(path):
+                    problems.append(f"broken package accepted: {label}")
+            if not any("does not match" in e for e in package.validate(first, expect_version="9.9.9")):
+                problems.append("wrong expected version accepted")
+
+            self.record_result("T_PACKAGE", "package build and validation", not problems, "; ".join(problems))
+        except Exception as e:
+            self.record_result("T_PACKAGE", "package build and validation", False, str(e))
+        finally:
+            self._cleanup_dir(out)
+
+    def test_display_name(self):
+        """T_NAME: the user-visible name is "Push to GitHub"; the internal command id is frozen."""
+        self.log_test_start("T_NAME", "Display name and frozen command id")
+        root = Path(__file__).resolve().parent.parent
+        problems = []
+        main_src = (root / "src" / "Push_To_GitHub.py").read_text(encoding="utf-8")
+        if 'CMD_NAME = "Push to GitHub"' not in main_src:
+            problems.append("CMD_NAME is not 'Push to GitHub'")
+        # Changing CMD_ID would reset users' toolbar placement; it is not shown to users.
+        if 'CMD_ID = "PushToGitHub_Cmd_ZAC_V7_4"' not in main_src:
+            problems.append("CMD_ID changed")
+        for pattern in ("*.md", "*.py"):
+            for path in root.rglob(pattern):
+                if ".git" in path.parts or "__pycache__" in path.parts:
+                    continue
+                if "(ZAC)" in path.read_text(encoding="utf-8", errors="replace"):
+                    problems.append(f"'(ZAC)' in {path.relative_to(root)}")
+        # This file and the CHANGELOG (history) name the old label on purpose.
+        problems = [p for p in problems if "test_runner.py" not in p and "CHANGELOG.md" not in p]
+        self.record_result("T_NAME", "Display name and frozen command id", not problems, "; ".join(problems))
+
+    def test_no_force_push_in_source(self):
+        """T_NOFORCE: no force-push option or setting anywhere in the shipped code."""
+        self.log_test_start("T_NOFORCE", "No force push in source")
+        root = Path(__file__).resolve().parent.parent
+        pattern = re.compile(r"--force|force-with-lease|force-if-includes|\bskip_pull\b|\"skipPull\"")
+        hits = []
+        for py in sorted((root / "src").glob("*.py")):
+            for lineno, line in enumerate(py.read_text(encoding="utf-8").splitlines(), 1):
+                if pattern.search(line):
+                    hits.append(f"{py.name}:{lineno}")
+        # The one allowed mention of the old setting is the line that deletes it.
+        main_src = (root / "src" / "Push_To_GitHub.py").read_text(encoding="utf-8")
+        if 'pop("skipPullDefault", None)' not in main_src:
+            hits.append("Push_To_GitHub.py no longer drops a saved skipPullDefault")
+        stray = [
+            line for line in main_src.splitlines()
+            if "skipPullDefault" in line and 'pop("skipPullDefault", None)' not in line
+            and not line.strip().startswith("#")
+        ]
+        if stray:
+            hits.append(f"skipPullDefault still read or written: {stray}")
+        self.record_result("T_NOFORCE", "No force push in source", not hits, "; ".join(hits))
 
     def run_pipeline_tests(self):
         """Run git pipeline integration tests."""
@@ -1039,6 +1368,8 @@ class TestRunner:
             self.test_pipeline_branch_override_reuse()
             self.test_pipeline_template_branch_uniquify()
             self.test_pipeline_reused_branch_sync()
+            self.test_pipeline_never_overwrites_remote()
+            self.test_setup_blank_name_uses_clone_folder()
         finally:
             for key, value in saved.items():
                 if value is None:
@@ -1053,6 +1384,8 @@ class TestRunner:
         self.test_t002_python_environment()
         self.test_t004_fusion_git_core_import()
         self.test_t_version_consistency()
+        self.test_release_consistency()
+        self.test_package_build_and_validation()
         self.test_t005_cli_harness_help()
 
     def run_core_module_tests(self):
@@ -1062,6 +1395,8 @@ class TestRunner:
         self.test_dialog_helpers_url_functions()
         self.test_askpass_script_security()
         self.test_export_subfolder_helpers()
+        self.test_no_force_push_in_source()
+        self.test_display_name()
 
     def run_git_tests(self):
         """Run git operation tests"""
@@ -1107,8 +1442,17 @@ class TestRunner:
         print("See TESTING.md for complete manual test procedures.")
 
 
+def _src_version() -> str:
+    try:
+        import fusion_git_core
+
+        return fusion_git_core.VERSION
+    except Exception:
+        return "unknown"
+
+
 def main():
-    parser = argparse.ArgumentParser(description="FusionToGitHub 0.3.1 Test Runner")
+    parser = argparse.ArgumentParser(description="FusionToGitHub Test Runner")
     parser.add_argument("--verbose", "-v", action="store_true",
                        help="Enable verbose output")
     parser.add_argument("--category", "-c",
@@ -1129,7 +1473,7 @@ def main():
     
     runner = TestRunner(verbose=args.verbose)
     
-    print("FusionToGitHub 0.3.1 - Automated Test Runner")
+    print(f"FusionToGitHub - Automated Test Runner (src version {_src_version()})")
     print(f"Running category: {args.category}")
     print(f"Working directory: {os.getcwd()}")
     

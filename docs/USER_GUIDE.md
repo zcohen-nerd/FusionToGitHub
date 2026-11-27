@@ -30,7 +30,7 @@ FusionToGitHub integrates Autodesk Fusion 360 with GitHub to provide professiona
 ### Opening the Add-in
 
 1. **Toolbar Method**: Click the "Push to GitHub" button in your Fusion 360 toolbar
-2. **Menu Method**: UTILITIES tab → ADD-INS → Scripts and Add-Ins → Run "Push to GitHub (ZAC)"
+2. **Menu Method**: UTILITIES tab → ADD-INS → Scripts and Add-Ins → Run **Push_To_GitHub**
 3. **Keyboard**: The add-in appears in your recent commands for quick access
 
 ### The Main Dialog
@@ -51,7 +51,7 @@ The add-in dialog has these sections:
 
 #### Templates / Advanced / Logging
 - **Templates**: Commit and branch naming templates (collapsed by default)
-- **Advanced**: Export Subfolder, Branch Name Override, Force Push (skip pull), token controls
+- **Advanced**: Export Subfolder, Branch Name Override, token controls
 - **Logging**: Log level selector and **Open Log File…**
 
 ---
@@ -253,8 +253,13 @@ If you want to continue work on an existing branch:
 
 1. **Use Branch Override**: Enter exact branch name
 2. **Local Checkout**: The add-in will switch to that branch
-3. **Append Changes**: New commits added to existing branch
-4. **Force Push**: May be required if branch exists remotely
+3. **Update from GitHub**: The add-in first brings the branch up to date with GitHub
+4. **Append Changes**: New commits added to existing branch
+
+The add-in never force-pushes. If GitHub has commits on that branch that your
+computer doesn't (for example, the branch was created or updated from another
+computer and can't be updated automatically), the push is refused and nothing
+on GitHub changes. Leave Branch Override blank to push to a new branch instead.
 
 ---
 

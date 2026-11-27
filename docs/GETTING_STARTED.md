@@ -40,29 +40,27 @@ Before installing, make sure you have:
 
 ### Step 2: Install the Add-in 📦
 
-1. **Download** the FusionToGitHub files
+1. **Download** `Push_To_GitHub-<version>.zip` from the **Assets** of the
+   [latest release](https://github.com/zcohen-nerd/FusionToGitHub/releases/latest)
+   (not the green **Code → Download ZIP** button, which is the source code).
 2. **Locate your Fusion 360 add-ins folder:**
    - Windows: `%APPDATA%\Autodesk\Autodesk Fusion 360\API\AddIns\`
-   - macOS: `~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns/`
-3. **Create a new folder** called `FusionToGitHub`
-4. **Copy everything from the download's `src` folder** into it:
-   - `Push_To_GitHub.py`
-   - `Push_To_GitHub.manifest`
-   - `AddInIcon.svg`
-   - `fusion_git_core.py` (required)
-   - `dialog_helpers.py` (required)
-   - `push_cli.py`
-   - `diagnostic.py`
+   - macOS (experimental): `~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns/`
+3. **Unzip it into that folder**, so you get `AddIns/Push_To_GitHub/` with
+   `Push_To_GitHub.manifest` and `Push_To_GitHub.py` directly inside it. The
+   folder must be named exactly `Push_To_GitHub`. On Windows, when **Extract
+   All…** suggests a destination ending in `Push_To_GitHub-<version>`, remove
+   that part so the files don't end up one folder too deep.
+4. **Restart Fusion 360** completely
 
-   ⚠️ The add-in will not load if `fusion_git_core.py` or
-   `dialog_helpers.py` are missing — copy the whole `src` folder contents.
-5. **Restart Fusion 360** completely
+Upgrading from an older, hand-copied install? See
+[Upgrading](../README.md#upgrading-from-an-earlier-version) first.
 
 ### Step 3: Enable the Add-in 🔧
 
 1. In Fusion 360, go to **UTILITIES** tab
 2. Click **ADD-INS** button
-3. Find "Push to GitHub (ZAC)" in the list
+3. Find **Push_To_GitHub** in the list
 4. Click **Run** to enable it
 5. You should see a new **"Push to GitHub"** button in your toolbar
 

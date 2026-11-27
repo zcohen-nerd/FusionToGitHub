@@ -1,53 +1,55 @@
-# FusionToGitHub Installation - Organized Repository
+# FusionToGitHub — Quick Install
 
-## Quick Installation Guide
+## Install the add-in
 
-### For Fusion 360 Add-in Installation
+1. Download **`Push_To_GitHub-<version>.zip`** from the **Assets** of the
+   [latest release](https://github.com/zcohen-nerd/FusionToGitHub/releases/latest).
+   (Not the green **Code → Download ZIP** button: that's the source code.)
+2. Unzip it into your Fusion add-ins folder so that you get exactly:
 
-1. **Download/Clone** this repository
-2. **Copy ALL files from the `src` folder** to your Fusion 360 add-ins directory:
-   - Windows: `%APPDATA%\Autodesk\Autodesk Fusion 360\API\AddIns\FusionToGitHub\`
-   - macOS: `~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns/FusionToGitHub/`
-
-3. **⚠️ IMPORTANT: Copy ALL src/ files together**:
    ```
-   FusionToGitHub/                   # Create this folder
-   ├── Push_To_GitHub.py            # Main add-in file
-   ├── Push_To_GitHub.manifest      # Add-in manifest
-   ├── AddInIcon.svg                # Add-in icon (referenced by manifest)
-   ├── fusion_git_core.py           # Core git operations (REQUIRED)
-   ├── dialog_helpers.py            # Dialog/setup helpers (REQUIRED)
-   ├── push_cli.py                  # CLI harness (optional)
-   └── diagnostic.py                # Diagnostic script (optional)
+   AddIns/
+   └── Push_To_GitHub/
+       ├── Push_To_GitHub.manifest
+       ├── Push_To_GitHub.py
+       ├── fusion_git_core.py
+       ├── dialog_helpers.py
+       ├── AddInIcon.svg
+       └── LICENSE
    ```
-   
-   **All files must be in the same directory** for proper module imports.
 
-4. **Enable the add-in** in Fusion 360:
-   - UTILITIES → ADD-INS → Scripts and Add-Ins
-   - Find "Push to GitHub (ZAC)" and click Run
+   - Windows: `%APPDATA%\Autodesk\Autodesk Fusion 360\API\AddIns\Push_To_GitHub\`
+   - macOS (experimental): `~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns/Push_To_GitHub/`
 
-### For Development/Testing
+   The folder name must be exactly `Push_To_GitHub`, the same as the
+   `.manifest` and `.py` files, or Fusion won't load it.
+3. Restart Fusion, then **UTILITIES → ADD-INS**, find **Push_To_GitHub**, and
+   click **Run**.
 
-If you want to run tests or develop the add-in:
+Step-by-step instructions with screenshots-in-words, and how to upgrade from an
+older manual install, are in the [README](README.md#installing-the-add-in-5-minutes).
 
-1. **Clone the full repository** with organized structure
-2. **Run automated tests**:
-   ```bash
-   python tests/test_runner.py
-   ```
-3. **Read documentation**:
-   - Start with `docs/GETTING_STARTED.md`
-   - Complete setup: `docs/INSTALLATION.md`
+## Install from source (developers)
 
-### Repository Structure
+Build the same ZIP CI builds, from your current commit, and unzip it as above:
+
+```bash
+python scripts/package.py build      # writes dist/Push_To_GitHub-<version>.zip
+```
+
+The package contains only the files Fusion needs. `push_cli.py` and
+`diagnostic.py` are developer tools; run them from the repository instead.
+
+Run the automated tests with `python tests/test_runner.py`. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the development and release process.
+
+## Repository structure
 
 ```
 FusionToGitHub/
-├── src/                          # Source code (copy to Fusion)
-├── docs/                         # Complete documentation
-├── tests/                        # Testing framework
-└── README.md                     # Project overview
+├── src/                          # Add-in source (packaged by scripts/package.py)
+├── scripts/                      # Packaging and release checks
+├── docs/                         # Documentation
+├── tests/                        # Automated tests and manual test plans
+└── README.md                     # Start here
 ```
-
-For complete installation instructions, see [docs/INSTALLATION.md](docs/INSTALLATION.md).

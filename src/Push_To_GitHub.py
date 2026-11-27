@@ -1,6 +1,5 @@
-"""Push to GitHub (ZAC) — 0.3
+"""Push to GitHub — an Autodesk Fusion add-in.
 Export → changelog → branch → commit → push.
-This release formalizes dependency packaging and adds an offline CLI harness.
 """
 
 from __future__ import annotations
@@ -48,6 +47,7 @@ try:
         ensure_export_subfolder_exists,
         expand_export_subfolder,
         normalize_export_subfolder,
+        resolve_new_repo_path as _resolve_new_repo_path,
         setup_new_repository as _setup_new_repository,
         validate_repo_inputs as _validate_repo_inputs,
     )
@@ -71,6 +71,7 @@ except ImportError:
         ensure_export_subfolder_exists,
         expand_export_subfolder,
         normalize_export_subfolder,
+        resolve_new_repo_path as _resolve_new_repo_path,
         setup_new_repository as _setup_new_repository,
         validate_repo_inputs as _validate_repo_inputs,
     )
@@ -127,7 +128,7 @@ LOG_FILE_PATH = os.path.join(LOG_DIR, "PushToGitHub.log")
 # NOTE: the version suffix in this id is historical. Changing the id resets
 # users' toolbar placement/promotion, so it stays frozen as VERSION advances.
 CMD_ID = "PushToGitHub_Cmd_ZAC_V7_4"
-CMD_NAME = "Push to GitHub (ZAC)"
+CMD_NAME = "Push to GitHub"
 CMD_TOOLTIP = (
     "Exports/configures, updates changelog, and pushes design to GitHub."
 )
@@ -1166,15 +1167,6 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                 "branch template. Enter a name to push to that specific "
                 "branch instead (reusing it if it already exists)."
             )
-            skip_pull_input = flow_inputs.addBoolValueInput(
-                "skipPull",
-                "Force Push (skip pull)",
-                True,
-                "",
-                False,
-            )
-            skip_pull_input.isFullWidth = False
-
             use_pat_input = flow_inputs.addBoolValueInput(
                 "useStoredPat",
                 "Use Stored Token",
@@ -1261,7 +1253,6 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                 if export_input:
                     export_input.value = export_subfolder_value
 
-                skip_pull_input.value = bool(det.get("skipPullDefault", False))
                 if IS_WINDOWS:
                     use_pat_input.value = bool(det.get("useStoredPat", False))
 
@@ -1321,7 +1312,6 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                     export_input = inputs.itemById("exportSubfolder")
                     if export_input:
                         export_input.value = ""
-                    skip_pull_input.value = False
                     if IS_WINDOWS:
                         use_pat_input.value = False
                     branch_preview_input = inputs.itemById("branchPreview")
@@ -1633,13 +1623,15 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                                 )
                                 execute_args.executeFailed = True
                                 return
-                            local_path = normalized_repo_path or os.path.join(REPO_BASE_DIR, repo_name_to_add)
-                            if auto_path_state.get("auto", True):
-                                # The auto path tracks the repo name; recompute in
-                                # case the name was just derived from the URL.
-                                local_path = _default_path_for_new_repo(
-                                    repo_name_to_add, REPO_BASE_DIR, _safe_base
-                                )
+                            # The auto path tracks the repo name, which may
+                            # have just been derived from the URL.
+                            local_path = _resolve_new_repo_path(
+                                repo_name_to_add,
+                                normalized_repo_path,
+                                auto_path_state.get("auto", True),
+                                REPO_BASE_DIR,
+                                _safe_base,
+                            )
 
                             existing_entry = current_config.get(repo_name_to_add)
                             if existing_entry is not None:
@@ -1702,7 +1694,13 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                                     "lastCommitMessage", "Updated design"
                                 )
                             save_config(current_config)
-                            
+
+                            # The push below must use the folder the repository
+                            # was just set up in, not the path validated before
+                            # the name was known (BUG-01).
+                            normalized_repo_path = local_path
+                            repo_path_input.value = local_path
+
                             # Don't return - let the user continue to push immediately
                             # Update the UI to reflect the new repository is now selected
                             selected_action = repo_name_to_add
@@ -1746,8 +1744,6 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                             execute_args.executeFailed = True
                             return
 
-                        skip_pull_selected = bool(cmd_inputs.itemById("skipPull").value)
-
                         branch_preview_input = cmd_inputs.itemById("branchPreview")
                         branch_override_raw = branch_preview_input.value.strip() if branch_preview_input else ""
                         branch_override_sanitized = sanitize_branch_name(branch_override_raw) if branch_override_raw else ""
@@ -1774,8 +1770,10 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                         set_logger_level(log_level_name)
 
                         selected_repo_details["exportSubfolder"] = normalized_export_subfolder
-                        selected_repo_details["skipPullDefault"] = skip_pull_selected
                         selected_repo_details["logLevel"] = log_level_name
+                        # Force push was removed; drop the old per-repo
+                        # setting so a saved "on" value can never come back.
+                        selected_repo_details.pop("skipPullDefault", None)
                         if IS_WINDOWS:
                             selected_repo_details["useStoredPat"] = use_pat_selected
                         # Drop the legacy pre-fill value so older configs stop
@@ -1914,7 +1912,6 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                                 git_ui_adapter,
                                 base_name,
                                 branch_override=branch_override_sanitized or None,
-                                skip_pull=skip_pull_selected,
                                 pat_credentials=pat_credentials,
                                 logger=logger,
                                 materialize_files=materialize_exports,
@@ -1942,10 +1939,10 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                                 status_notes.append("Added a new commit to the existing branch.")
                             if git_result.get("stashed"):
                                 status_notes.append("Auto-stashed local changes and restored them afterward.")
-                            if git_result.get("force_push"):
-                                status_notes.append("Used --force-with-lease (skip pull).")
                             if git_result.get("pull_failed"):
-                                status_notes.append("Initial pull --rebase failed; branch was force-pushed.")
+                                status_notes.append(
+                                    "Couldn't update from GitHub first; pushed without updating."
+                                )
                             if status_notes:
                                 summary_lines.append("")
                                 summary_lines.append("Git flow details:")

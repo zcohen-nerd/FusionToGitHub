@@ -1,119 +1,122 @@
-name: Release Packaging
+name: Release
+
+# Pushing a version tag (for example 0.3.3) runs the full CI on that commit,
+# checks that the tag matches the manifest and is on main, builds the ZIP,
+# attests it, and creates a DRAFT release with the ZIP attached.
+# A maintainer then installs the drafted ZIP in Fusion and clicks Publish.
+# Nothing is ever published automatically. See CONTRIBUTING.md, "Releasing".
+#
+# Running it by hand ("Run workflow") is a dry run on the chosen branch or
+# tag: it builds and uploads the ZIP as a workflow artifact and creates no
+# release.
 
 on:
-  release:
-    types: [published]
-
+  push:
+    tags: ["[0-9]+.[0-9]+.[0-9]+"]
   workflow_dispatch:
 
-permissions:
-  contents: write
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  package:
-    name: Package Fusion Add-in
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  build:
+    name: Build package
+    needs: ci
     runs-on: ubuntu-latest
-
+    permissions:
+      contents: read
+      id-token: write # build provenance attestation
+      attestations: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # check_release needs origin/main
+          persist-credentials: false
 
-      - name: Validate release version
-        if: github.event_name == 'release'
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Check the release
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          IS_TAG: ${{ github.ref_type == 'tag' }}
+          TAG: ${{ github.ref_name }}
         run: |
-          python3 - <<'PY'
-          import json
-          import os
+          if [ "$IS_TAG" = "true" ]; then
+            python scripts/check_release.py --tag "$TAG" --require-on-main --write-notes release-notes.md
+          else
+            python scripts/check_release.py --write-notes release-notes.md
+          fi
 
-          with open("src/Push_To_GitHub.manifest") as f:
-              manifest = json.load(f)
-
-          tag = os.environ["RELEASE_TAG"].removeprefix("v")
-          version = manifest["version"]
-
-          if tag != version:
-              raise SystemExit(
-                  f"Release tag {tag} does not match manifest {version}"
-              )
-
-          print(f"Validated release version: {version}")
-          PY
-
-      - name: Build installable ZIP
+      - name: Read version
+        id: version
         run: |
-          mkdir -p dist
+          echo "version=$(python -c 'import json; print(json.load(open("src/Push_To_GitHub.manifest"))["version"])')" >> "$GITHUB_OUTPUT"
 
-          git archive \
-            --format=zip \
-            --prefix=Push_To_GitHub/ \
-            --output=dist/Push_To_GitHub-universal.zip \
-            --add-file=LICENSE \
-            HEAD:src -- \
-            Push_To_GitHub.manifest \
-            Push_To_GitHub.py \
-            AddInIcon.svg \
-            diagnostic.py \
-            dialog_helpers.py \
-            fusion_git_core.py \
-            push_cli.py
+      - name: Build and validate the add-in ZIP
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: python scripts/package.py build --out dist --expect-version "$VERSION"
 
-      - name: Validate package
-        run: |
-          python3 - <<'PY'
-          import json
-          import zipfile
+      - name: Attest build provenance
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*.zip
 
-          path = "dist/Push_To_GitHub-universal.zip"
+      - name: Upload package
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-package
+          path: |
+            dist/
+            release-notes.md
+          if-no-files-found: error
 
-          required = {
-              "Push_To_GitHub/Push_To_GitHub.manifest",
-              "Push_To_GitHub/Push_To_GitHub.py",
-              "Push_To_GitHub/AddInIcon.svg",
-              "Push_To_GitHub/fusion_git_core.py",
-              "Push_To_GitHub/dialog_helpers.py",
-              "Push_To_GitHub/diagnostic.py",
-              "Push_To_GitHub/push_cli.py",
-              "Push_To_GitHub/LICENSE",
-          }
+  draft-release:
+    name: Create draft release
+    needs: build
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download package
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-package
 
-          with zipfile.ZipFile(path) as archive:
-              missing = required - set(archive.namelist())
-
-              if missing:
-                  raise SystemExit(f"Missing files: {missing}")
-
-              if archive.testzip() is not None:
-                  raise SystemExit("ZIP integrity check failed")
-
-              manifest = json.loads(archive.read(
-                  "Push_To_GitHub/Push_To_GitHub.manifest"
-              ))
-
-              if not manifest.get("id"):
-                  raise SystemExit("Missing add-in GUID")
-
-              for name in archive.namelist():
-                  if not name.startswith("Push_To_GitHub/"):
-                      raise SystemExit(f"Unexpected path: {name}")
-
-              print("Package validation passed")
-
-          PY
-
-      - name: Generate SHA-256 checksum
-        run: |
-          cd dist
-          sha256sum Push_To_GitHub-universal.zip \
-            > Push_To_GitHub-universal.zip.sha256
-
-      - name: Upload release assets
-        if: github.event_name == 'release'
+      - name: Create the draft release with the ZIP attached
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.build.outputs.version }}
         run: |
-          gh release upload "$RELEASE_TAG" \
-            dist/Push_To_GitHub-universal.zip \
-            dist/Push_To_GitHub-universal.zip.sha256
+          ZIP="dist/Push_To_GitHub-${VERSION}.zip"
+          {
+            cat release-notes.md
+            echo
+            echo "---"
+            echo
+            echo "**Install:** download \`Push_To_GitHub-${VERSION}.zip\` and unzip it into Fusion's AddIns folder,"
+            echo "so that you get \`AddIns/Push_To_GitHub/Push_To_GitHub.manifest\`. See the README for the full steps."
+            echo
+            echo "**Verify the download:** \`gh attestation verify Push_To_GitHub-${VERSION}.zip -R ${GH_REPO}\`"
+            echo "or compare its SHA-256 with \`Push_To_GitHub-${VERSION}.zip.sha256\`."
+          } > body.md
+          gh release create "$TAG" "$ZIP" "$ZIP.sha256" \
+            --draft --verify-tag --title "$TAG" --notes-file body.md
+          echo "Draft release $TAG created. Install the ZIP in Fusion, then publish it on GitHub." >> "$GITHUB_STEP_SUMMARY"

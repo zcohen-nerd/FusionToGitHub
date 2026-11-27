@@ -34,7 +34,7 @@ python "c:\Users\ZCohe\OneDrive\Documents\Python Scripts\Fusion_to_GitHub\Fusion
 
 1. **Stop the add-in** (if it's running):
    - Go to: `Scripts and Add-Ins` (Shift+S)
-   - Select "Push to GitHub (ZAC)"
+   - Select **Push_To_GitHub**
    - Click "Stop"
 
 2. **Restart Fusion 360 completely** (important!)
@@ -44,7 +44,7 @@ python "c:\Users\ZCohe\OneDrive\Documents\Python Scripts\Fusion_to_GitHub\Fusion
 3. **Run the add-in**:
    - Go to: `Scripts and Add-Ins` (Shift+S)
    - Go to "Add-Ins" tab
-   - Select "Push to GitHub (ZAC)"
+   - Select **Push_To_GitHub**
    - Click "Run"
    - Check the box "Run on Startup" (optional)
 
@@ -88,20 +88,26 @@ The add-in already has comprehensive logging. To see more details:
 
 If all else fails, do a clean reinstall:
 
-1. **Remove the add-in**:
-   ```powershell
-   Remove-Item "$env:APPDATA\Autodesk\Autodesk Fusion 360\API\AddIns\PushToGitHub" -Recurse -Force
-   ```
+1. **Stop the add-in** in Fusion (**UTILITIES → ADD-INS**, select
+   **Push_To_GitHub**, click **Stop**), then quit Fusion.
 
-2. **Clear config**:
+2. **Remove the add-in folder** (this deletes only the add-in's program files):
    ```powershell
-   Remove-Item "$env:USERPROFILE\.fusion_git_repos.json" -Force
-   Remove-Item "$env:USERPROFILE\.PushToGitHub_AddIn_Data" -Recurse -Force
+   Remove-Item "$env:APPDATA\Autodesk\Autodesk Fusion 360\API\AddIns\Push_To_GitHub" -Recurse
    ```
+   If you installed an older version by hand, its folder may be called
+   `FusionToGitHub` or `PushToGitHub` instead; remove that one too, so only
+   one copy is installed.
 
-3. **Reinstall**:
-   - Copy the entire `src` folder to Fusion's add-ins directory
-   - Restart Fusion 360
+3. **Optional: set your settings aside** instead of deleting them. Renaming
+   keeps a copy you can restore later:
+   ```powershell
+   Rename-Item "$env:USERPROFILE\.fusion_git_repos.json" ".fusion_git_repos.json.bak"
+   ```
+   Your local repositories and everything on GitHub are not affected.
+
+4. **Reinstall** from the release ZIP as described in the
+   [README](README.md#installing-the-add-in-5-minutes), then restart Fusion 360.
 
 ## Testing the Fix
 
@@ -133,8 +139,8 @@ After applying the import fix, test these scenarios:
 
 When reviewing logs, look for:
 
-- ✅ `'Push to GitHub (ZAC)' Logger initialized` - Good start
-- ✅ `'Push to GitHub (ZAC)' Add-In Loaded and running` - Loaded successfully
+- ✅ `'Push to GitHub' Logger initialized` - Good start
+- ✅ `'Push to GitHub' Add-In Loaded and running` - Loaded successfully
 - ❌ `ImportError` - Missing module
 - ❌ `AttributeError` - API object not available
 - ❌ `SyntaxError` - Code has syntax problems

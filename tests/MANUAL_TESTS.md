@@ -15,7 +15,7 @@ This checklist provides a streamlined set of manual tests to verify core functio
 ### 🔧 Basic Functionality Tests (10 minutes)
 
 #### Test 1: Add-in Launch
-- [ ] **Step**: Click "Push to GitHub (ZAC)" button in toolbar
+- [ ] **Step**: Click "Push to GitHub" button in toolbar
 - [ ] **Expected**: Dialog opens without errors
 - [ ] **Expected**: Git status shows "Available"
 - [ ] **If fails**: Check git installation and PATH

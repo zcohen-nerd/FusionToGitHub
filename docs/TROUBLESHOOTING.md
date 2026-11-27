@@ -15,8 +15,12 @@
 **Solutions**:
 1. **Verify file placement**:
    - Check files are in correct add-ins folder
-   - Windows: `%APPDATA%\Autodesk\Autodesk Fusion 360\API\AddIns\FusionToGitHub\`
-   - macOS: `~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns/FusionToGitHub/`
+   - Windows: `%APPDATA%\Autodesk\Autodesk Fusion 360\API\AddIns\Push_To_GitHub\`
+   - macOS: `~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns/Push_To_GitHub/`
+   - The folder must be named exactly `Push_To_GitHub` and contain
+     `Push_To_GitHub.manifest` and `Push_To_GitHub.py` directly (not inside
+     another folder). An older install in a folder named `FusionToGitHub`
+     should be removed; see [Upgrading](../README.md#upgrading-from-an-earlier-version).
 
 2. **Check file permissions**:
    - Ensure files aren't blocked (Windows: right-click → Properties → Unblock)
@@ -29,7 +33,7 @@
 
 4. **Enable manually**:
    - UTILITIES → ADD-INS → Scripts and Add-Ins
-   - Look for "Push to GitHub (ZAC)"
+   - Look for **Push_To_GitHub**
    - Click "Run" if it appears
 
 ### Add-in shows errors on startup
@@ -72,9 +76,10 @@ python -c "import os, subprocess, tempfile"
    - Ensure Git is in system PATH
    - Try `where git` (Windows) or `which git` (macOS/Linux)
 
-4. **Manual Git path**:
-   - Edit `fusion_git_core.py`
-   - Update the `GIT_EXE` fallback near the top with the full path to git.exe
+4. **Git installed somewhere unusual** (Windows):
+   - The add-in looks for `git` on PATH, then at `C:\Program Files\Git\bin\git.exe`.
+   - Reinstalling Git for Windows with its default options puts it there.
+   - Don't edit the add-in's files: an update replaces them.
 
 ### "Authentication failed" / "Permission denied"
 
@@ -156,24 +161,28 @@ python -c "import os, subprocess, tempfile"
 
 4. **File permissions**:
    - Verify write access to export directory
-   - Check antivirus isn't blocking file creation
+   - If Windows Security's **Controlled folder access** or another security
+     tool blocks the write, allow Fusion in that tool's settings rather than
+     turning protection off
 
 ### "Access denied" / "Permission errors"
 
 **Symptoms**: Can't write files, permission errors
 
 **Solutions**:
-1. **Run as administrator** (Windows):
-   - Right-click Fusion 360 → Run as administrator
-   - Only needed for troubleshooting
+1. **Check folder permissions**:
+   - Ensure the repository folder isn't read-only
+   - Verify your user account has write access
+   - Don't run Fusion as administrator to work around this: files it creates
+     then belong to the administrator and cause more permission errors later
 
-2. **Check folder permissions**:
-   - Ensure export folder isn't read-only
-   - Verify user has write access
+2. **Synced folders**: if the repository is inside OneDrive, Dropbox or
+   similar, files set to "online-only" can't be written. Keep the repository
+   outside synced folders, or mark it "always keep on this device".
 
-3. **Antivirus interference**:
-   - Temporarily disable antivirus
-   - Add add-in folder to antivirus exclusions
+3. **Security software**: if Windows Security's **Controlled folder access** or
+   antivirus blocks the write, allow Fusion in that tool's settings. Don't turn
+   protection off.
 
 4. **Path length issues** (Windows):
    - Use shorter paths (under 260 characters)
@@ -192,22 +201,23 @@ python -c "import os, subprocess, tempfile"
    - Enable timestamp in branch template
    - Use `{filename}-{timestamp}` pattern
 
-2. **Force new branch**:
-   - Use "Branch Override" with unique name
-   - Try adding suffix: `-v2`, `-fixed`, etc.
+2. **Push to a new branch**:
+   - Leave "Branch Name Override" blank; the add-in then creates a new,
+     uniquely named branch for every export
+   - Or type a new name, adding a suffix such as `-v2`
 
-3. **Clean up old branches**:
+3. **Clean up old local branches** (only ones you created and no longer need):
    ```bash
    git branch -d old-branch-name
-   git push origin --delete old-branch-name
    ```
+   `-d` refuses to delete a branch with work that isn't merged anywhere.
+   Deleting a branch on GitHub removes it for everyone, so check with your
+   team first.
 
-4. **Resolve conflicts manually**:
-   ```bash
-   git status
-   git add .
-   git commit -m "Resolve conflicts"
-   ```
+4. **Merge conflicts**: the add-in aborts a conflicted update automatically
+   and leaves your repository as it was. It never commits files containing
+   conflict markers. If `git status` ever says a rebase or merge is in
+   progress, cancel it with `git rebase --abort` (or `git merge --abort`).
 
 ### "Your branch is behind" / "Need to pull"
 
@@ -223,9 +233,10 @@ python -c "import os, subprocess, tempfile"
    git pull --rebase origin main
    ```
 
-3. **Force push** (use carefully):
-   - Only if you're sure about overwriting remote
-   - Enable force push in add-in settings
+3. **"GitHub refused the push"**: GitHub has commits on that branch that
+   your computer doesn't. The add-in never force-pushes, so nothing on GitHub
+   was changed. Leave "Branch Name Override" blank to push the export to a new
+   branch instead.
 
 ---
 
@@ -241,11 +252,15 @@ python -c "import os, subprocess, tempfile"
    - Look for `git:https://github.com` entries
    - Remove old/conflicting entries
 
-2. **Clear Git credential cache**:
+2. **Check which credential helper Git uses**:
    ```bash
-   git config --global --unset credential.helper
-   git config --global credential.helper manager-core
+   git config --global credential.helper
    ```
+   With Git for Windows this should print `manager`. If it prints nothing or
+   the old name `manager-core`, set it with
+   `git config --global credential.helper manager` (or reinstall Git for
+   Windows with Git Credential Manager enabled). Don't unset a helper you
+   didn't set up yourself: other tools may rely on it.
 
 3. **Re-store credentials**:
    - In add-in: Uncheck "Use Stored Token"
@@ -275,27 +290,29 @@ python -c "import os, subprocess, tempfile"
 
 ### Running Built-in Tests
 
+These need a copy of the source repository (not the installed add-in):
+
 1. **Automated tests**:
    ```powershell
    cd "path\to\FusionToGitHub"
-   python test_runner.py
+   python tests/test_runner.py
    ```
 
 2. **Check specific components**:
    ```powershell
-   python test_runner.py --category pre-install
-   python test_runner.py --category git-ops
+   python tests/test_runner.py --category pre-install
+   python tests/test_runner.py --category git-ops
    ```
 
 3. **CLI testing**:
    ```powershell
-   python push_cli.py --help
+   python src/push_cli.py --help
    ```
 
 ### Log Analysis
 
 **Log file locations**:
-- Windows: `%APPDATA%\.PushToGitHub_AddIn_Data\PushToGitHub.log`
+- Windows: `%USERPROFILE%\.PushToGitHub_AddIn_Data\PushToGitHub.log`
 - macOS: `~/.PushToGitHub_AddIn_Data/PushToGitHub.log`
 
 **Common log patterns**:
@@ -336,14 +353,18 @@ git log --oneline -10
    git status
    git stash list
    ```
-3. **Recover stashed changes**:
+3. **If a rebase was interrupted** (`git status` says "rebase in progress"):
    ```bash
-   git stash pop
+   git rebase --abort
    ```
-4. **Clean up incomplete operations**:
+4. **Recover auto-stashed changes**: look for the add-in's entry, named
+   `fusion_git_addin_autostash`, and restore that one specifically:
    ```bash
-   git reset --hard HEAD
+   git stash list
+   git stash pop stash@{N}    # N = the number shown next to fusion_git_addin_autostash
    ```
+   Make sure you are back on your original branch first (`git status` shows
+   it). Don't use `git reset --hard`: it permanently discards uncommitted work.
 
 ### If repository gets corrupted
 
@@ -369,10 +390,8 @@ git log --oneline -10
    - Hard refresh GitHub page (Ctrl+F5)
    - Check repository network graph
 
-3. **Re-push if needed**:
-   ```bash
-   git push --force-with-lease origin branch-name
-   ```
+3. **Push again**: click **Push to GitHub** again with Branch Name Override
+   blank. This creates a new branch and never overwrites what is on GitHub.
 
 ---
 
