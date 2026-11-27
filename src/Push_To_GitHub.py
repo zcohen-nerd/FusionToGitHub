@@ -6,6 +6,8 @@ is done by:
 
 - push_dialog.py      the dialog (inputs, validation, Edit/Remove, OK)
 - push_controller.py  what happens after export: plan and push (no Fusion)
+- push_worker.py      runs the push on a background thread (no Fusion)
+- fusion_bridge.py    brings the worker's progress and questions to Fusion's main thread
 - fusion_export.py    exporting the design (Fusion API)
 - fusion_git_core.py  git: isolated commit and push (no Fusion)
 - settings_store.py   saved settings and repositories (no Fusion)
@@ -72,6 +74,21 @@ git_push_control = None
 is_initialized = False  # guard against double run()
 # Where stored tokens live; None means "the platform default" (tests inject one).
 credential_store = None
+# fusion_bridge.WorkerBridge: background pushes and their custom event.
+bridge = None
+# False when another copy of the add-in already owns the button (duplicate install).
+owns_command = False
+
+THIS_FILE = os.path.normcase(os.path.abspath(__file__))
+
+
+def _command_owners() -> dict:
+    """Which add-in file created CMD_ID in this Fusion session, shared by every copy.
+
+    Kept on the ``sys`` module because two installed copies are two separate
+    modules (and a reload is a fresh module) in the same Python process.
+    """
+    return sys.__dict__.setdefault("_push_to_github_command_owners", {})
 
 try:
     app = adsk.core.Application.get()
@@ -145,6 +162,7 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                 credentials=_credentials(),
                 logger=logger,
                 handlers=dialog_handlers,
+                bridge=bridge,
             )
             push_dialog.open_dialog(ctx, args.command)
         except Exception:
@@ -174,8 +192,26 @@ def _find_target_panel():
     return None
 
 
+def _report_duplicate(owner) -> None:
+    """Another copy of the add-in has the button: say so once per Fusion session."""
+    where = f"\n\nThe running copy is in:\n{os.path.dirname(owner)}" if owner else ""
+    msg = (
+        f"Another copy of '{CMD_NAME}' is already running, so this copy won't add a second button."
+        f"{where}\n\nThis copy is in:\n{os.path.dirname(THIS_FILE)}\n\n"
+        "Remove one of them in Utilities > Add-Ins > Scripts and Add-Ins, then restart Fusion."
+    )
+    if logger:
+        logger.warning(msg)
+    owners = _command_owners()
+    if owners.get(CMD_ID + ":warned"):
+        return
+    owners[CMD_ID + ":warned"] = True
+    if ui:
+        ui.messageBox(msg, CMD_NAME)
+
+
 def run(context):
-    global push_cmd_def, git_push_control, app, ui, logger, is_initialized
+    global push_cmd_def, git_push_control, app, ui, logger, is_initialized, bridge, owns_command
 
     if not app or not ui:
         try:
@@ -210,9 +246,27 @@ def run(context):
         handlers.clear()
         dialog_handlers.clear()
 
-        push_cmd_def = ui.commandDefinitions.itemById(CMD_ID)
-        if not push_cmd_def:
-            push_cmd_def = ui.commandDefinitions.addButtonDefinition(CMD_ID, CMD_NAME, CMD_TOOLTIP, "")
+        owners = _command_owners()
+        existing = ui.commandDefinitions.itemById(CMD_ID)
+        if existing:
+            if owners.get(CMD_ID) != THIS_FILE:
+                # Created by another installed copy (of any version): leave it alone.
+                owns_command = False
+                _report_duplicate(owners.get(CMD_ID))
+                adsk.autoTerminate(False)
+                return
+            # Ours, left by an earlier load that didn't stop cleanly: start afresh.
+            _delete_all_controls(CONTROL_ID)
+            existing.deleteMe()
+        push_cmd_def = ui.commandDefinitions.addButtonDefinition(CMD_ID, CMD_NAME, CMD_TOOLTIP, "")
+        owners[CMD_ID] = THIS_FILE
+        owns_command = True
+
+        import fusion_bridge
+
+        bridge = fusion_bridge.WorkerBridge(app, ui, CMD_ID + fusion_bridge.EVENT_SUFFIX, CMD_NAME, logger)
+        if not bridge.register() and logger:
+            logger.error("Background pushes are unavailable: the custom event could not be registered.")
 
         on_cmd_created = GitCommandCreatedEventHandler()
         push_cmd_def.commandCreated.add(on_cmd_created)
@@ -263,7 +317,7 @@ def run(context):
 
 
 def stop(context):
-    global push_cmd_def, git_push_control, app, ui, logger, is_initialized
+    global push_cmd_def, git_push_control, app, ui, logger, is_initialized, bridge, owns_command
 
     is_initialized = False
     if not app or not ui:
@@ -285,11 +339,22 @@ def stop(context):
         print(f"'{CMD_NAME}' stop() called.")
 
     try:
-        _delete_all_controls(CONTROL_ID)
-        if git_push_control and git_push_control.isValid:
-            git_push_control.deleteMe()
-        if push_cmd_def and push_cmd_def.isValid:
-            push_cmd_def.deleteMe()
+        if bridge is not None:
+            # Cancel a running push and wait briefly; its temporary files are
+            # removed by the worker thread when it ends.
+            if not bridge.close() and logger:
+                logger.warning("A push was still finishing when the add-in stopped.")
+            bridge = None
+        if owns_command:
+            _delete_all_controls(CONTROL_ID)
+            if git_push_control and git_push_control.isValid:
+                git_push_control.deleteMe()
+            if push_cmd_def and push_cmd_def.isValid:
+                push_cmd_def.deleteMe()
+            owners = _command_owners()
+            if owners.get(CMD_ID) == THIS_FILE:
+                del owners[CMD_ID]
+        owns_command = False
         git_push_control = None
         push_cmd_def = None
         handlers.clear()

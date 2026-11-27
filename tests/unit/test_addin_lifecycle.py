@@ -1,5 +1,6 @@
 """Add-in start/stop and handler lifetime, against the SIMULATED Fusion API."""
 
+import gc
 import unittest
 from unittest import mock
 
@@ -41,10 +42,64 @@ class LifecycleTests(AddinTestCase):
         self.assertEqual(self.ui.commandDefinitions.count, 1)
 
     def test_a_leftover_control_from_a_crash_is_replaced(self):
+        # This copy created them in an earlier load that never reached stop().
         definition = self.ui.commandDefinitions.addButtonDefinition(addin.CMD_ID, addin.CMD_NAME, "", "")
         self.ui.allToolbarPanels.item(0).controls.addCommand(definition, addin.CONTROL_ID)
+        addin._command_owners()[addin.CMD_ID] = addin.THIS_FILE
         addin.run(None)
         self.assertEqual(len(self.controls()), 1)
+        self.assertFalse(definition.isValid)  # replaced by a fresh definition
+        self.assertIsNot(self.ui.commandDefinitions.itemById(addin.CMD_ID), definition)
+        self.assertEqual(self.ui.messages, [])
+
+    def test_a_second_installed_copy_warns_once_and_adds_no_button(self):
+        # Another copy (any version) of the add-in already owns the button.
+        other = self.ui.commandDefinitions.addButtonDefinition(addin.CMD_ID, addin.CMD_NAME, "", "")
+        other_control = self.ui.allToolbarPanels.item(0).controls.addCommand(other, addin.CONTROL_ID)
+        addin.run(None)
+        self.assertIn("Another copy of 'Push to GitHub' is already running", self.last_message())
+        self.assertEqual(len(self.ui.messages), 1)
+        self.assertIsNone(addin.bridge)
+        self.assertEqual(self.app.registered_custom_events, [])
+        self.assertEqual([c for _, c in self.controls()], [other_control])
+        addin.run(None)
+        self.assertEqual(len(self.ui.messages), 1)  # warned once
+        addin.stop(None)
+        # stop() leaves the other copy's button and command alone.
+        self.assertTrue(other.isValid and other_control.isValid)
+        self.assertIs(self.ui.commandDefinitions.itemById(addin.CMD_ID), other)
+
+    def test_repeated_run_and_stop_keep_one_button_and_one_custom_event(self):
+        event_id = addin.CMD_ID + "_PushWorker"
+        for _ in range(3):
+            addin.run(None)
+            addin.run(None)
+            self.assertEqual(len(self.controls()), 1)
+            self.assertEqual(self.ui.commandDefinitions.count, 1)
+            self.assertEqual(self.app.registered_custom_events, [event_id])
+            self.assertEqual(len(addin.handlers), 1)
+            addin.stop(None)
+            self.assertEqual(self.controls(), [])
+            self.assertEqual(self.app.registered_custom_events, [])
+            self.assertIsNone(addin.bridge)
+            self.assertNotIn(addin.CMD_ID, addin._command_owners())
+        addin.stop(None)  # a second stop is harmless
+
+    def test_handlers_survive_garbage_collection(self):
+        addin.run(None)
+        gc.collect()
+        command = self.ui.open_command(addin.CMD_ID)  # commandCreated still reaches the add-in
+        self.assertIsNotNone(command.commandInputs.itemById("repoSelector"))
+        gc.collect()
+        adsk.core.change_input(command, "commitMsgPush", value="x")  # dialog handlers held too
+        self.assertEqual(len(command.inputChanged.handlers), 1)
+
+    def test_the_stand_in_drops_handlers_nobody_holds(self):
+        # Control for the test above: Fusion keeps only weak references.
+        event = adsk.core.Event()
+        event.add(adsk.core.CustomEventHandler())
+        gc.collect()
+        self.assertEqual(event.handlers, [])
 
     def test_stop_removes_button_definition_and_all_handlers(self):
         addin.run(None)
@@ -52,6 +107,7 @@ class LifecycleTests(AddinTestCase):
         self.assertEqual(len(addin.dialog_handlers), 2)
         addin.stop(None)
         self.assertEqual(self.controls(), [])
+        self.assertEqual(self.app.registered_custom_events, [])
         self.assertIsNone(self.ui.commandDefinitions.itemById(addin.CMD_ID))
         self.assertEqual(addin.handlers, [])
         self.assertEqual(addin.dialog_handlers, [])
@@ -65,9 +121,12 @@ class LifecycleTests(AddinTestCase):
     def test_each_dialog_replaces_the_previous_dialogs_handlers(self):
         addin.run(None)
         first = self.ui.open_command(addin.CMD_ID)
-        self.ui.open_command(addin.CMD_ID)
+        second = self.ui.open_command(addin.CMD_ID)
+        gc.collect()
         self.assertEqual(len(addin.dialog_handlers), 2)
-        self.assertEqual(len(first.inputChanged.handlers), 1)
+        # Fusion holds handlers weakly: the first dialog's were released.
+        self.assertEqual(len(first.inputChanged.handlers), 0)
+        self.assertEqual(len(second.inputChanged.handlers), 1)
 
     def test_exceptions_never_escape_event_handlers(self):
         addin.run(None)

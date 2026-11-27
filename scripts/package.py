@@ -52,6 +52,8 @@ PACKAGE_FILES: Dict[str, str] = {
     "src/settings_store.py": "settings_store.py",
     "src/portable_names.py": "portable_names.py",
     "src/export_checks.py": "export_checks.py",
+    "src/push_worker.py": "push_worker.py",
+    "src/fusion_bridge.py": "fusion_bridge.py",
     "src/AddInIcon.svg": "AddInIcon.svg",
     "LICENSE": "LICENSE",
 }

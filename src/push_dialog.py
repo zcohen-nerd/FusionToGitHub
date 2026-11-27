@@ -6,7 +6,10 @@ and never let an exception escape (an exception escaping a Fusion handler
 silently breaks the dialog).
 
 Everything after "the design is exported" is decided by
-``push_controller.PushController``, which has no Fusion dependency. Settings
+``push_controller.PushController``, which has no Fusion dependency. The git
+part then runs on a background thread (``push_worker``), and its progress,
+questions and summary come back to Fusion's main thread through
+``fusion_bridge``; the dialog has closed by then. Settings
 go through ``settings_store.SettingsStore`` and tokens through a
 ``credentials.CredentialStore``, both injected via ``DialogContext`` so tests
 can run the dialog against the simulated Fusion API in tests/fakes.
@@ -14,6 +17,7 @@ can run the dialog against the simulated Fusion API in tests/fakes.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import re
@@ -47,7 +51,16 @@ from fusion_export import (
     get_fusion_design,
     temporary_export_dir,
 )
-from fusion_git_core import GitError, git_available, git_run, redact_secrets, sanitize_branch_name
+import push_worker
+from fusion_bridge import BUSY_TEXT, NOTHING_PUSHED, PushJob, WorkerBusy
+from fusion_git_core import (
+    GitError,
+    export_size_check,
+    git_available,
+    git_run,
+    redact_secrets,
+    sanitize_branch_name,
+)
 from push_controller import (
     DEFAULT_BRANCH_FORMAT,
     DEFAULT_COMMIT_TEMPLATE,
@@ -75,6 +88,8 @@ class DialogContext:
     credentials: CredentialStore
     logger: Optional[logging.Logger] = None
     handlers: List[Any] = field(default_factory=list)
+    # fusion_bridge.WorkerBridge that runs pushes in the background.
+    bridge: Any = None
 
 
 class FusionCommandGitUI:
@@ -858,7 +873,12 @@ class PushDialog:
         return (name_val.strip(), email_val.strip(), everywhere)
 
     def execute(self, execute_args) -> None:
-        """Run the push. Leaves the dialog open (executeFailed) whenever nothing was pushed."""
+        """Start the push. Leaves the dialog open (executeFailed) whenever it didn't start.
+
+        Everything up to the push plan (export, questions, settings) happens
+        here on Fusion's main thread, so a refusal keeps the dialog open. The
+        git part then runs in the background and the dialog closes.
+        """
         progress = None
         try:
             if self.logger:
@@ -896,6 +916,8 @@ class PushDialog:
             self.ui.messageBox("No action or repository selected.")
             return False
         selected_action = selected_item.name
+        if push_worker.is_busy() or (self.ctx.bridge is not None and self.ctx.bridge.busy):
+            return self._fail(BUSY_TEXT)
 
         repo_path_raw = cmd_inputs.itemById("repoPath").value.strip()
         git_url_val = ""
@@ -1064,7 +1086,10 @@ class PushDialog:
             return self._fail(f"Path '{repo_path}' for repo '{repo_name}' is not a Git repo.")
 
         export_warnings: List[str] = []
-        with temporary_export_dir() as temp_dir:
+        # The exports must outlive this method when the push goes to the
+        # background: the stack is handed to the worker, which removes them.
+        with contextlib.ExitStack() as export_files:
+            temp_dir = export_files.enter_context(temporary_export_dir())
             self._progress = progress = self.ui.createProgressDialog()
             progress.isBackgroundTranslucencyEnabled = True
             progress.cancelButtonText = ""
@@ -1091,61 +1116,47 @@ class PushDialog:
             try:
                 plan = self.controller.plan(request, exported, confirm=self.git_ui.confirm, ask_identity=self.ask_identity)
             except PushCancelled:
-                self.message("Push cancelled — nothing was pushed.")
+                self.message(NOTHING_PUSHED)
                 return False
             except PushRefused as exc:
                 return self._fail(str(exc))
             except (SettingsError, ValueError, OSError, CredentialError, GitError) as exc:
                 return self._fail(f"Push not started:\n{redact_secrets(str(exc))}")
 
-            def report_step(text: str) -> None:
-                progress.message = text
-                progress.progressValue = 1
-                try:
-                    adsk.doEvents()  # keep Fusion repainting between git steps
-                except Exception:
-                    pass
+            # Asked here, on the main thread, so the background push doesn't.
+            size_error, size_question = export_size_check(plan.exports)
+            if size_error:
+                return self._fail(size_error)
+            if size_question:
+                if not self.ask_yes_no(size_question):
+                    self.message(NOTHING_PUSHED)
+                    return False
+                plan.large_files_confirmed = True
 
-            progress.show("Fusion → GitHub", "Pushing to GitHub…", 0, 2, 1)
-            git_result = self.controller.execute(plan, self.git_ui, on_step=report_step)
-            progress.progressValue = 2
-            progress.hide()
+            return self._start_background_push(plan, repo_name, export_warnings, export_files)
 
-        exported_names = [rel for _, rel in plan.exports]
-        if git_result and not git_result.get("cancelled"):
-            self._report_success(repo_name, git_result, exported_names, export_warnings + list(plan.notes))
-            return True
-        if git_result:
-            # The user declined a confirmation prompt; keep the dialog open.
-            self.message("Push cancelled — nothing was pushed.")
-            return False
-        lines = ["Git operations failed. See the messages above for details."]
-        if export_warnings:
-            lines += ["", "Warnings:"] + [f" • {w}" for w in export_warnings]
-        self.message("\n".join(lines))
-        return False
-
-    def _report_success(self, repo_name, git_result, exported_names, export_warnings) -> None:
-        branch = git_result.get("branch", "<unknown>")
-        commit_short = (git_result.get("commit") or "")[:7]
-        lines = [
-            f"✅ Pushed to GitHub, branch: {branch}" + (f" (commit {commit_short})" if commit_short else ""),
-            f"Settings for '{repo_name}' updated.",
-        ]
-        if exported_names:
-            lines += ["", "Exported files:"] + [f" • {name}" for name in exported_names]
-        notes = []
-        if git_result.get("reused_branch"):
-            notes.append("Added a new commit to the existing branch.")
-        if git_result.get("bootstrapped"):
-            notes.append(
-                f"The repository was empty, so a first commit was added to '{git_result.get('base_branch') or 'main'}'."
-            )
-        notes.append("Your local repository folder was not changed.")
-        lines += ["", "Git flow details:"] + [f" • {note}" for note in notes]
-        if export_warnings:
-            lines += ["", "Warnings:"] + [f" • {w}" for w in export_warnings]
-        self.message("\n".join(lines))
+    def _start_background_push(self, plan, repo_name, export_warnings, export_files) -> bool:
+        """Hand the plan to the worker; True (the dialog closes) once it is running."""
+        bridge = self.ctx.bridge
+        if bridge is None:
+            return self._fail("The add-in's background push isn't available. Restart the add-in and try again.")
+        job = PushJob(
+            repo_name=repo_name,
+            exported_names=[rel for _, rel in plan.exports],
+            warnings=list(export_warnings) + list(plan.notes),
+        )
+        cleanup = export_files.pop_all()  # from now on the worker owns the exported files
+        try:
+            bridge.start(self.controller, plan, job, on_finish=cleanup.close)
+        except WorkerBusy:
+            cleanup.close()
+            return self._fail(BUSY_TEXT)
+        except RuntimeError as exc:
+            cleanup.close()
+            return self._fail(str(exc))
+        if self.logger:
+            self.logger.info("Push of '%s' to '%s' started in the background", plan.design_name, repo_name)
+        return True
 
 
 # ----------------------------------------------------------------------

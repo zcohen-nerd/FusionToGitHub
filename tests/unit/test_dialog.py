@@ -1,7 +1,8 @@
 """The "Push to GitHub" dialog, driven through the SIMULATED Fusion API.
 
 Behaviour is checked through what a user would see and what ends up on disk
-or on the (local, bare) "GitHub" remote — not through internal calls.
+or on the (local, bare) "GitHub" remote — not through internal calls. Pushes
+run in the background; ``self.push(command)`` presses OK and waits for them.
 """
 
 import json
@@ -118,7 +119,7 @@ class SelectionAndValidationTests(AddinTestCase):
         stl_dropdown = next(i for i in item(command, "formatSettingsTable").cells.values() if i.id.startswith("formatSetting_stl"))
         select_item(command, stl_dropdown.id, "Low (fast)")
         self.answer(YES)  # the one-time publication notice
-        self.assertFalse(press_ok(command).executeFailed, self.ui.texts())
+        self.assertFalse(self.push(command).executeFailed, self.ui.texts())
         self.assertEqual(self.profile("Designs")["formatSettings"], {"stl": {"meshRefinement": "low"}})
 
 
@@ -245,8 +246,9 @@ class PushTests(AddinTestCase):
         command = self.open_dialog()
         item(command, "commitMsgPush").value = "holes 5mm"
         self.answer(YES)  # the one-time publication notice
-        args = press_ok(command)
+        args = self.push(command)
         self.assertFalse(args.executeFailed, self.ui.texts())
+        self.assertTrue(command.isTerminated)  # the dialog closed when the push started
         success = self.last_message()
         self.assertIn("Pushed to GitHub, branch: fusion-export/Bracket-", success)
         self.assertIn("Bracket/Bracket.step", success)
@@ -276,7 +278,7 @@ class PushTests(AddinTestCase):
         self.ui.input_answers.extend([("Ada Lovelace", False), ("ada@example.invalid", False)])
         self.answer(YES, NO)  # publication notice: yes; use for all repositories: no
         global_before = Path(self.global_config).read_bytes()
-        args = press_ok(command)
+        args = self.push(command)
         self.assertFalse(args.executeFailed, self.ui.texts())
         self.assertEqual(self.profile("Designs")["gitIdentity"], {"name": "Ada Lovelace", "email": "ada@example.invalid"})
         self.assertEqual(Path(self.global_config).read_bytes(), global_before)
@@ -305,14 +307,15 @@ class PushTests(AddinTestCase):
         self.assertIn("No stored token", self.last_message())
         self.assertEqual(self.remote_branches(), [])
 
-    def test_git_failure_is_reported_and_the_dialog_stays_open(self):
+    def test_git_failure_is_reported_after_the_dialog_closed(self):
+        # Git runs in the background, after the dialog has closed (S4, Q6).
         core.git_run(self.work, "remote", "set-url", "origin", os.path.join(self.base, "missing.git"))
         self.seed({"Designs": self.work_profile()}, meta={"lastSelectedRepo": "Designs"})
         self.design()
         command = self.open_dialog()
         self.answer(YES)  # the one-time publication notice
-        args = press_ok(command)
-        self.assertTrue(args.executeFailed)
+        args = self.push(command)
+        self.assertFalse(args.executeFailed)
         self.assertTrue(any(t.startswith("Push failed") for t in self.ui.texts()), self.ui.texts())
         self.assertIn("Git operations failed", self.last_message())
 
@@ -343,7 +346,7 @@ class PushTests(AddinTestCase):
         change_input(command, "gitUrl", value="github.com/acme/MyDesigns")
         self.ui.input_answers.extend([("Ada", False), ("ada@example.invalid", False)])
         self.answer(YES, NO)
-        args = press_ok(command)
+        args = self.push(command)
         self.assertFalse(args.executeFailed, self.ui.texts())
         clone = os.path.join(self.repos_dir, "MyDesigns")
         self.assertEqual(self.profile("MyDesigns")["path"], clone)
@@ -414,7 +417,7 @@ class ReviewFixDialogTests(AddinTestCase):
         command = self.open_dialog()
         self.ui.input_answers.extend([("Ada Lovelace", False), ("ada@example.invalid", False)])
         self.answer(YES, YES)  # publication notice; use for all repositories
-        args = press_ok(command)
+        args = self.push(command)
         self.assertFalse(args.executeFailed, self.ui.texts())
         self.assertIn("ada@example.invalid", Path(self.global_config).read_text(encoding="utf-8"))
         self.assertEqual(self.profile("Designs")["gitIdentity"]["email"], "ada@example.invalid")
