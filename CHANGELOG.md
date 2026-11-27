@@ -7,7 +7,7 @@ All notable changes to the FusionToGitHub add-in. Versions follow
 file must match it; `scripts/check_release.py` and the `T_VERSION` test enforce
 this, and the release workflow refuses a tag that differs.
 
-## 0.4.0 — Unreleased
+## 0.4.0 — 2026-11-27
 
 **Pushes no longer touch your local repository folder.**
 
