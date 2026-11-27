@@ -180,7 +180,7 @@ remembers you. Full guidance: [SECURITY.md](../SECURITY.md).
 1. **Don't panic** - everything is version controlled
 2. **Check logs** - In "Logging", click "Open Log File…" for details
 3. **Check Git status** - Use `git status` in repository folder
-4. **Restore from stash** - Use `git stash list` and `git stash pop`
+4. **Your local folder is untouched** - the add-in never changes it, so failed pushes leave nothing to clean up
 
 ### Recovering Lost Work
 - All commits are preserved in Git history

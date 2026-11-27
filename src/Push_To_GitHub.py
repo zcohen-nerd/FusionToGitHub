@@ -37,14 +37,13 @@ try:
         VERSION as CORE_VERSION,
         git_available as core_git_available,
         git_run as _git,
-        handle_git_operations as core_handle_git_operations,
+        push_export as core_push_export,
         sanitize_branch_name,
     )
     from dialog_helpers import (
         convert_github_url as _convert_github_url,
         default_path_for_new_repo as _default_path_for_new_repo,
         derive_repo_name_from_url as _derive_repo_name_from_url,
-        ensure_export_subfolder_exists,
         expand_export_subfolder,
         normalize_export_subfolder,
         resolve_new_repo_path as _resolve_new_repo_path,
@@ -61,14 +60,13 @@ except ImportError:
         VERSION as CORE_VERSION,
         git_available as core_git_available,
         git_run as _git,
-        handle_git_operations as core_handle_git_operations,
+        push_export as core_push_export,
         sanitize_branch_name,
     )
     from dialog_helpers import (
         convert_github_url as _convert_github_url,
         default_path_for_new_repo as _default_path_for_new_repo,
         derive_repo_name_from_url as _derive_repo_name_from_url,
-        ensure_export_subfolder_exists,
         expand_export_subfolder,
         normalize_export_subfolder,
         resolve_new_repo_path as _resolve_new_repo_path,
@@ -1672,6 +1670,7 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                                 git_url,
                                 _git,
                                 logger=logger,
+                                confirm=FusionCommandGitUI(current_ui_ref).confirm,
                             )
                             if error:
                                 current_ui_ref.messageBox(error, CMD_NAME)
@@ -1875,46 +1874,42 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                                 execute_args.executeFailed = True
                                 return
 
-                            def materialize_exports():
-                                # Invoked by the git pipeline after the export
-                                # branch exists, so the stash/pull steps never
-                                # touch (or swallow) the exported files.
-                                destination_root = ensure_export_subfolder_exists(
-                                    git_repo_path, resolved_export_subfolder
+                            # The exports are committed straight from the
+                            # temporary export folder; nothing is copied into
+                            # the user's local repository folder.
+                            exports_for_push = []
+                            for src in exported_files_paths:
+                                rel = "/".join(
+                                    part
+                                    for part in (resolved_export_subfolder, os.path.basename(src))
+                                    if part
                                 )
-                                final_paths = []
-                                for src in exported_files_paths:
-                                    dst = os.path.join(destination_root, os.path.basename(src))
-                                    shutil.copy2(src, dst)
-                                    if not os.path.exists(dst) or os.path.getsize(dst) == 0:
-                                        raise RuntimeError(f"Copied file missing/empty:\n{dst}")
-                                    final_paths.append(os.path.normpath(dst))
-                                    rel_display = os.path.relpath(dst, git_repo_path).replace("\\", "/")
-                                    exported_display_names.append(rel_display)
-                                    if logger:
-                                        logger.info(
-                                            "Copied -> %s (%d bytes)",
-                                            dst,
-                                            os.path.getsize(dst),
-                                        )
-                                return final_paths
+                                exports_for_push.append((src, rel))
+                                exported_display_names.append(rel)
+                                if logger:
+                                    logger.info("Export ready: %s (%d bytes)", rel, os.path.getsize(src))
 
-                            if progress:
-                                progress.message = "Pushing to GitHub…"
-                                progress.progressValue = 1
+                            def report_step(text):
+                                if progress:
+                                    progress.message = text
+                                    progress.progressValue = 1
+                                try:
+                                    adsk.doEvents()  # keep Fusion repainting between git steps
+                                except Exception:
+                                    pass
 
                             git_ui_adapter = FusionCommandGitUI(current_ui_ref)
-                            git_result = core_handle_git_operations(
+                            git_result = core_push_export(
                                 git_repo_path,
-                                [],
+                                exports_for_push,
                                 commit_msg_for_this_push,
-                                branch_format_for_this_push,
-                                git_ui_adapter,
                                 base_name,
+                                git_ui_adapter,
+                                branch_format_str=branch_format_for_this_push,
                                 branch_override=branch_override_sanitized or None,
                                 pat_credentials=pat_credentials,
                                 logger=logger,
-                                materialize_files=materialize_exports,
+                                on_step=report_step,
                             )
 
                         if progress:
@@ -1923,8 +1918,10 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
 
                         if git_result and not git_result.get("cancelled"):
                             branch_name_effective = git_result.get("branch", "<unknown>")
+                            commit_short = (git_result.get("commit") or "")[:7]
                             summary_lines = [
-                                f"✅ Push successful to branch: {branch_name_effective}",
+                                f"✅ Pushed to GitHub, branch: {branch_name_effective}"
+                                + (f" (commit {commit_short})" if commit_short else ""),
                                 f"Settings for '{selected_repo_name}' updated.",
                             ]
                             if exported_display_names:
@@ -1937,12 +1934,14 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                             status_notes = []
                             if git_result.get("reused_branch"):
                                 status_notes.append("Added a new commit to the existing branch.")
-                            if git_result.get("stashed"):
-                                status_notes.append("Auto-stashed local changes and restored them afterward.")
-                            if git_result.get("pull_failed"):
+                            if git_result.get("bootstrapped"):
                                 status_notes.append(
-                                    "Couldn't update from GitHub first; pushed without updating."
+                                    "The repository was empty, so a first commit was added to "
+                                    f"'{git_result.get('base_branch') or 'main'}'."
                                 )
+                            status_notes.append(
+                                "Your local repository folder was not changed."
+                            )
                             if status_notes:
                                 summary_lines.append("")
                                 summary_lines.append("Git flow details:")

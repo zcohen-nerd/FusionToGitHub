@@ -7,6 +7,50 @@ All notable changes to the FusionToGitHub add-in. Versions follow
 file must match it; `scripts/check_release.py` and the `T_VERSION` test enforce
 this, and the release workflow refuses a tag that differs.
 
+## 0.4.0 — Unreleased
+
+**Pushes no longer touch your local repository folder.**
+
+### Changed
+
+- **New push pipeline.** Each export is committed with Git plumbing in a
+  temporary index, on top of the branch's latest version *on GitHub*, then
+  pushed with a plain fast-forward push. The add-in no longer stashes, pulls,
+  switches branches, creates local branches or copies exports into the local
+  folder. Your uncommitted work, other branches and stashes are untouched
+  whether a push succeeds, fails or is cancelled.
+- **Snapshot branches start from GitHub's `main`**, not from whatever branch
+  the local folder had checked out, so unpushed local commits can never be
+  published by accident.
+- **If someone pushes at the same moment**, the export is rebuilt on their
+  latest version and pushed again (up to 3 attempts) instead of failing. Their
+  commits are always kept.
+- **Branch Name Override** checks the branch on GitHub, not locally, and asks a
+  distinct question when the branch is the repository's main branch.
+- **Empty repositories** get a first commit on `main` with a `.gitattributes`
+  file, so text-based CAD formats are never line-ending converted.
+- **Setup** no longer re-points a folder that is already connected to a
+  different GitHub repository without asking, and no longer creates an empty
+  local commit.
+- `push_cli.py` gains `--mode single` (one running history on one branch) and
+  `--target-branch`. The add-in's dialog still uses snapshot branches; choosing
+  the mode in the dialog comes in a later release.
+
+### Fixed
+
+- **No more indefinite freezes.** Every Git call has a time limit (10 minutes
+  for network steps, including a GitHub sign-in window; 1 minute for local
+  ones) and never waits for terminal input. A stopped call ends the whole
+  process tree, including credential helpers and hooks.
+- **Non-ASCII names** (for example "Łukasz" or "Halterung für Motor") no
+  longer break Git output on Windows: output is always read as UTF-8.
+- **Size limits**: exports of 100 MB or more are refused before anything is
+  pushed; exports over 50 MB need confirmation.
+- Option-like and invalid branch names (`-n`, `a..b`, `x.lock`) are cleaned up
+  or refused, and export paths can't point outside the repository.
+- The history file (`CHANGELOG.md` in the repository) keeps its existing line
+  endings and bytes.
+
 ## 0.3.3 — 2026-11-27
 
 **Safety and installability release. Supersedes the withdrawn 0.3.2.** This is

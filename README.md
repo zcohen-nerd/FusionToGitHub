@@ -140,7 +140,13 @@ Each backup gets its own **snapshot branch** with a name like `fusion-export/Bra
 2. Click the **branch dropdown** (it says `main` near the top-left)
 3. Pick any snapshot to view or download the files from that moment
 
-The add-in never overwrites an earlier snapshot — each is its own commit, and they stay available as long as the repository does. (Teams that want to review and merge snapshots into `main` should read the [Team Guide](docs/TEAM_GUIDE.md).)
+Each snapshot is built on top of the latest `main` on GitHub. The add-in never overwrites an earlier snapshot — each is its own commit, and they stay available as long as the repository does. (Teams that want to review and merge snapshots into `main` should read the [Team Guide](docs/TEAM_GUIDE.md).)
+
+The add-in **doesn't change the local folder** you picked during setup: it builds each backup directly from the exported files and sends it to GitHub. So the exports won't appear in that folder, and anything you were doing there (unsaved edits, other branches) is left exactly as it was.
+
+### Size limits
+
+GitHub rejects files of 100 MB or more, and warns about files over 50 MB. The add-in checks before pushing: it refuses an export of 100 MB or more and asks before pushing one over 50 MB. Every version is kept, so a repository grows with each backup. To keep exports small, untick formats you don't need, or lower the STL mesh refinement.
 
 ---
 
@@ -196,7 +202,7 @@ and how to report a security problem — are in **[SECURITY.md](SECURITY.md)**.
 
 ## Status, supported versions, and known limits
 
-- **Version:** **`0.3.3`**. The version is set once, in the add-in manifest;
+- **Version:** **`0.4.0`**. The version is set once, in the add-in manifest;
   the runtime constant, the CLI `--version`, the log banner, the README and the
   top `CHANGELOG.md` entry must match it. CI tests (`T_VERSION`, `T_RELEASE`)
   fail if they drift, and the release workflow refuses a Git tag that doesn't
@@ -215,13 +221,22 @@ and how to report a security problem — are in **[SECURITY.md](SECURITY.md)**.
   (or at the Windows fallback `C:\Program Files\Git\bin\git.exe`).
 - **You create the GitHub repository yourself** on github.com; the add-in never
   creates one via the API.
-- **Every push makes a new branch** (`fusion-export/<design>-<timestamp>`); it
-  never pushes straight to `main`. Merging snapshots into `main` is a manual
-  step — see the [Team Guide](docs/TEAM_GUIDE.md).
+- **Every push makes a new branch** (`fusion-export/<design>-<timestamp>`),
+  built on the latest `main` on GitHub. It only adds to `main` if you name
+  `main` in Branch Name Override, and then it asks first. Merging snapshots into
+  `main` is a manual step — see the [Team Guide](docs/TEAM_GUIDE.md). If the
+  GitHub repository is completely empty, the first backup also adds a small
+  first commit to `main` (a `.gitattributes` file that stops Git from altering
+  CAD files).
+- **Your local folder is never changed.** Backups are built straight from the
+  exported files, so uncommitted work, other branches and stashes in the local
+  repository are untouched, whether a push succeeds or fails.
+- **Nothing can hang forever.** Every Git step has a time limit (10 minutes for
+  network steps, which includes a GitHub sign-in window, and 1 minute for local
+  ones). If one is reached, the push stops and nothing on GitHub changes.
 - **Backups:** this backs up *exported* CAD files to a Git branch. It is a
   complement to, not a replacement for, Fusion's own cloud version history.
-  Keep both. Uncommitted changes in the target local repo are auto-stashed and
-  restored; if a restore fails, the add-in tells you how to recover them.
+  Keep both.
 - **History is durable, not immutable.** A successful push creates Git history,
   and this add-in never rewrites or deletes it. But Git history *can* be
   altered: anyone with write access can force-push over a branch, delete a
@@ -292,7 +307,7 @@ python tests/test_runner.py
 python src/push_cli.py --repo C:\path\to\repo --files exports/model.step --design-name BracketV4
 ```
 
-**How a push works**: stash local changes → pull latest → create snapshot branch → copy exports in → update changelog → commit → push → restore your original branch and changes. Conflicts abort cleanly; cancellations restore everything.
+**How a push works**: ask GitHub for its branches (`ls-remote`) → fetch the tip to build on → build a commit in a temporary index (`read-tree`, `hash-object --no-filters`, `update-index`, `write-tree`, `commit-tree`) whose parent is that tip → plain push, rebuilding on the new tip if GitHub moved meanwhile (up to 3 attempts). The user's working tree, index, stash, HEAD and local branches are never touched, and nothing is force-pushed. Commit hooks don't run for these commits; a `pre-push` hook does. `push_cli.py --mode single` adds exports to one branch instead of creating snapshot branches.
 
 **Contributing**: bug reports and pull requests welcome — please include your OS, Fusion version, and the log file (`~/.PushToGitHub_AddIn_Data/PushToGitHub.log`) with any bug report, and add tests for new functionality.
 
