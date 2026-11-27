@@ -32,7 +32,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Protocol, Sequence, Tuple
 
-VERSION = "0.3.3"
+VERSION = "0.4.0"
 IS_WINDOWS = os.name == "nt"
 GIT_EXE = shutil.which("git") or (r"C:\Program Files\Git\bin\git.exe" if IS_WINDOWS else "git")
 

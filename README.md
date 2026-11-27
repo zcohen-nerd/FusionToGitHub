@@ -202,7 +202,7 @@ and how to report a security problem — are in **[SECURITY.md](SECURITY.md)**.
 
 ## Status, supported versions, and known limits
 
-- **Version:** **`0.3.3`**. The version is set once, in the add-in manifest;
+- **Version:** **`0.4.0`**. The version is set once, in the add-in manifest;
   the runtime constant, the CLI `--version`, the log banner, the README and the
   top `CHANGELOG.md` entry must match it. CI tests (`T_VERSION`, `T_RELEASE`)
   fail if they drift, and the release workflow refuses a Git tag that doesn't

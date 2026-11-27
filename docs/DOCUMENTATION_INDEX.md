@@ -2,7 +2,7 @@
 
 ## 📚 Complete Documentation Suite
 
-Welcome to FusionToGitHub 0.3.3! This comprehensive documentation will help you get started, master the features, and troubleshoot any issues.
+Welcome to FusionToGitHub 0.4.0! This comprehensive documentation will help you get started, master the features, and troubleshoot any issues.
 
 ---
 
@@ -266,7 +266,7 @@ Automated test execution for rapid feedback.
 3. **Team Sharing**: Share workflows and best practices
 
 ### Information to Include When Asking for Help
-- **Version**: FusionToGitHub 0.3.3
+- **Version**: FusionToGitHub 0.4.0
 - **System**: OS, Fusion version, Git version
 - **Problem**: Specific error messages from logs
 - **Steps**: What you were trying to do
@@ -279,7 +279,7 @@ Automated test execution for rapid feedback.
 
 This documentation is maintained alongside the FusionToGitHub add-in. 
 
-**Version**: 0.3.3
+**Version**: 0.4.0
 **Last Updated**: September 30, 2025
 **Next Review**: December 2025
 

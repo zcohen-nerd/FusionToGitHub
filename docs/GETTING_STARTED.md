@@ -1,4 +1,4 @@
-# Getting Started with FusionToGitHub 0.3.3
+# Getting Started with FusionToGitHub 0.4.0
 
 ## Welcome! 👋
 
