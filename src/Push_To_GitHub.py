@@ -1464,6 +1464,13 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                     return
                 try:
                     store_pat(repo_name, (pat_username_input.value or "").strip(), token_value)
+                except Exception as exc:
+                    if logger:
+                        logger.error("Could not store the token: %s", exc)
+                    local_ui_ref.messageBox(
+                        f"Windows Credential Manager couldn't store the token:\n{exc}", CMD_NAME
+                    )
+                    return
                 finally:
                     pat_token_input.value = ""  # never keep the token in the dialog
                 show_pat_entry(False)
