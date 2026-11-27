@@ -171,8 +171,11 @@ def validate(zip_path: Path, expect_version: Optional[str] = None) -> List[str]:
                 manifest = json.loads(manifest_bytes.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                 errors.append(f"manifest is not valid JSON: {exc}")
+        if not isinstance(manifest, dict):
+            errors.append("manifest must be a JSON object")
+            manifest = {}
         for key in REQUIRED_MANIFEST_KEYS:
-            if manifest and key not in manifest:
+            if key not in manifest:
                 errors.append(f"manifest is missing '{key}'")
         if manifest:
             if manifest.get("type") != "addin":
@@ -215,8 +218,19 @@ def validate(zip_path: Path, expect_version: Optional[str] = None) -> List[str]:
                 modules = []
                 if isinstance(node, ast.Import):
                     modules = [alias.name for alias in node.names]
-                elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-                    modules = [node.module]
+                elif isinstance(node, ast.ImportFrom):
+                    if node.level:
+                        relative_modules = (
+                            [node.module] if node.module else [alias.name for alias in node.names]
+                        )
+                        for module in relative_modules:
+                            if node.level != 1 or module not in packaged_modules:
+                                errors.append(
+                                    f"{arc} imports {'.' * node.level + module!r}, "
+                                    "which is not in the package"
+                                )
+                    elif node.module:
+                        modules = [node.module]
                 for module in modules:
                     root = module.split(".")[0]
                     if root not in allowed_roots:

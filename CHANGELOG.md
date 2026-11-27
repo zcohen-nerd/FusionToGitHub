@@ -9,7 +9,7 @@ this, and the release workflow refuses a tag that differs.
 
 ## 0.4.0 — Unreleased
 
-**Pushes no longer touch your local repository folder.** Release 0.3.3 first.
+**Pushes no longer touch your local repository folder.**
 
 ### Changed
 
@@ -51,7 +51,7 @@ this, and the release workflow refuses a tag that differs.
 - The history file (`CHANGELOG.md` in the repository) keeps its existing line
   endings and bytes.
 
-## 0.3.3 — Unreleased
+## 0.3.3 — 2026-11-27
 
 **Safety and installability release. Supersedes the withdrawn 0.3.2.** This is
 the first release with an installable ZIP attached.
