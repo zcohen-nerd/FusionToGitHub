@@ -5,9 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
-import shutil
 import sys
-import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -15,9 +13,11 @@ from typing import Optional
 try:
     from fusion_git_core import (
         VERSION,
+        MODE_SINGLE,
+        MODE_SNAPSHOT,
         GitUI,
         git_available,
-        handle_git_operations,
+        push_export,
     )
 except ImportError:
     # Add current directory to path
@@ -27,9 +27,11 @@ except ImportError:
     
     from fusion_git_core import (
         VERSION,
+        MODE_SINGLE,
+        MODE_SNAPSHOT,
         GitUI,
         git_available,
-        handle_git_operations,
+        push_export,
     )
 
 
@@ -74,6 +76,14 @@ def _abs_paths(repo: Path, entries: list[str]) -> list[str]:
     return resolved
 
 
+def _repo_relative(repo: Path, file_path: str) -> str:
+    """Where a file goes in the repository: its path inside the repo, else its name."""
+    try:
+        return Path(file_path).resolve().relative_to(repo).as_posix()
+    except ValueError:
+        return Path(file_path).name
+
+
 def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=("Run the FusionToGitHub git pipeline outside Fusion for smoke testing " "and CI automation.")
@@ -89,7 +99,10 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         "--files",
         nargs="*",
         default=[],
-        help="Absolute or repo-relative paths to include in the commit (optional)",
+        help=(
+            "Files to commit. A file inside the repository keeps its path there; "
+            "a file elsewhere is committed at the repository root under its own name."
+        ),
     )
     parser.add_argument(
         "--commit-template",
@@ -100,6 +113,16 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         "--branch-template",
         default="fusion-export/{filename}-{timestamp}",
         help="Branch name template; supports {filename} and {timestamp}",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=[MODE_SNAPSHOT, MODE_SINGLE],
+        default=MODE_SNAPSHOT,
+        help="snapshot: a new branch per export (default); single: one running history on one branch",
+    )
+    parser.add_argument(
+        "--target-branch",
+        help="Branch for --mode single (default: the repository's default branch on GitHub)",
     )
     parser.add_argument("--branch-override", help="Explicit branch name to use instead of template")
     parser.add_argument("--design-name", default="OfflineDesign", help="Name used for placeholder tokens")
@@ -134,59 +157,36 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 2
 
     files_to_add = _abs_paths(repo_path, args.files)
+    missing = [p for p in files_to_add if not os.path.isfile(p)]
+    if missing:
+        sys.stderr.write("These files do not exist:\n")
+        for entry in missing:
+            sys.stderr.write(f"  - {entry}\n")
+        return 2
     if not files_to_add:
-        logger.info("No file list provided; only CHANGELOG.md will be committed if changed.")
-    else:
-        missing = [p for p in files_to_add if not os.path.exists(p)]
-        if missing:
-            sys.stderr.write("The following files do not exist and will be skipped:\n")
-            for entry in missing:
-                sys.stderr.write(f"  - {entry}\n")
-            files_to_add = [p for p in files_to_add if os.path.exists(p)]
+        sys.stderr.write("Nothing to push: pass the exported files with --files.\n")
+        return 2
 
     ui = TerminalUI(assume_yes=args.assume_yes)
     pat_credentials = None
     if args.pat_token:
         pat_credentials = {"username": args.pat_username or "", "token": args.pat_token}
 
-    # Snapshot the files now and let the pipeline re-materialize them after
-    # the export branch is created. Otherwise the pipeline's auto-stash would
-    # sweep away untracked/modified files before they can be committed.
-    snapshot_dir = None
-    materialize = None
-    if files_to_add:
-        snapshot_dir = tempfile.mkdtemp(prefix="fusion_cli_snapshot_")
-        snapshot_map = {}
-        for index, dest_path in enumerate(files_to_add):
-            snap_path = os.path.join(snapshot_dir, f"{index}_{os.path.basename(dest_path)}")
-            shutil.copy2(dest_path, snap_path)
-            snapshot_map[dest_path] = snap_path
-
-        def materialize() -> list[str]:
-            for dest_path, snap_path in snapshot_map.items():
-                dest_dir = os.path.dirname(dest_path)
-                if dest_dir:
-                    os.makedirs(dest_dir, exist_ok=True)
-                shutil.copy2(snap_path, dest_path)
-            return list(snapshot_map)
-
+    exports = [(path, _repo_relative(repo_path, path)) for path in files_to_add]
     logger.info("FusionToGitHub CLI harness %s", VERSION)
-    try:
-        result = handle_git_operations(
-            str(repo_path),
-            [],
-            args.commit_template,
-            args.branch_template,
-            ui,
-            args.design_name,
-            branch_override=args.branch_override,
-            pat_credentials=pat_credentials,
-            logger=logger,
-            materialize_files=materialize,
-        )
-    finally:
-        if snapshot_dir:
-            shutil.rmtree(snapshot_dir, ignore_errors=True)
+    result = push_export(
+        str(repo_path),
+        exports,
+        args.commit_template,
+        args.design_name,
+        ui,
+        mode=args.mode,
+        branch_format_str=args.branch_template,
+        branch_override=args.branch_override,
+        target_branch=args.target_branch,
+        pat_credentials=pat_credentials,
+        logger=logger,
+    )
 
     if result is None:
         logger.error("Git pipeline failed. See output above for details.")
@@ -198,13 +198,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     summary = [
         "Push completed via CLI harness:",
         f"  • Branch: {result.get('branch')}",
+        f"  • Commit: {result.get('commit')}",
+        "  • Files: " + ", ".join(result.get("files") or []),
     ]
     if result.get("reused_branch"):
         summary.append("  • Added a new commit to the existing branch")
-    if result.get("stashed"):
-        summary.append("  • Local changes were auto-stashed and restored")
-    if result.get("pull_failed"):
-        summary.append("  • Could not update from origin first; pushed without updating")
+    if result.get("bootstrapped"):
+        summary.append("  • The repository was empty; added a first commit to main")
     sys.stdout.write("\n".join(summary) + "\n")
     return 0
 

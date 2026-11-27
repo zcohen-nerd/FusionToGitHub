@@ -1,20 +1,68 @@
-"""Core Git operations shared by the Fusion add-in and offline CLI harness."""
+"""Core Git operations shared by the Fusion add-in and the offline CLI harness.
+
+How an export reaches GitHub (audit ARCH-05):
+
+1. Ask GitHub which branches exist (``git ls-remote``).
+2. Fetch the tip of the branch the export builds on.
+3. Build a commit with Git plumbing in a *temporary* index: the parent is the
+   branch tip on GitHub, and the exported files are hashed straight from the
+   export folder.
+4. Push that commit with a plain, fast-forward-only push. If GitHub moved on
+   meanwhile, rebuild on the new tip and try again.
+
+The user's working tree, index, stash, HEAD and local branches are never
+touched, and no remote branch is ever force-updated. Every git call has a
+timeout and never waits for input on a terminal.
+
+Commit hooks don't run for these commits (they are made with
+``git commit-tree``); a ``pre-push`` hook still does.
+"""
 
 from __future__ import annotations
 
 import logging
 import os
+import posixpath
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Any, Callable, Dict, Optional, Protocol, Sequence
+from typing import Any, Callable, Dict, List, Optional, Protocol, Sequence, Tuple
 
 VERSION = "0.3.3"
 IS_WINDOWS = os.name == "nt"
 GIT_EXE = shutil.which("git") or (r"C:\Program Files\Git\bin\git.exe" if IS_WINDOWS else "git")
+
+# Upper bounds, in seconds, for one git call. Network calls get longer because
+# they include Git Credential Manager's browser sign-in. A stalled transfer is
+# also cut off by http.lowSpeedLimit/lowSpeedTime (see git_run).
+TIMEOUTS: Dict[str, int] = {"local": 60, "network": 600}
+
+# GitHub warns about files over 50 MB and rejects files over 100 MB.
+SIZE_WARN_BYTES = 50 * 1024 * 1024
+SIZE_BLOCK_BYTES = 100 * 1024 * 1024
+
+MODE_SNAPSHOT = "snapshot"  # a new branch per export (fusion-export/<design>-<timestamp>)
+MODE_SINGLE = "single"  # one running history on one branch (default: the repo's default branch)
+
+# Branch created on GitHub when the repository is completely empty.
+BOOTSTRAP_BRANCH = "main"
+# Written only into that first commit of an empty repository, so text-based
+# CAD formats (STEP, IGES, ASCII STL) are never line-ending converted.
+GITATTRIBUTES_CONTENT = (
+    "# Added by FusionToGitHub: keep CAD exports byte-for-byte.\n"
+    "*.f3d binary\n*.f3z binary\n*.step binary\n*.stp binary\n"
+    "*.stl binary\n*.iges binary\n*.igs binary\n*.sat binary\n"
+)
+DEFAULT_HISTORY_FILE = "CHANGELOG.md"
+MAX_PUSH_ATTEMPTS = 3
+
+# Private ref used to hold a fetched branch tip while a commit is built.
+_BASE_REF = "refs/fusion-to-github/base"
+_PUSH_REJECTION_MARKERS = ("[rejected]", "non-fast-forward", "fetch first")
 
 
 class GitUI(Protocol):
@@ -27,16 +75,33 @@ class GitUI(Protocol):
     def confirm(self, message: str) -> bool: ...
 
 
+class GitError(RuntimeError):
+    """A git command failed."""
+
+
+class GitTimeoutError(GitError):
+    """A git command took longer than its timeout and was stopped."""
+
+
+# ---------------------------------------------------------------------------
+# Branch names
+# ---------------------------------------------------------------------------
+
+
 def sanitize_branch_name(raw: Optional[str]) -> str:
+    """Turn arbitrary text into something git accepts as a branch name."""
     candidate = (raw or "").strip()
     candidate = re.sub(r"[^\w\-\./_]+", "_", candidate)
-    candidate = candidate.strip(" .")
-    candidate = candidate.lstrip("/")
-    candidate = candidate.rstrip("/")
+    candidate = re.sub(r"\.{2,}", ".", candidate)  # ".." is not allowed in refs
+    candidate = re.sub(r"/{2,}", "/", candidate)
+    # A leading "-" would make the name look like a command-line option.
+    candidate = candidate.strip(" ./-")
+    while candidate.endswith(".lock"):
+        candidate = candidate[: -len(".lock")].rstrip("./")
     if not candidate:
         candidate = "fusion-export"
     if len(candidate) > 200:
-        candidate = candidate[:200]
+        candidate = candidate[:200].rstrip("./")
     return candidate
 
 
@@ -47,54 +112,163 @@ def generate_branch_name(template: str, design_basename: str, timestamp: Optiona
     return sanitize_branch_name(populated), ts
 
 
-def git_run(repo_path: str, *args: str, check: bool = True, env: Optional[Dict[str, str]] = None):
-    creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if IS_WINDOWS else 0
+def is_valid_branch_name(name: str) -> bool:
+    """True when git accepts *name* as a branch name (and it can't pass as an option)."""
+    if not name or name.startswith("-"):
+        return False
+    try:
+        return git_run(None, "check-ref-format", "--branch", name, check=False).returncode == 0
+    except GitError:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Running git
+# ---------------------------------------------------------------------------
+
+
+def _kill_process_tree(proc: subprocess.Popen) -> None:
+    """Stop git and everything it started (credential helpers, ssh, hooks).
+
+    Killing only git.exe is not enough: a child that still holds the output
+    pipes would keep the caller blocked until it exits on its own.
+    """
+    try:
+        if IS_WINDOWS:
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                timeout=15,
+            )
+        else:
+            os.killpg(proc.pid, signal.SIGKILL)
+    except Exception:
+        pass
+    try:
+        proc.kill()
+    except Exception:
+        pass
+
+
+def _run_git_bytes(
+    repo_path: Optional[str],
+    args: Sequence[str],
+    *,
+    env: Optional[Dict[str, str]] = None,
+    network: bool = False,
+    timeout: Optional[float] = None,
+    input_bytes: Optional[bytes] = None,
+) -> Tuple[int, bytes, bytes]:
     env_vars = os.environ.copy()
-    # Force the C locale so git's messages are always English: the pipeline
-    # matches on message text (e.g. "couldn't find remote ref"), which a
-    # localized git would translate.
+    # The C locale keeps git's messages in English: the pipeline matches on
+    # message text (e.g. "[rejected]"), which a localized git would translate.
     env_vars["LC_ALL"] = "C"
     env_vars["LANG"] = "C"
+    # Never wait for a username or password typed into a terminal Fusion
+    # doesn't have. Git Credential Manager's sign-in window is unaffected.
+    env_vars["GIT_TERMINAL_PROMPT"] = "0"
+    if network and "GIT_SSH_COMMAND" not in env_vars:
+        env_vars["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"
     if env:
         env_vars.update(env)
-    proc = subprocess.run(
-        [GIT_EXE, *args],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-        creationflags=creation_flags,
+
+    cmd = [GIT_EXE]
+    if network:
+        # Abort a transfer that stays below 1 KB/s for a minute.
+        cmd += ["-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=60"]
+    cmd += list(args)
+    limit = timeout if timeout is not None else TIMEOUTS["network" if network else "local"]
+
+    platform_kwargs: Dict[str, Any] = {}
+    if IS_WINDOWS:
+        platform_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    else:
+        platform_kwargs["start_new_session"] = True  # so the whole group can be stopped
+    proc = subprocess.Popen(
+        cmd,
+        cwd=repo_path or None,
+        stdin=subprocess.PIPE if input_bytes is not None else subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         env=env_vars,
+        **platform_kwargs,
     )
-    if check and proc.returncode != 0:
-        raise RuntimeError(f"git {' '.join(args)} failed:\n{proc.stderr or proc.stdout}")
-    return proc
+    try:
+        out, err = proc.communicate(input_bytes, timeout=limit)
+    except subprocess.TimeoutExpired:
+        _kill_process_tree(proc)
+        try:
+            proc.communicate(timeout=5)
+        except Exception:
+            for stream in (proc.stdout, proc.stderr):
+                try:
+                    if stream:
+                        stream.close()
+                except Exception:
+                    pass
+        raise GitTimeoutError(
+            f"git {args[0] if args else ''} took longer than {int(limit)} seconds and was stopped. "
+            + (
+                "Check your internet connection, and that no GitHub sign-in window is "
+                "waiting behind Fusion, then try again."
+                if network
+                else "Try again; if it keeps happening, check the log."
+            )
+        )
+    return proc.returncode, out or b"", err or b""
 
 
-def git_output(repo_path: str, *args: str, env: Optional[Dict[str, str]] = None) -> str:
-    return (git_run(repo_path, *args, check=True, env=env).stdout or "").strip()
+def git_run(
+    repo_path: Optional[str],
+    *args: str,
+    check: bool = True,
+    env: Optional[Dict[str, str]] = None,
+    network: bool = False,
+    timeout: Optional[float] = None,
+    input_text: Optional[str] = None,
+) -> subprocess.CompletedProcess:
+    """Run git and return its result with stdout/stderr decoded as UTF-8.
+
+    Set *network* for commands that talk to the remote (clone, fetch, push,
+    ls-remote): they get the longer timeout and stall detection. Raises
+    GitTimeoutError when the timeout is hit and, when *check* is true,
+    GitError for a non-zero exit.
+    """
+    returncode, out, err = _run_git_bytes(
+        repo_path,
+        args,
+        env=env,
+        network=network,
+        timeout=timeout,
+        input_bytes=input_text.encode("utf-8") if input_text is not None else None,
+    )
+    # UTF-8 with replacement: decoding with the Windows code page could fail
+    # on names like "Łukasz" and silently lose the output (audit REL-03).
+    stdout = out.decode("utf-8", errors="replace")
+    stderr = err.decode("utf-8", errors="replace")
+    if check and returncode != 0:
+        raise GitError(f"git {' '.join(args)} failed:\n{stderr or stdout}")
+    return subprocess.CompletedProcess([GIT_EXE, *args], returncode, stdout, stderr)
+
+
+def git_output(repo_path: Optional[str], *args: str, env: Optional[Dict[str, str]] = None, network: bool = False) -> str:
+    return (git_run(repo_path, *args, check=True, env=env, network=network).stdout or "").strip()
+
+
+def _git_bytes(repo_path: str, *args: str, env: Optional[Dict[str, str]] = None) -> bytes:
+    returncode, out, err = _run_git_bytes(repo_path, args, env=env)
+    if returncode != 0:
+        raise GitError(f"git {' '.join(args)} failed:\n{err.decode('utf-8', errors='replace')}")
+    return out
 
 
 def git_available() -> bool:
     try:
-        creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if IS_WINDOWS else 0
-        subprocess.run(
-            [GIT_EXE, "--version"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=True,
-            creationflags=creation_flags,
-        )
-        return True
+        return git_run(None, "--version", check=False, timeout=15).returncode == 0
     except Exception:
         return False
-
-
-_PUSH_REJECTION_MARKERS = ("[rejected]", "non-fast-forward", "fetch first")
-
-
-def _is_push_rejection(push_output: str) -> bool:
-    """True when git refused a push because the remote branch has moved on."""
-    return any(marker in push_output for marker in _PUSH_REJECTION_MARKERS)
 
 
 @contextmanager
@@ -169,407 +343,399 @@ def git_askpass_env(username: str, token: str):
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-def handle_git_operations(
+# ---------------------------------------------------------------------------
+# Building and pushing an export commit
+# ---------------------------------------------------------------------------
+
+
+def _is_push_rejection(push_output: str) -> bool:
+    """True when git refused a push because the remote branch has moved on."""
+    return any(marker in push_output for marker in _PUSH_REJECTION_MARKERS)
+
+
+def normalize_repo_path(rel_path: str) -> str:
+    """Validate a path inside the repository and return it with forward slashes."""
+    candidate = (rel_path or "").replace("\\", "/").strip()
+    parts = [p for p in candidate.split("/") if p not in ("", ".")]
+    if not parts or candidate.startswith("/") or re.match(r"^[A-Za-z]:", candidate):
+        raise ValueError(f"'{rel_path}' is not a path inside the repository.")
+    if ".." in parts:
+        raise ValueError(f"'{rel_path}' points outside the repository.")
+    if parts[0].lower() == ".git":
+        raise ValueError(f"'{rel_path}' is inside Git's own .git folder.")
+    return posixpath.join(*parts)
+
+
+def remote_branches(
+    repo_path: str, env: Optional[Dict[str, str]] = None
+) -> Tuple[Optional[str], Dict[str, str]]:
+    """Return (default branch or None, {branch: tip sha}) as GitHub reports them now."""
+    listing = git_output(
+        repo_path, "ls-remote", "--symref", "origin", "HEAD", "refs/heads/*", env=env, network=True
+    )
+    default = None
+    heads: Dict[str, str] = {}
+    for line in listing.splitlines():
+        if line.startswith("ref: ") and line.endswith("\tHEAD"):
+            target = line[len("ref: ") : -len("\tHEAD")]
+            if target.startswith("refs/heads/"):
+                default = target[len("refs/heads/") :]
+            continue
+        sha, _, ref = line.partition("\t")
+        if ref.startswith("refs/heads/"):
+            heads[ref[len("refs/heads/") :]] = sha.strip()
+    if default not in heads:
+        default = next((b for b in ("main", "master") if b in heads), None) or (
+            sorted(heads)[0] if heads else None
+        )
+    return default, heads
+
+
+def _ensure_commit_available(repo_path: str, branch: str, sha: str, env: Optional[Dict[str, str]]) -> str:
+    """Make sure the branch tip is in the local object store; return the tip to build on."""
+    if git_run(repo_path, "cat-file", "-e", f"{sha}^{{commit}}", check=False).returncode == 0:
+        return sha
+    git_run(
+        repo_path, "fetch", "--no-tags", "--quiet", "origin", f"+refs/heads/{branch}:{_BASE_REF}", env=env, network=True
+    )
+    # The branch may have moved since it was listed; build on what was fetched.
+    return git_output(repo_path, "rev-parse", "--verify", f"{_BASE_REF}^{{commit}}")
+
+
+def _history_entry(
+    design_name: str, branch: str, message: str, rel_paths: Sequence[str], when: datetime
+) -> str:
+    lines = [
+        f"## {when.strftime('%Y-%m-%d %H:%M:%S')} - {design_name}",
+        f"- **Branch:** `{branch}`",
+        f'- **Commit Message:** "{message}"',
+    ]
+    if rel_paths:
+        lines.append("- **Files Updated:**")
+        lines.extend(f"  - `{rel}`" for rel in rel_paths)
+    lines.append("\n---\n")
+    return "\n".join(lines) + "\n"
+
+
+def _updated_history(existing: bytes, entry: str) -> bytes:
+    """Prepend *entry* to an existing history file, keeping its bytes intact."""
+    header = b"# Changelog\n\n"
+    newline = b"\r\n" if b"\r\n" in existing else b"\n"
+    body = existing
+    for candidate in (header, header.replace(b"\n", b"\r\n")):
+        if body.startswith(candidate):
+            body = body[len(candidate) :]
+            break
+    new_entry = entry.encode("utf-8").replace(b"\n", newline)
+    return header.replace(b"\n", newline) + new_entry + body
+
+
+def _build_commit(
     repo_path: str,
-    file_abs_paths_to_add: Sequence[str],
+    parent: Optional[str],
+    files: Sequence[Tuple[str, str]],
+    extra_blobs: Dict[str, bytes],
+    message: str,
+) -> str:
+    """Create a commit = *parent*'s tree + *files* + *extra_blobs*, without touching the user's index."""
+    work_dir = tempfile.mkdtemp(prefix="fusion_git_commit_")
+    index_env = {"GIT_INDEX_FILE": os.path.join(work_dir, "index")}
+    try:
+        if parent:
+            git_run(repo_path, "read-tree", parent, env=index_env)
+        else:
+            git_run(repo_path, "read-tree", "--empty", env=index_env)
+
+        def add_blob(source_path: str, rel: str) -> None:
+            # --no-filters stores the exact bytes: no line-ending conversion.
+            blob = git_output(repo_path, "hash-object", "-w", "--no-filters", "--", source_path)
+            git_run(repo_path, "update-index", "--add", "--cacheinfo", f"100644,{blob},{rel}", env=index_env)
+
+        for source_path, rel in files:
+            add_blob(source_path, rel)
+        for index, (rel, data) in enumerate(sorted(extra_blobs.items())):
+            temp_file = os.path.join(work_dir, f"extra_{index}")
+            with open(temp_file, "wb") as fh:
+                fh.write(data)
+            add_blob(temp_file, rel)
+
+        tree = git_output(repo_path, "write-tree", env=index_env)
+        args = ["commit-tree", tree]
+        if parent:
+            args += ["-p", parent]
+        args += ["-F", "-"]
+        try:
+            return git_run(repo_path, *args, input_text=message).stdout.strip()
+        except GitError as exc:
+            if "Please tell me who you are" in str(exc) or "unable to auto-detect email" in str(exc):
+                raise GitError(
+                    "Git doesn't know your name and email yet, so it can't sign the commit. "
+                    "Set them (git config user.name / user.email) and try again."
+                ) from exc
+            raise
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def _read_blob(repo_path: str, commit: Optional[str], rel: str) -> Optional[bytes]:
+    if not commit:
+        return None
+    spec = f"{commit}:{rel}"
+    if git_run(repo_path, "cat-file", "-e", spec, check=False).returncode != 0:
+        return None
+    return _git_bytes(repo_path, "cat-file", "blob", spec)
+
+
+def push_export(
+    repo_path: str,
+    exports: Sequence[Tuple[str, str]],
     commit_msg_template: str,
-    branch_format_str: str,
+    design_name: str,
     ui: GitUI,
-    design_basename_for_branch: str,
     *,
+    mode: str = MODE_SNAPSHOT,
+    branch_format_str: str = "fusion-export/{filename}-{timestamp}",
     branch_override: Optional[str] = None,
+    target_branch: Optional[str] = None,
+    history_file: Optional[str] = DEFAULT_HISTORY_FILE,
     pat_credentials: Optional[Dict[str, str]] = None,
     logger: Optional[logging.Logger] = None,
-    materialize_files: Optional[Callable[[], Sequence[str]]] = None,
+    on_step: Optional[Callable[[str], None]] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Run the stash → pull → branch → commit → push pipeline.
+    """Commit *exports* on top of GitHub's branch tip and push it, without touching the checkout.
 
-    When *materialize_files* is given, it is invoked after the export branch
-    has been created and must place the files into the working tree, returning
-    their absolute paths (which replace *file_abs_paths_to_add*). Keeping the
-    exports out of the tree until after the stash/pull steps guarantees they
-    are committed exactly as exported and never swallowed by the auto-stash.
+    *exports* is a list of ``(source file, path in the repository)``. The source
+    files are read where they are (normally Fusion's temporary export folder);
+    nothing is written into the user's working tree.
 
-    The push is always a plain fast-forward push: this pipeline never
-    force-pushes. If the remote branch has commits the local one lacks, the
-    push is rejected and nothing on the remote changes.
+    *mode* ``"snapshot"`` pushes to a new branch named from
+    *branch_format_str* (or to *branch_override*, adding to it if it exists).
+    ``"single"`` adds the export to *target_branch* (default: the repository's
+    default branch on GitHub).
 
-    Returns a result dict on success, ``{"cancelled": True}`` when the user
-    declined a confirmation prompt, and ``None`` on failure.
+    Returns a result dict when the push succeeded, ``{"cancelled": True}`` when
+    the user declined a prompt, and ``None`` on failure (already reported
+    through *ui*).
     """
-    our_stash_msg = "fusion_git_addin_autostash"
-    original_branch: Optional[str] = None
-    stashed = False
-    branch_name_final: Optional[str] = None
-    timestamp_str: Optional[str] = None
-    pull_failure_details: Optional[str] = None
 
-    def _confirm_continue_unsynced(branch: Optional[str], details: str) -> bool:
-        return ui.confirm(
-            f"Could not update '{branch}' from GitHub before exporting.\n\n"
-            f"Details:\n{details}\n\n"
-            "Continue without updating? The export is still pushed normally. If GitHub "
-            "already has newer commits on the export's branch, the push is refused and "
-            "nothing on GitHub changes."
-        )
-
-    def _perform(git_env: Optional[Dict[str, str]]):
-        nonlocal original_branch, stashed, branch_name_final, timestamp_str, pull_failure_details
-
-        remotes = git_output(repo_path, "remote", env=git_env).splitlines()
-        if "origin" not in remotes:
-            ui.error("No 'origin' remote found in this repo.")
-            if logger:
-                logger.error("No 'origin' remote in %s", repo_path)
-            return {"failed": True}
-
-        head_proc = git_run(repo_path, "symbolic-ref", "--short", "-q", "HEAD", check=False, env=git_env)
-        detached = head_proc.returncode != 0
-        if not detached:
-            original_branch = (head_proc.stdout or "").strip()
-
-        # A repository with no commits yet (fresh init/clone of an empty
-        # remote) has an unborn HEAD: nothing is tracked, so there is
-        # nothing to stash, and several git commands behave differently.
-        unborn = (
-            git_run(repo_path, "rev-parse", "--verify", "-q", "HEAD", check=False, env=git_env).returncode != 0
-        )
-
-        # Stash before any branch switching: leaving a detached HEAD (below)
-        # with a dirty working tree would otherwise fail or lose changes.
-        if unborn:
-            if logger:
-                logger.info("Repository has no commits yet; skipping the auto-stash step.")
-        else:
-            status = git_output(repo_path, "status", "--porcelain", env=git_env)
-            if status.strip():
-                if not ui.confirm(
-                    "Local changes detected. We'll stash them temporarily before pushing.\n"
-                    "Continue and auto-stash these changes?"
-                ):
-                    if logger:
-                        logger.info("User cancelled due to dirty working tree.")
-                    return {"cancelled": True}
-                git_run(repo_path, "stash", "push", "-u", "-m", our_stash_msg, env=git_env)
-                stashed = True
-                if logger:
-                    logger.info("Stashed local changes.")
-
-        if detached:
+    def step(text: str) -> None:
+        if logger:
+            logger.info(text)
+        if on_step:
             try:
-                ref = git_output(
-                    repo_path,
-                    "symbolic-ref",
-                    "refs/remotes/origin/HEAD",
-                    "--short",
-                    env=git_env,
-                )
-                default_branch = ref.split("/")[-1]
+                on_step(text)
             except Exception:
-                branches = {
-                    b.strip().lstrip("* ").strip() for b in git_output(repo_path, "branch", env=git_env).splitlines()
-                }
-                if "main" in branches:
-                    default_branch = "main"
-                elif "master" in branches:
-                    default_branch = "master"
-                else:
-                    default_branch = None
-            if not default_branch:
-                ui.error("Unable to determine default branch while in detached HEAD.")
-                if logger:
-                    logger.error("Cannot determine default branch")
-                return {"failed": True}
-            git_run(repo_path, "checkout", default_branch, env=git_env)
-            original_branch = default_branch
-            if logger:
-                logger.info("Detached HEAD → switched to '%s'", default_branch)
+                pass
 
-        try:
-            git_run(repo_path, "pull", "--rebase", "origin", original_branch, env=git_env)
-        except Exception as pull_exc:
-            # A conflicted rebase must never leak out of the pipeline:
-            # abort it so the repository is back in its pre-pull state
-            # before we decide what to do next.
-            git_run(repo_path, "rebase", "--abort", check=False, env=git_env)
-            details = str(pull_exc)
-            if "couldn't find remote ref" in details:
-                # Brand-new/empty remote: there is simply nothing to
-                # pull yet, so continue with a regular push.
-                if logger:
-                    logger.info(
-                        "Remote 'origin' has no branch '%s' yet; skipping pull.",
-                        original_branch,
-                    )
-            elif _confirm_continue_unsynced(original_branch, details):
-                pull_failure_details = details
-                if logger:
-                    logger.warning("Pull failed; continuing without updating (plain push).")
-            else:
-                pull_failure_details = details
-                raise
-
-        default_branch_name, timestamp_str = generate_branch_name(
-            branch_format_str,
-            design_basename_for_branch,
-        )
-        branch_name_final = default_branch_name
-        reused_branch = False
-
-        def _local_branch_exists(name: str) -> bool:
-            return (
-                git_run(
-                    repo_path, "rev-parse", "--verify", "-q", f"refs/heads/{name}", check=False, env=git_env
-                ).returncode
-                == 0
-            )
-
-        if branch_override:
-            override_clean = sanitize_branch_name(branch_override)
-            if not override_clean:
-                ui.error("Provided branch name is invalid after sanitization.")
-                raise RuntimeError("Invalid branch name override.")
-            branch_name_final = override_clean
-            if _local_branch_exists(branch_name_final):
-                # The user named this branch explicitly; reusing it (appending
-                # a new commit) is the likely intent, but confirm first.
-                if not ui.confirm(
-                    f"Branch '{branch_name_final}' already exists.\n\n"
-                    "Add this export as a new commit on the existing branch?"
-                ):
-                    if logger:
-                        logger.info("User declined to reuse existing branch '%s'.", branch_name_final)
-                    return {"cancelled": True}
-                reused_branch = True
-        else:
-            # Template-generated names can collide (e.g. two exports within
-            # the same second); pick a unique name instead of failing.
-            candidate = branch_name_final
-            suffix = 2
-            while _local_branch_exists(candidate):
-                candidate = f"{branch_name_final}-{suffix}"
-                suffix += 1
-            if candidate != branch_name_final and logger:
-                logger.info("Branch '%s' already exists; using '%s' instead.", branch_name_final, candidate)
-            branch_name_final = candidate
-
-        if reused_branch:
-            git_run(repo_path, "checkout", branch_name_final, env=git_env)
-            # The local branch may be behind origin (e.g. pushed to from
-            # another machine); sync it so the export lands on the remote
-            # tip instead of the push being rejected as non-fast-forward.
-            try:
-                git_run(repo_path, "pull", "--rebase", "origin", branch_name_final, env=git_env)
-            except Exception as sync_exc:
-                git_run(repo_path, "rebase", "--abort", check=False, env=git_env)
-                details = str(sync_exc)
-                if "couldn't find remote ref" in details:
-                    # Branch only exists locally so far; nothing to sync.
-                    if logger:
-                        logger.info(
-                            "Remote 'origin' has no branch '%s' yet; skipping sync.",
-                            branch_name_final,
-                        )
-                elif _confirm_continue_unsynced(branch_name_final, details):
-                    pull_failure_details = details
-                    if logger:
-                        logger.warning(
-                            "Sync of reused branch '%s' failed; continuing with a plain push.",
-                            branch_name_final,
-                        )
-                else:
-                    pull_failure_details = details
-                    raise
-        else:
-            git_run(repo_path, "checkout", "-b", branch_name_final, env=git_env)
-
-        # Only now — with the stash/pull steps done and the export branch
-        # checked out — do the export files enter the working tree.
-        files_to_commit = [os.path.normpath(p) for p in (file_abs_paths_to_add or [])]
-        if materialize_files is not None:
-            files_to_commit = [os.path.normpath(p) for p in (materialize_files() or [])]
-
-        changelog_file_path = os.path.join(repo_path, "CHANGELOG.md")
-        log_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        commit_msg = commit_msg_template or "Design update: {filename}"
-        commit_msg = (
-            commit_msg.replace("{filename}", design_basename_for_branch)
-            .replace("{branch}", branch_name_final)
-            .replace("{timestamp}", timestamp_str)
-        )
-
-        entry_lines = [
-            f"## {log_timestamp} - {design_basename_for_branch}",
-            f"- **Branch:** `{branch_name_final}`",
-            f'- **Commit Message:** "{commit_msg}"',
-        ]
-        if files_to_commit:
-            entry_lines.append("- **Files Updated:**")
-            for f in files_to_commit:
-                try:
-                    rel_display = os.path.relpath(f, repo_path)
-                except Exception:
-                    rel_display = os.path.basename(f)
-                entry_lines.append(f"  - `{rel_display}`")
-        entry_lines.append("\n---\n")
-
-        changelog_header = "# Changelog\n\n"
-        existing = ""
-        if os.path.exists(changelog_file_path):
-            with open(changelog_file_path, "r", encoding="utf-8") as fr:
-                existing = fr.read()
-            if existing.startswith(changelog_header):
-                existing = existing[len(changelog_header) :]
-        with open(changelog_file_path, "w", encoding="utf-8") as fw:
-            fw.write(changelog_header)
-            fw.write("\n".join(entry_lines) + "\n")
-            fw.write(existing)
-
-        files_abs = [os.path.join(repo_path, "CHANGELOG.md")] + files_to_commit
-        missing = [p for p in files_abs if not os.path.exists(p)]
-        if missing:
-            try:
-                listing = "\n".join(sorted(os.listdir(repo_path)))
-            except Exception:
-                listing = "(dir list failed)"
-            msg = (
-                "Exported files not found in repo folder:\n" + "\n".join(missing) + f"\n\nRepo root listing:\n{listing}"
-            )
-            ui.error(msg)
-            if logger:
-                logger.error(msg)
-            return {"failed": True}
-
-        rels = ["CHANGELOG.md"]
-        for p in files_to_commit:
-            rels.append(os.path.relpath(p, repo_path))
-
-        git_run(repo_path, "add", *rels, env=git_env)
-        git_run(repo_path, "commit", "-m", commit_msg, env=git_env)
-
-        # Plain push only. Never add a force option here: a rejected push must
-        # leave the remote exactly as it was (tests grep for this).
-        push_proc = git_run(
-            repo_path, "push", "-u", "origin", branch_name_final, check=False, env=git_env
-        )
-        if push_proc.returncode != 0:
-            push_output = push_proc.stderr or push_proc.stdout or ""
-            if _is_push_rejection(push_output):
-                raise RuntimeError(
-                    f"GitHub refused the push because branch '{branch_name_final}' on GitHub "
-                    "has commits this computer doesn't have.\n"
-                    "Nothing on GitHub was changed. Your export was committed locally on "
-                    f"'{branch_name_final}'. Push to a new branch name (leave Branch Name "
-                    "Override blank), or update the local branch first.\n\n"
-                    f"Details:\n{push_output}"
-                )
-            raise RuntimeError(f"git push failed:\n{push_output}")
-
-        return {
-            "branch": branch_name_final,
-            "stashed": stashed,
-            "timestamp": timestamp_str,
-            "pull_failed": pull_failure_details,
-            "reused_branch": reused_branch,
-        }
+    if mode not in (MODE_SNAPSHOT, MODE_SINGLE):
+        raise ValueError(f"Unknown mode {mode!r}")
 
     try:
-        if pat_credentials and pat_credentials.get("token"):
-            username = pat_credentials.get("username", "")
-            with git_askpass_env(username, pat_credentials.get("token", "")) as env_map:
-                result = _perform(env_map)
-        else:
-            result = _perform(None)
-        if result and result.get("failed"):
+        # --- Checks that need no network -----------------------------------
+        files: List[Tuple[str, str]] = []
+        for source_path, rel in exports:
+            rel_clean = normalize_repo_path(rel)
+            if history_file and rel_clean == normalize_repo_path(history_file):
+                raise ValueError(f"An export can't be named like the history file '{history_file}'.")
+            if not os.path.isfile(source_path):
+                raise ValueError(f"Exported file not found:\n{source_path}")
+            files.append((source_path, rel_clean))
+        if not files:
+            raise ValueError("There are no exported files to push.")
+
+        for source_path, rel in files:
+            size = os.path.getsize(source_path)
+            if size == 0:
+                raise ValueError(f"The exported file '{rel}' is empty; nothing was pushed.")
+            if size >= SIZE_BLOCK_BYTES:
+                ui.error(
+                    f"'{rel}' is {size / 1048576:.0f} MB. GitHub rejects files of 100 MB or more, "
+                    "so nothing was pushed.\nUntick that format, or lower the STL mesh refinement, "
+                    "and try again."
+                )
+                return None
+        large = [(rel, os.path.getsize(src)) for src, rel in files if os.path.getsize(src) >= SIZE_WARN_BYTES]
+        if large:
+            listing = "\n".join(f"  {rel}: {size / 1048576:.0f} MB" for rel, size in large)
+            if not ui.confirm(
+                f"These exports are large:\n{listing}\n\nGitHub warns about files over 50 MB, and "
+                "every version is kept forever, so the repository will grow quickly.\n\nPush anyway?"
+            ):
+                return {"cancelled": True}
+
+        if git_run(repo_path, "rev-parse", "--git-dir", check=False).returncode != 0:
+            raise GitError(f"'{repo_path}' is not a Git repository.")
+        if "origin" not in git_output(repo_path, "remote").splitlines():
+            ui.error("This repository has no 'origin' remote, so there is nowhere to push.")
             return None
-        return result
-    except Exception as exc:
-        msg = f"Git operation failed:\n{exc}"
+
+        override = sanitize_branch_name(branch_override) if branch_override else None
+        if override and not is_valid_branch_name(override):
+            raise ValueError(f"'{branch_override}' can't be used as a branch name.")
+        target = sanitize_branch_name(target_branch) if target_branch else None
+        if target and not is_valid_branch_name(target):
+            raise ValueError(f"'{target_branch}' can't be used as a branch name.")
+
+        when = datetime.now()
+        timestamp_str = when.strftime("%Y%m%d-%H%M%S")
+        generated_name, _ = generate_branch_name(branch_format_str, design_name, timestamp_str)
+        if mode == MODE_SNAPSHOT and not override and not is_valid_branch_name(generated_name):
+            raise ValueError(f"The branch name template produced '{generated_name}', which git can't use.")
+
+        def network(git_env: Optional[Dict[str, str]]) -> Optional[Dict[str, Any]]:
+            confirmed_reuse = False
+            bootstrapped = False
+            branch = override or target or generated_name
+            for attempt in range(1, MAX_PUSH_ATTEMPTS + 1):
+                step("Checking GitHub…")
+                default, heads = remote_branches(repo_path, git_env)
+
+                if not heads:
+                    # Completely empty repository: give it a first commit on
+                    # main, so it has a default branch, plus .gitattributes.
+                    step("Setting up the empty repository on GitHub…")
+                    init_commit = _build_commit(
+                        repo_path,
+                        None,
+                        [],
+                        {".gitattributes": GITATTRIBUTES_CONTENT.encode("utf-8")},
+                        "Initialize repository for Fusion exports",
+                    )
+                    proc = git_run(
+                        repo_path,
+                        "push",
+                        "origin",
+                        f"{init_commit}:refs/heads/{BOOTSTRAP_BRANCH}",
+                        check=False,
+                        env=git_env,
+                        network=True,
+                    )
+                    if proc.returncode != 0 and not _is_push_rejection(proc.stderr or proc.stdout):
+                        raise GitError(f"Could not set up the empty repository:\n{proc.stderr or proc.stdout}")
+                    bootstrapped = bootstrapped or proc.returncode == 0
+                    continue  # look again: someone else may have set it up meanwhile
+
+                if mode == MODE_SINGLE:
+                    branch = target or default or BOOTSTRAP_BRANCH
+                    reused = branch in heads
+                else:
+                    if override:
+                        branch = override
+                        reused = branch in heads
+                        if reused and not confirmed_reuse:
+                            if branch == default:
+                                question = (
+                                    f"'{branch}' is this repository's main branch: the one everyone sees "
+                                    "first on GitHub.\n\nAdd this export directly to it?"
+                                )
+                            else:
+                                question = (
+                                    f"Branch '{branch}' already exists on GitHub.\n\n"
+                                    "Add this export as a new commit on that branch?"
+                                )
+                            if not ui.confirm(question):
+                                return {"cancelled": True}
+                            confirmed_reuse = True
+                    else:
+                        branch = generated_name
+                        suffix = 2
+                        while branch in heads:
+                            branch = f"{generated_name}-{suffix}"
+                            suffix += 1
+                        reused = False
+
+                base_branch = branch if branch in heads else default
+                base = heads.get(base_branch) if base_branch else None
+                if base and base_branch:
+                    base = _ensure_commit_available(repo_path, base_branch, base, git_env)
+
+                step("Preparing the commit…")
+                message = (
+                    (commit_msg_template or "Design update: {filename}")
+                    .replace("{filename}", design_name)
+                    .replace("{branch}", branch)
+                    .replace("{timestamp}", timestamp_str)
+                )
+                extra: Dict[str, bytes] = {}
+                if history_file:
+                    rel_history = normalize_repo_path(history_file)
+                    existing = _read_blob(repo_path, base, rel_history) or b""
+                    entry = _history_entry(design_name, branch, message, [rel for _, rel in files], when)
+                    extra[rel_history] = _updated_history(existing, entry)
+                commit = _build_commit(repo_path, base, files, extra, message)
+
+                step("Pushing to GitHub…")
+                proc = git_run(
+                    repo_path,
+                    "push",
+                    "origin",
+                    f"{commit}:refs/heads/{branch}",
+                    check=False,
+                    env=git_env,
+                    network=True,
+                )
+                if proc.returncode == 0:
+                    return {
+                        "branch": branch,
+                        "commit": commit,
+                        "base": base,
+                        "base_branch": base_branch,
+                        "default_branch": default,
+                        "mode": mode,
+                        "timestamp": timestamp_str,
+                        "reused_branch": reused,
+                        "files": [rel for _, rel in files],
+                        "attempts": attempt,
+                        "bootstrapped": bootstrapped,
+                    }
+                output = proc.stderr or proc.stdout or ""
+                if not _is_push_rejection(output):
+                    raise GitError(f"git push failed. Nothing on GitHub was changed.\n\nDetails:\n{output}")
+                if logger:
+                    logger.info("Push to '%s' rejected (attempt %d); rebuilding on the new tip.", branch, attempt)
+
+            ui.error(
+                f"GitHub kept receiving other changes on '{branch}' while this export was being "
+                f"pushed ({MAX_PUSH_ATTEMPTS} attempts). Nothing on GitHub was changed. "
+                "Try again in a moment."
+            )
+            return None
+
+        try:
+            if pat_credentials and pat_credentials.get("token"):
+                with git_askpass_env(pat_credentials.get("username", ""), pat_credentials["token"]) as env_map:
+                    return network(env_map)
+            return network(None)
+        finally:
+            git_run(repo_path, "update-ref", "-d", _BASE_REF, check=False)
+    except (GitError, ValueError, OSError) as exc:
+        msg = f"Push failed:\n{exc}"
         ui.error(msg)
         if logger:
             logger.error(msg, exc_info=True)
         return None
-    finally:
-        restore_ok = False
-        try:
-            if original_branch:
-                branch_exists = (
-                    git_run(
-                        repo_path, "rev-parse", "--verify", "-q", f"refs/heads/{original_branch}", check=False
-                    ).returncode
-                    == 0
-                )
-                if branch_exists:
-                    restore_proc = git_run(repo_path, "checkout", original_branch, check=False)
-                    restore_ok = restore_proc.returncode == 0
-                    if not restore_ok:
-                        msg = (
-                            f"Could not switch back to branch '{original_branch}'.\n"
-                            f"The repository is still on '{branch_name_final or 'the export branch'}'.\n"
-                            f"Details:\n{restore_proc.stderr or restore_proc.stdout}"
-                        )
-                        ui.warn(msg)
-                        if logger:
-                            logger.warning(msg)
-                elif logger:
-                    # Original branch had no commits (brand-new repository):
-                    # there is no ref to return to, so stay on the export branch.
-                    logger.info(
-                        "Original branch '%s' has no commits; staying on '%s'.",
-                        original_branch,
-                        branch_name_final,
-                    )
-        except Exception:
-            if logger:
-                logger.warning("Failed to restore branch '%s'", original_branch, exc_info=True)
-        if stashed:
-            try:
-                stash_ref = None
-                stash_list = git_run(repo_path, "stash", "list", check=False)
-                for line in (stash_list.stdout or "").splitlines():
-                    if our_stash_msg in line:
-                        stash_ref = line.split(":", 1)[0].strip()
-                        break
-                if stash_ref is None:
-                    if logger:
-                        logger.warning("Auto-stash entry not found; nothing to restore.")
-                elif not restore_ok:
-                    msg = (
-                        f"Your local changes were auto-stashed but could not be restored because the "
-                        f"original branch was not restored. They remain stashed as '{stash_ref}' "
-                        f"({our_stash_msg}). Run 'git stash pop {stash_ref}' once the repository is back "
-                        f"on '{original_branch}'."
-                    )
-                    ui.warn(msg)
-                    if logger:
-                        logger.warning(msg)
-                else:
-                    pop_proc = git_run(repo_path, "stash", "pop", stash_ref, check=False)
-                    if pop_proc.returncode != 0:
-                        msg = (
-                            f"Your auto-stashed local changes could not be restored automatically and "
-                            f"remain stashed as '{stash_ref}' ({our_stash_msg}).\n"
-                            f"Run 'git stash pop {stash_ref}' to recover them.\n"
-                            f"Details:\n{pop_proc.stderr or pop_proc.stdout}"
-                        )
-                        ui.warn(msg)
-                        if logger:
-                            logger.warning(msg)
-            except Exception:
-                if logger:
-                    logger.warning("Auto-stash pop failed; original changes remain stashed.", exc_info=True)
 
 
 __all__ = [
     "VERSION",
     "IS_WINDOWS",
     "GIT_EXE",
+    "TIMEOUTS",
+    "SIZE_WARN_BYTES",
+    "SIZE_BLOCK_BYTES",
+    "MODE_SNAPSHOT",
+    "MODE_SINGLE",
     "GitUI",
+    "GitError",
+    "GitTimeoutError",
     "sanitize_branch_name",
     "generate_branch_name",
+    "is_valid_branch_name",
+    "normalize_repo_path",
+    "remote_branches",
     "git_run",
     "git_output",
     "git_available",
     "git_askpass_env",
-    "handle_git_operations",
+    "push_export",
 ]

@@ -274,17 +274,23 @@ def setup_new_repository(
     git_fn,
     *,
     logger=None,
+    confirm=None,
 ) -> Optional[str]:
     """Prepare a local Git repo connected to ``origin``.
 
     When *git_url* is provided and *local_path* is missing or empty, the
-    remote is cloned so the local repository starts with the remote's
-    history. Otherwise the folder is initialised in place and ``origin``
-    is configured. Either way the repository ends up with at least one
-    commit, because later branch/stash operations need a born HEAD.
+    remote is cloned. Otherwise the folder is initialised in place and
+    ``origin`` is configured.
+
+    Nothing is committed here: exports are committed on top of GitHub's
+    branch tip later, so an empty repository needs no local first commit.
+
+    If the folder is already connected to a *different* ``origin``, it is
+    only re-pointed after *confirm(question)* returns True; without
+    *confirm* the setup is refused (audit REL-10).
 
     *git_fn* must be a callable with the same signature as
-    ``_git(repo_path, *args, check=…)``.
+    ``fusion_git_core.git_run``.
 
     Returns ``None`` on success or an error message string on failure.
     """
@@ -296,54 +302,47 @@ def setup_new_repository(
         parent_dir = os.path.dirname(local_path) or "."
         os.makedirs(parent_dir, exist_ok=True)
         try:
-            git_fn(parent_dir, "clone", git_url, local_path)
+            git_fn(parent_dir, "clone", "--", git_url, local_path, network=True)
             if logger:
                 logger.info("Cloned %s into %s", git_url, local_path)
         except Exception as exc:
             return f"Failed to clone repository:\n{exc}"
-    else:
-        if not os.path.exists(local_path):
-            os.makedirs(local_path, exist_ok=True)
+        return None
 
-        if not has_git_dir:
-            try:
-                git_fn(local_path, "init")
-                if logger:
-                    logger.info("Initialized Git repository in %s", local_path)
-            except Exception as exc:
-                return f"Failed to initialize Git repository:\n{exc}"
+    if not os.path.exists(local_path):
+        os.makedirs(local_path, exist_ok=True)
 
-        if git_url:
-            try:
-                result = git_fn(
-                    local_path, "remote", "get-url",
-                    "origin", check=False,
-                )
-                if result.returncode == 0:
-                    git_fn(local_path, "remote", "set-url", "origin", git_url)
-                    if logger:
-                        logger.info("Updated remote 'origin' to %s", git_url)
-                else:
-                    git_fn(local_path, "remote", "add", "origin", git_url)
-                    if logger:
-                        logger.info("Added remote 'origin': %s", git_url)
-            except Exception as exc:
-                return f"Failed to configure remote:\n{exc}"
-
-    # A repo with no commits (fresh init, or clone of an empty remote) has an
-    # unborn HEAD; give it a root commit so the push pipeline can stash,
-    # branch, and return to this branch reliably.
-    head_check = git_fn(local_path, "rev-parse", "--verify", "-q", "HEAD", check=False)
-    if head_check.returncode != 0:
+    if not has_git_dir:
         try:
-            git_fn(local_path, "commit", "--allow-empty", "-m", "Initialize repository")
+            git_fn(local_path, "init")
             if logger:
-                logger.info("Created initial empty commit in %s", local_path)
+                logger.info("Initialized Git repository in %s", local_path)
         except Exception as exc:
-            return (
-                "Failed to create the repository's initial commit. Make sure git "
-                f"user.name and user.email are configured.\n{exc}"
-            )
+            return f"Failed to initialize Git repository:\n{exc}"
+
+    if git_url:
+        try:
+            result = git_fn(local_path, "remote", "get-url", "origin", check=False)
+            current = (result.stdout or "").strip() if result.returncode == 0 else ""
+            if result.returncode != 0:
+                git_fn(local_path, "remote", "add", "origin", git_url)
+                if logger:
+                    logger.info("Added remote 'origin': %s", git_url)
+            elif current != git_url:
+                question = (
+                    f"The folder\n{local_path}\nis already connected to\n{current}\n\n"
+                    f"Connect it to\n{git_url}\ninstead?"
+                )
+                if confirm is None or not confirm(question):
+                    return (
+                        f"The folder is already connected to {current}. Choose another "
+                        "folder, or confirm connecting it to the new URL."
+                    )
+                git_fn(local_path, "remote", "set-url", "origin", git_url)
+                if logger:
+                    logger.info("Updated remote 'origin' from %s to %s", current, git_url)
+        except Exception as exc:
+            return f"Failed to configure remote:\n{exc}"
 
     return None
 
