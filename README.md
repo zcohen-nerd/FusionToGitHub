@@ -89,7 +89,7 @@ Versions before 0.3.3 were installed by copying files by hand, often into a fold
 3. Delete the old add-in folder from the `AddIns` folder. Your saved repositories and settings are kept: they are stored in `.fusion_git_repos.json` in your home folder, not in the add-in folder. A token stored with **Manage Token…** stays in Windows Credential Manager.
 4. Install the new version as described above.
 
-Don't keep two copies installed. Both would load, and you could get two buttons or duplicate pushes.
+Don't keep two copies installed. Since 0.6.0 a second copy shows a warning and adds no second button, but remove it anyway. From 0.6.0 on, a Community Store update (or Stop → replace the folder → Run) works without restarting Fusion.
 
 ---
 
@@ -166,6 +166,25 @@ In the dialog's **Export Formats** section you can pick any combination:
 
 The default (F3D + STEP + STL) is a good all-round choice.
 
+- **All or nothing.** Every format you pick must export and pass basic checks
+  (the file exists, isn't empty, is the right kind of file, is under 100 MB).
+  If one fails, nothing is pushed. These checks don't prove a file opens in
+  other CAD software.
+- **Linked components.** Fusion can only export `.f3d`, which may not include
+  components linked from other designs. If your design has any, the add-in
+  names them and asks before pushing, and notes it in the design's
+  `HISTORY.md`.
+- **STL** files are written in millimetres on recent Fusion builds; on older
+  ones they use the design's units, and the add-in says so. **Format Settings
+  → STL files → One file per body** writes each body to its own file
+  (`Bracket - Arm 1 - Pin.stl`).
+- File and folder names are made safe for Windows, macOS and GitHub:
+  characters Windows doesn't allow become `_`, and names that differ only in
+  upper/lower case get " (2)".
+
+While the push runs, Fusion stays usable, and **Cancel** in the progress
+window stops it. The result message says whether anything reached GitHub.
+
 ---
 
 ## If something goes wrong
@@ -210,7 +229,7 @@ Privacy** section.
 
 ## Status, supported versions, and known limits
 
-- **Version:** **`0.5.0`**. The version is set once, in the add-in manifest;
+- **Version:** **`0.6.0`**. The version is set once, in the add-in manifest;
   the runtime constant, the CLI `--version`, the log banner, the README and the
   top `CHANGELOG.md` entry must match it. CI tests (`T_VERSION`, `T_RELEASE`)
   fail if they drift, and the release workflow refuses a Git tag that doesn't

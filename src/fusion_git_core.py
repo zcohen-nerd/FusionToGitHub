@@ -37,7 +37,7 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Protocol, Sequence, Tuple
 from urllib.parse import urlsplit
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 IS_WINDOWS = os.name == "nt"
 GIT_OVERRIDE_ENV = "FUSION_TO_GITHUB_GIT"
 

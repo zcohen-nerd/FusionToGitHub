@@ -7,6 +7,83 @@ All notable changes to the FusionToGitHub add-in. Versions follow
 file must match it; `scripts/check_release.py` and the `T_VERSION` test enforce
 this, and the release workflow refuses a tag that differs.
 
+## 0.6.0 — Unreleased
+
+**Pushes run in the background, exports are checked, and updates work
+without restarting Fusion.**
+
+### Added
+
+- **Fusion stays usable during a push.** The Git part of a push runs on a
+  background thread, and the dialog closes as soon as the push starts.
+  Progress, questions and the result are shown on Fusion's main thread; the
+  background thread never calls Fusion. Only one push runs at a time.
+- **Cancel a push.** The progress window's Cancel button stops Git
+  straight away. The message then says truthfully whether anything reached
+  GitHub: nothing pushed, pushed before the cancel took effect, or couldn't
+  tell.
+- **Linked components are detected.** Fusion's API can only export `.f3d`,
+  which may not include components linked from other designs. When a design
+  has linked components the add-in names them and asks before pushing, and
+  records a note in the design's `HISTORY.md` if you push anyway.
+- **STL: one file per body** (Format Settings → STL files), with predictable
+  names such as `Bracket - Arm 1 - Pin.stl`, including bodies inside
+  components and bodies with the same name.
+- **STL files are written in millimetres** on Fusion builds that support
+  choosing the unit; on older builds a note says they use the design's
+  units.
+- A note when the repository folder is inside OneDrive, Dropbox, Google
+  Drive, iCloud Drive or Box (sync apps can interfere with Git). Pushing is
+  still allowed.
+
+### Changed
+
+- **All or nothing exports.** Every chosen format must export and pass
+  basic file checks (exists, not empty, the right kind of file, under
+  100 MB, no two files overwriting each other) before anything is pushed. If
+  one fails, nothing is pushed and `HISTORY.md` isn't changed. Previously a
+  failed format was skipped. These checks don't prove a file opens in CAD
+  software.
+- **File and folder names work on every system.** Design and body names
+  are made safe the same way on Windows and macOS: characters Windows
+  doesn't allow become `_`, Windows device names (`CON`, `NUL`, …) get a
+  `_`, trailing dots and spaces are removed, and names that differ only in
+  case get " (2)".
+- **Hooks don't run during a push with a stored token**, and a repository's
+  configuration can no longer start any program while the token is present
+  (only https is allowed). Pushes through Git Credential Manager are
+  unchanged. See SECURITY.md.
+- Git is found in more places: an explicit `FUSION_TO_GITHUB_GIT` setting,
+  Homebrew on macOS (before the Xcode placeholder), and per-user and GitHub
+  Desktop installs on Windows.
+- **The dialog closes when the push starts.** Errors and the result appear
+  as messages when the push finishes; open the dialog again to retry. Every
+  question that can be asked up front (including the one for exports over
+  50 MB) is asked before the push starts, with the dialog still open.
+- The add-in's modules import each other only within the add-in's own
+  package, and the add-in no longer adds its folder to Python's search path.
+
+### Fixed
+
+- **Updating in a running Fusion** (Community Store update, Stop → replace →
+  Run, or going back to an earlier version) could fail to start the new
+  version, because modules of the previous version stayed loaded.
+  Reported and reproduced by DiegoV71 (#11).
+- A second copy of the add-in no longer adds a second toolbar button; it
+  shows a warning instead.
+
+### Quality
+
+- The simulated Fusion objects used by the tests are stricter: they hold
+  event handlers weakly as Fusion does, refuse UI calls from other threads,
+  and deliver custom events only through a simulated message loop. Tests
+  use real background threads for ordering, questions, timeouts,
+  cancellation and shutdown.
+- Same-process updates are tested with the real 0.3.3 and 0.4.0 releases:
+  the reported failure is reproduced, and updating and rolling back between
+  them and 0.6.0 works.
+- Not yet verified in real Fusion: see the manual checklist, sections I–M.
+
 ## 0.5.0 — Unreleased
 
 **A testable add-in, safer settings, and repository Edit/Remove.**

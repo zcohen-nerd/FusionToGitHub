@@ -60,10 +60,18 @@ stores them:
     `http://` or SSH, the push stops with an explanation.
   - `GIT_TERMINAL_PROMPT=0` is always set, so Git never waits for input.
 
-One limit: a repository's own **`pre-push` hook**, if it has one, runs during
-the push and could read the token from its environment. Only use a stored token
-with repositories whose hooks you trust. (Commit hooks don't run: the add-in
-builds its commits with `git commit-tree`.)
+  - **Repository hooks don't run** for those commands. Since 0.6.0 the
+    add-in points `core.hooksPath` at an empty temporary folder for any Git
+    command that carries the token, so a repository's own `pre-push` (or
+    other) hook can't read it from the environment. If you rely on a
+    `pre-push` hook, it still runs when you push from your own Git tools,
+    and when the add-in pushes through Git Credential Manager (path 1),
+    which passes no token to Git. Commit hooks never run: the add-in builds
+    its commits with `git commit-tree`.
+  - **Nothing else a repository configures runs either.** Only the https
+    transport is allowed (`GIT_ALLOW_PROTOCOL=https`), so an address
+    rewritten to `ext::<command>`, `file://` or SSH can't start a program.
+    No askpass program is inherited, and submodules aren't fetched or pushed.
 
 The developer test harness `src/push_cli.py` (not part of the installed add-in)
 reads a token from the `FUSION_TO_GITHUB_TOKEN` environment variable or from a
@@ -159,8 +167,9 @@ local copies.
 | `~/.PushToGitHub_AddIn_Data/PushToGitHub.log` (+ up to 3 older copies, 1 MB each) | What the add-in did, with folder paths, addresses and Git messages; secrets redacted | Owner-only on macOS. **Logging & Privacy → Clear Log** deletes them. |
 
 Git hooks, filters and `core.fsmonitor` configured *in a repository* run when
-the add-in runs Git there, as they do for any Git command. Only use the add-in
-with repositories you trust.
+the add-in runs Git there, as they do for any Git command (except hooks during
+a push with a stored token, above). Only use the add-in with repositories you
+trust.
 
 ---
 
