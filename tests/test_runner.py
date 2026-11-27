@@ -519,9 +519,9 @@ class TestRunner:
         help_ok = success and all(word in output.lower() for word in ["usage", "options"])
 
         # Standalone execution (risk R-25): the CLI also runs as a plain script
-        # in an isolated interpreter (-I: no PYTHONPATH, no user site, nothing
-        # but its own folder on sys.path), without the add-in package.
-        isolated_ok, isolated_out = self.run_command([sys.executable, "-I", str(cli_path), "--help"])
+        # without the add-in package (-E -s: no PYTHON* variables and no user
+        # site-packages, so only its own folder is on sys.path).
+        isolated_ok, isolated_out = self.run_command([sys.executable, "-E", "-s", str(cli_path), "--help"])
         from fusion_git_core import VERSION
         version_ok = (
             isolated_ok and "usage" in isolated_out.lower()
