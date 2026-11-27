@@ -7,7 +7,7 @@ All notable changes to the FusionToGitHub add-in. Versions follow
 file must match it; `scripts/check_release.py` and the `T_VERSION` test enforce
 this, and the release workflow refuses a tag that differs.
 
-## 0.3.3 — Unreleased
+## 0.3.3 — 2026-11-27
 
 **Safety and installability release. Supersedes the withdrawn 0.3.2.** This is
 the first release with an installable ZIP attached.
