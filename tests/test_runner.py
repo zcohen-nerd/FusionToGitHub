@@ -488,7 +488,7 @@ class TestRunner:
             # Test git operations
             try:
                 git_run(temp_dir, "add", "test.txt")
-                git_run(temp_dir, "commit", "-m", "Test commit")
+                git_run(temp_dir, "-c", "commit.gpgSign=false", "commit", "-m", "Test commit")
                 
                 # Check commit was created
                 result = git_run(temp_dir, "log", "--oneline", check=False)
@@ -506,23 +506,7 @@ class TestRunner:
             # Restore original directory
             os.chdir(original_dir)
             
-            # Clean up temp directory with retry logic for Windows
-            if temp_dir and os.path.exists(temp_dir):
-                try:
-                    import shutil
-                    import time
-                    # Try to clean up, but don't fail the test if it doesn't work on Windows
-                    for attempt in range(3):
-                        try:
-                            shutil.rmtree(temp_dir)
-                            break
-                        except (PermissionError, OSError):
-                            if attempt < 2:
-                                time.sleep(0.1)  # Brief pause before retry
-                            # On final attempt, just log and continue
-                except Exception:
-                    # Cleanup failure shouldn't fail the test
-                    pass
+            self._cleanup_dir(temp_dir)
 
     # CLI Tests
     def test_cli_basic_functionality(self):
@@ -569,19 +553,33 @@ class TestRunner:
 
     @staticmethod
     def _cleanup_dir(path: Optional[str]):
-        if not path or not os.path.exists(path):
-            return
-        for attempt in range(5):
+        """Delete a test folder, including Git's read-only object files (Windows)."""
+        import stat
+
+        def clear_readonly(func, target, _exc):
             try:
-                shutil.rmtree(path)
+                os.chmod(target, stat.S_IWRITE | stat.S_IREAD)
+                func(target)
+            except OSError:
+                pass
+
+        for attempt in range(5):
+            if not path or not os.path.exists(path):
                 return
-            except (PermissionError, OSError):
-                if attempt < 4:
-                    time.sleep(0.3)
+            if sys.version_info >= (3, 12):
+                shutil.rmtree(path, onexc=clear_readonly)
+            else:
+                shutil.rmtree(path, onerror=clear_readonly)
+            if os.path.exists(path):
+                time.sleep(0.3)
 
     @staticmethod
     def _make_seeded_remote(base_dir: str):
         """Create a bare origin plus a work clone with one pushed commit.
+
+        Fixture commits opt out of commit signing, so the suite also runs under
+        tests/hostile.gitconfig (which turns signing on); the add-in's own
+        commits use git commit-tree, which never signs.
 
         Returns (origin_path, work_path, branch_name).
         """
@@ -595,7 +593,7 @@ class TestRunner:
         with open(os.path.join(work, "readme.md"), "w", encoding="utf-8") as fh:
             fh.write("seed\n")
         git_run(work, "add", ".")
-        git_run(work, "commit", "-m", "seed commit")
+        git_run(work, "-c", "commit.gpgSign=false", "commit", "-m", "seed commit")
         git_run(work, "remote", "add", "origin", origin)
         git_run(work, "push", "-u", "origin", branch)
         # Make origin's HEAD point at the seeded branch whatever git's default is.
@@ -746,14 +744,14 @@ class TestRunner:
             git_run(base_dir, "clone", origin, other)
             with open(os.path.join(other, "readme.md"), "w", encoding="utf-8") as fh:
                 fh.write("remote edit\n")
-            git_run(other, "commit", "-am", "remote edit")
+            git_run(other, "-c", "commit.gpgSign=false", "commit", "-am", "remote edit")
             git_run(other, "push", "origin", branch)
             # ...while the user has a private unpushed commit, a staged change,
             # an unstaged change and an untracked file.
             with open(os.path.join(work, "secret.txt"), "w", encoding="utf-8") as fh:
                 fh.write("private work\n")
             git_run(work, "add", "secret.txt")
-            git_run(work, "commit", "-m", "private unpushed commit")
+            git_run(work, "-c", "commit.gpgSign=false", "commit", "-m", "private unpushed commit")
             with open(os.path.join(work, "staged.txt"), "w", encoding="utf-8") as fh:
                 fh.write("staged\n")
             git_run(work, "add", "staged.txt")
@@ -913,7 +911,7 @@ class TestRunner:
             with open(os.path.join(other, "notes.txt"), "w", encoding="utf-8") as fh:
                 fh.write("added elsewhere\n")
             git_run(other, "add", "notes.txt")
-            git_run(other, "commit", "-m", "remote-side commit")
+            git_run(other, "-c", "commit.gpgSign=false", "commit", "-m", "remote-side commit")
             git_run(other, "push", "origin", "my-export")
             result = self._push(work, [(self._write_export(base_dir, "model.step", "v2"), "model.step")], ui,
                                 branch_override="my-export")
@@ -950,7 +948,7 @@ class TestRunner:
                 with open(os.path.join(other, filename), "w", encoding="utf-8") as fh:
                     fh.write(content)
                 git_run(other, "add", filename)
-                git_run(other, "commit", "-m", f"colleague edit on {target_branch}")
+                git_run(other, "-c", "commit.gpgSign=false", "commit", "-m", f"colleague edit on {target_branch}")
                 git_run(other, "push", "origin", target_branch)
                 return git_run(origin, "rev-parse", target_branch).stdout.strip()
 
@@ -1181,7 +1179,7 @@ class TestRunner:
             with open(os.path.join(other, "CHANGELOG.md"), "wb") as fh:
                 fh.write(b"# Changelog\r\n\r\nold entry caf\xe9\r\n")
             git_run(other, "-c", "core.autocrlf=false", "add", "CHANGELOG.md")
-            git_run(other, "commit", "-m", "add changelog")
+            git_run(other, "-c", "commit.gpgSign=false", "commit", "-m", "add changelog")
             git_run(other, "push", "origin", branch)
             ui = _PipelineTestUI()
             result = self._push(work, [(self._write_export(base_dir, "m.step", "x"), "m.step")], ui, mode=MODE_SINGLE)
@@ -1311,11 +1309,13 @@ class TestRunner:
             typed = os.path.join(base_dir, "Typed", "Folder")
             if resolve_new_repo_path("Other", typed, False, repos_dir, safe_base) != os.path.normpath(typed):
                 details.append("a typed folder was not kept")
-            main_src = (Path(__file__).resolve().parent.parent / "src" / "Push_To_GitHub.py").read_text(
+            # Wiring guard: the dialog must push from the folder it set up
+            # (the full flow is covered in tests/unit/test_dialog.py).
+            dialog_src = (Path(__file__).resolve().parent.parent / "src" / "push_dialog.py").read_text(
                 encoding="utf-8"
             )
-            if "normalized_repo_path = local_path" not in main_src:
-                details.append("Push_To_GitHub.py no longer pushes from the set-up folder")
+            if "normalized_repo_path = local_path" not in dialog_src:
+                details.append("push_dialog.py no longer pushes from the set-up folder")
             return True
 
         self._run_pipeline_case("T_SETUP_01", "Setup: blank name uses the clone folder", body)
@@ -1405,6 +1405,15 @@ class TestRunner:
             names = set(entries)
             if f"{prefix}push_cli.py" in names or f"{prefix}diagnostic.py" in names:
                 problems.append("developer tools are in the package")
+            # Every add-in module in src/ is shipped, except the developer tools.
+            src_dir = Path(__file__).resolve().parent.parent / "src"
+            runtime_modules = {
+                p.name for p in src_dir.glob("*.py")
+                if f"src/{p.name}" not in package.EXCLUDED_FILES
+            }
+            unpackaged = sorted(m for m in runtime_modules if f"{prefix}{m}" not in names)
+            if unpackaged:
+                problems.append(f"modules missing from the package: {unpackaged}")
 
             def with_manifest(**changes):
                 m = dict(manifest)
@@ -1475,17 +1484,25 @@ class TestRunner:
             for lineno, line in enumerate(py.read_text(encoding="utf-8").splitlines(), 1):
                 if pattern.search(line):
                     hits.append(f"{py.name}:{lineno}")
-        # The one allowed mention of the old setting is the line that deletes it.
-        main_src = (root / "src" / "Push_To_GitHub.py").read_text(encoding="utf-8")
-        if 'pop("skipPullDefault", None)' not in main_src:
-            hits.append("Push_To_GitHub.py no longer drops a saved skipPullDefault")
-        stray = [
-            line for line in main_src.splitlines()
-            if "skipPullDefault" in line and 'pop("skipPullDefault", None)' not in line
-            and not line.strip().startswith("#")
-        ]
-        if stray:
-            hits.append(f"skipPullDefault still read or written: {stray}")
+        # The old force-push setting may only appear in the settings store's
+        # list of obsolete keys, which drops it when settings are loaded.
+        sys.path.insert(0, str(root / "src"))
+        try:
+            import settings_store
+        finally:
+            sys.path.pop(0)
+        if "skipPullDefault" not in settings_store.OBSOLETE_PROFILE_KEYS:
+            hits.append("settings_store no longer drops a saved skipPullDefault")
+        if settings_store.migrate({"R": {"path": "x", "skipPullDefault": True}})["repositories"]["R"].get(
+            "skipPullDefault"
+        ) is not None:
+            hits.append("a saved skipPullDefault survives migration")
+        for py in sorted((root / "src").glob("*.py")):
+            for line in py.read_text(encoding="utf-8").splitlines():
+                if "skipPullDefault" in line and not line.strip().startswith("#") and not (
+                    py.name == "settings_store.py" and "OBSOLETE_PROFILE_KEYS" in line
+                ):
+                    hits.append(f"skipPullDefault still read or written in {py.name}: {line.strip()}")
         self.record_result("T_NOFORCE", "No force push in source", not hits, "; ".join(hits))
 
     def run_pipeline_tests(self):
