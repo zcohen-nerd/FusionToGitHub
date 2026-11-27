@@ -65,7 +65,8 @@ htmlcov/
 docs/_build/
 site/
 
-# Generated release packages
+# Generated release packages: built by scripts/package.py and attached to
+# GitHub Releases by CI. Never commit them.
 /dist/
-/Push_To_GitHub-universal.zip
-/Push_To_GitHub-universal.zip.sha256
+/Push_To_GitHub-*.zip
+/Push_To_GitHub-*.zip.sha256

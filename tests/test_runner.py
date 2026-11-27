@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FusionToGitHub 0.3.1 - Automated Test Runner
+FusionToGitHub - Automated Test Runner
 
 This script automates the execution of testable components from the TESTING.md
 systematic test plan. It focuses on programmatically verifiable tests while
@@ -128,8 +128,8 @@ class TestRunner:
         self.log_test_start("T004", "fusion_git_core module import")
         try:
             import fusion_git_core
-            # fusion_git_core.VERSION is the single source of truth for the
-            # add-in version. Cross-surface consistency is T_VERSION's job; here
+            # The manifest version is the single source of truth (decision Q4);
+            # T_VERSION and T_RELEASE check that this constant matches it. Here
             # we only assert it is set and shaped like a semantic version.
             version_ok = bool(re.match(r"^\d+\.\d+(?:\.\d+)?$", fusion_git_core.VERSION))
             msg = f"Version: {fusion_git_core.VERSION}"
@@ -138,7 +138,7 @@ class TestRunner:
             self.record_result("T004", "fusion_git_core module import", False, str(e))
 
     def test_t_version_consistency(self):
-        """T_VERSION: every user-visible version surface matches fusion_git_core.VERSION"""
+        """T_VERSION: every user-visible version surface matches the manifest version"""
         self.log_test_start("T_VERSION", "version consistency across all surfaces")
         try:
             import fusion_git_core
@@ -1209,6 +1209,95 @@ class TestRunner:
         finally:
             self._cleanup_dir(base_dir)
 
+    @staticmethod
+    def _import_release_scripts():
+        scripts_dir = str(Path(__file__).resolve().parent.parent / "scripts")
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        import check_release
+        import package
+
+        return package, check_release
+
+    def test_release_consistency(self):
+        """T_RELEASE: manifest, VERSION, CHANGELOG, README and add-in ID agree (check_release)."""
+        self.log_test_start("T_RELEASE", "release surfaces agree")
+        try:
+            _, check_release = self._import_release_scripts()
+            problems = check_release.check()
+            # A tag that differs from the manifest must be refused.
+            version = check_release.manifest_version()
+            if not any("does not match" in p for p in check_release.check(tag=f"v{version}")):
+                problems.append("a v-prefixed tag was not refused")
+            self.record_result("T_RELEASE", "release surfaces agree", not problems, "; ".join(problems))
+        except Exception as e:
+            self.record_result("T_RELEASE", "release surfaces agree", False, str(e))
+
+    def test_package_build_and_validation(self):
+        """T_PACKAGE: the ZIP builds reproducibly, passes validation, and broken ZIPs fail it."""
+        self.log_test_start("T_PACKAGE", "package build and validation")
+        out = tempfile.mkdtemp(prefix="fusion_pkg_")
+        try:
+            import zipfile
+
+            package, _ = self._import_release_scripts()
+            problems = []
+
+            first = package.build("HEAD", Path(out) / "a")
+            second = package.build("HEAD", Path(out) / "b")
+            if first.read_bytes() != second.read_bytes():
+                problems.append("two builds of the same commit differ")
+            errors = package.validate(first)
+            if errors:
+                problems.append(f"real package invalid: {errors}")
+
+            with zipfile.ZipFile(first) as good:
+                entries = {info.filename: good.read(info) for info in good.infolist()}
+            prefix = f"{package.ADDIN_NAME}/"
+            manifest_name = f"{prefix}{package.ADDIN_NAME}.manifest"
+            manifest = json.loads(entries[manifest_name])
+            names = set(entries)
+            if f"{prefix}push_cli.py" in names or f"{prefix}diagnostic.py" in names:
+                problems.append("developer tools are in the package")
+
+            def with_manifest(**changes):
+                m = dict(manifest)
+                for key, value in changes.items():
+                    if value is None:
+                        m.pop(key, None)
+                    else:
+                        m[key] = value
+                return {**entries, manifest_name: json.dumps(m).encode()}
+
+            broken_cases = {
+                "missing module": {k: v for k, v in entries.items() if not k.endswith("dialog_helpers.py")},
+                "syntax error": {**entries, f"{prefix}fusion_git_core.py": b"def broken(:\n"},
+                "invalid GUID": with_manifest(id="not-a-guid"),
+                "different GUID": with_manifest(id="00000000-0000-4000-8000-000000000000"),
+                "bad version": with_manifest(version="banana"),
+                "missing type": with_manifest(type=None),
+                "extra file": {**entries, f"{prefix}push_cli.py": b"print('dev tool')\n"},
+                "foreign import": {
+                    **entries,
+                    f"{prefix}dialog_helpers.py": entries[f"{prefix}dialog_helpers.py"] + b"\nimport requests\n",
+                },
+            }
+            for label, files in broken_cases.items():
+                path = Path(out) / f"broken-{label.replace(' ', '-')}.zip"
+                with zipfile.ZipFile(path, "w") as z:
+                    for name, data in files.items():
+                        z.writestr(name, data)
+                if not package.validate(path):
+                    problems.append(f"broken package accepted: {label}")
+            if not any("does not match" in e for e in package.validate(first, expect_version="9.9.9")):
+                problems.append("wrong expected version accepted")
+
+            self.record_result("T_PACKAGE", "package build and validation", not problems, "; ".join(problems))
+        except Exception as e:
+            self.record_result("T_PACKAGE", "package build and validation", False, str(e))
+        finally:
+            self._cleanup_dir(out)
+
     def test_display_name(self):
         """T_NAME: the user-visible name is "Push to GitHub"; the internal command id is frozen."""
         self.log_test_start("T_NAME", "Display name and frozen command id")
@@ -1226,8 +1315,8 @@ class TestRunner:
                     continue
                 if "(ZAC)" in path.read_text(encoding="utf-8", errors="replace"):
                     problems.append(f"'(ZAC)' in {path.relative_to(root)}")
-        # This file names the old label on purpose (just above).
-        problems = [p for p in problems if "test_runner.py" not in p]
+        # This file and the CHANGELOG (history) name the old label on purpose.
+        problems = [p for p in problems if "test_runner.py" not in p and "CHANGELOG.md" not in p]
         self.record_result("T_NAME", "Display name and frozen command id", not problems, "; ".join(problems))
 
     def test_no_force_push_in_source(self):
@@ -1292,6 +1381,8 @@ class TestRunner:
         self.test_t002_python_environment()
         self.test_t004_fusion_git_core_import()
         self.test_t_version_consistency()
+        self.test_release_consistency()
+        self.test_package_build_and_validation()
         self.test_t005_cli_harness_help()
 
     def run_core_module_tests(self):
@@ -1348,8 +1439,17 @@ class TestRunner:
         print("See TESTING.md for complete manual test procedures.")
 
 
+def _src_version() -> str:
+    try:
+        import fusion_git_core
+
+        return fusion_git_core.VERSION
+    except Exception:
+        return "unknown"
+
+
 def main():
-    parser = argparse.ArgumentParser(description="FusionToGitHub 0.3.1 Test Runner")
+    parser = argparse.ArgumentParser(description="FusionToGitHub Test Runner")
     parser.add_argument("--verbose", "-v", action="store_true",
                        help="Enable verbose output")
     parser.add_argument("--category", "-c",
@@ -1370,7 +1470,7 @@ def main():
     
     runner = TestRunner(verbose=args.verbose)
     
-    print("FusionToGitHub 0.3.1 - Automated Test Runner")
+    print(f"FusionToGitHub - Automated Test Runner (src version {_src_version()})")
     print(f"Running category: {args.category}")
     print(f"Working directory: {os.getcwd()}")
     
