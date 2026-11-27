@@ -376,6 +376,15 @@ def setup_logger():
     logger = logging.getLogger(CMD_ID)
     logger.setLevel(logging.DEBUG)
     logger.addFilter(_RedactSecretsFilter())
+    # Files left by earlier versions become owner-only too.
+    for existing_name in os.listdir(LOG_DIR):
+        if existing_name.startswith(os.path.basename(LOG_FILE_PATH)):
+            _make_private(os.path.join(LOG_DIR, existing_name))
+    if not IS_WINDOWS:
+        try:
+            os.chmod(LOG_DIR, 0o700)
+        except OSError:
+            pass
 
     fmt_string = (
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -706,6 +715,7 @@ def load_config() -> dict:
             json.dump({}, f)
         _make_private(CONFIG_PATH)
         return {}
+    _make_private(CONFIG_PATH)
     try:
         with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
             return json.load(f)
