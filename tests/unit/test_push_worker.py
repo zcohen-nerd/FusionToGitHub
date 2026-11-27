@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 import _paths
 from test_core_cancel_hooks import write_hook
@@ -168,6 +169,32 @@ class MessageTests(WorkerTestCase):
         self.assertNotIn(TOKEN, failed["error"])
         self.assertEqual(finished, [True])
         self.assertFalse(push_worker.is_busy())
+
+    def test_a_non_exception_ending_still_reports_failed(self):
+        # Found in the S4 review: SystemExit (not an Exception) skipped the
+        # last message, so Fusion would think the push was still running.
+        def script(plan, ui, on_step, cancel):
+            raise SystemExit(3)
+
+        worker, inbox = self.start(script)
+        failed = inbox.run_until_done()
+        self.assertEqual(failed["type"], "failed")
+        self.assertIn("stopped unexpectedly", failed["error"])
+        self.assertIs(worker.terminal_delivered, True)
+        self.assertFalse(push_worker.is_busy())
+
+    def test_a_result_that_cannot_be_delivered_is_recorded_and_logged(self):
+        def script(plan, ui, on_step, cancel):
+            return {"ok": True}
+
+        logger = mock.Mock()
+        worker = push_worker.PushWorker(ScriptedController(script), "plan",
+                                        lambda message: message["type"] not in ("done", "failed"), logger)
+        worker.start()
+        self.assertTrue(worker.shutdown(WAIT) or not worker.is_alive())
+        self.assertIs(worker.terminal_delivered, False)
+        logger.error.assert_called_once()
+        self.assertIn("couldn't be passed to Fusion", logger.error.call_args[0][0])
 
     def test_a_failing_post_or_clean_up_never_stops_the_worker(self):
         def script(plan, ui, on_step, cancel):

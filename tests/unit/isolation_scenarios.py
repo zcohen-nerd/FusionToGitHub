@@ -220,7 +220,15 @@ def scenario_not_a_package(work):
         return {"error": str(exc), "bare_names": [n for n in ("fusion_git_core", "push_dialog") if n in sys.modules]}
 
 
+class _Slotted:
+    __slots__ = ("x",)
+
+
 def scenario_restarts(work):
+    # Other libraries can leave non-module objects in sys.modules; loading
+    # must cope with them (found in the S4 security review).
+    sys.modules["odd_slotted_object"] = _Slotted()
+    sys.modules["odd_namespace"] = types.SimpleNamespace(__file__=123)
     folder = install(os.path.join(work, "Push_To_GitHub"))
     counts = []
     for _ in range(3):

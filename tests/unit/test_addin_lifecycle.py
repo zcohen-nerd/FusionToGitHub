@@ -102,11 +102,16 @@ class LifecycleTests(AddinTestCase):
         class Slotted:
             __slots__ = ("x",)
 
-        self.load(types.SimpleNamespace(__name__="odd_namespace", __file__=123))
+        odd_file = types.SimpleNamespace(__name__="odd_namespace", __file__=123)
+        self.assertEqual(addin._module_file(Slotted()), "")
+        self.assertEqual(addin._module_file(odd_file), "")
+        self.assertEqual(addin._module_dir(Slotted()), "")
+        self.load(odd_file)
         sys.modules["odd_slotted"] = Slotted()
         self.addCleanup(sys.modules.pop, "odd_slotted", None)
-        self.assertEqual(addin._forget_stale_modules(), [])
         self.assertIsNone(addin._other_running_copy())
+        # The purge itself (which forgets this package's modules) runs with
+        # such objects loaded in the isolated "restarts" scenario.
 
     def test_a_second_installed_copy_warns_once_and_adds_no_button(self):
         # Another copy (any version) of the add-in already owns the button.
