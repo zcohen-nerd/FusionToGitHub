@@ -7,6 +7,69 @@ All notable changes to the FusionToGitHub add-in. Versions follow
 file must match it; `scripts/check_release.py` and the `T_VERSION` test enforce
 this, and the release workflow refuses a tag that differs.
 
+## 0.5.0 — Unreleased
+
+**A testable add-in, safer settings, and repository Edit/Remove.**
+
+### Added
+
+- **Edit and Remove saved repositories.** Rename a saved repository, change
+  its GitHub address or local folder, or remove it. Removing only forgets the
+  entry: the local folder, the GitHub repository and its history are never
+  touched, and a stored token is only deleted if you say so. A rename keeps
+  the stored token. Moving a repository to another server or folder turns
+  off "Use Stored Token" until you turn it back on. Edits and removals are
+  all-or-nothing: if one step fails, nothing changes.
+- **A stored token is tied to its server.** When you save a token, the
+  add-in records which server it is for (for example `github.com`), and
+  refuses to use it if the repository's address points anywhere else, even
+  after a rename, a folder change or re-adding a removed repository. Tokens
+  saved by earlier versions are tied to their repository's server the first
+  time they are used.
+
+### Changed
+
+- **Each design gets its own folder and `HISTORY.md`.** New pushes put a
+  design's files, and a history of its pushes, in a folder named after the
+  design (for example `Bracket/Bracket.step` and `Bracket/HISTORY.md`). The
+  folder keeps its name if you rename the design in Fusion, and a different
+  design with the same name gets `Bracket (2)`. An Export Subfolder setting
+  becomes the parent folder. The shared `CHANGELOG.md` that earlier versions
+  wrote stays where it is, unchanged, and each new history file points to it.
+- **Your Git name and email are saved for the repository, not for your whole
+  computer.** When Git doesn't know who you are, the add-in asks once and
+  remembers the answer for that saved repository. It no longer writes your
+  global Git configuration, unless you choose "all repositories" when asked.
+  Nothing is written into the repository's own `.git/config`.
+- **Settings are versioned and safer.** Saves are atomic (an interrupted save
+  can't leave a half-written file, and is completed on the next start); a
+  file that can't be read is kept as a `.corrupt-<date>` copy instead of being
+  replaced; settings from 0.4.0 and earlier are converted automatically, with
+  the original kept once as `.fusion_git_repos.json.v0-backup`; a file from a
+  newer version opens read-only.
+- Log files hide tokens and passwords in error tracebacks too, and error
+  messages shown in Fusion never include them.
+- **Internal structure.** The 2,000-line dialog file is split into modules
+  for the Fusion entry point, the dialog, exports, logging, the push
+  workflow, settings and tokens. The workflow is separated into a part that
+  must run on Fusion's main thread and a Git-only part, ready for a
+  background thread in a later release.
+
+### Removed
+
+- Copilot-specific agent and prompt files in `.github/`; development
+  instructions for every contributor stay in `CONTRIBUTING.md`.
+
+### Quality
+
+- The dialog is tested automatically against simulated Fusion objects, as
+  are settings, tokens and the push workflow. CI also runs every suite under
+  an unusual Git configuration (`tests/hostile.gitconfig`), checks that no
+  temporary folders are left behind, and enforces a coverage minimum for
+  every module, along with a check that every test asserts something.
+- A formal [risk register](docs/RISK_REGISTER.md) and a short
+  [manual Fusion checklist](tests/MANUAL_CHECKLIST.md) for each release.
+
 ## 0.4.0 — 2026-11-27
 
 **Pushes no longer touch your local repository folder.**

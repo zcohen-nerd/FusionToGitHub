@@ -210,7 +210,7 @@ Privacy** section.
 
 ## Status, supported versions, and known limits
 
-- **Version:** **`0.4.0`**. The version is set once, in the add-in manifest;
+- **Version:** **`0.5.0`**. The version is set once, in the add-in manifest;
   the runtime constant, the CLI `--version`, the log banner, the README and the
   top `CHANGELOG.md` entry must match it. CI tests (`T_VERSION`, `T_RELEASE`)
   fail if they drift, and the release workflow refuses a Git tag that doesn't
@@ -254,9 +254,13 @@ Privacy** section.
 - **History grows:** every export is kept as its own commit, and CAD
   files are binary — a long-lived backup repo can get large (there is no Git
   LFS integration).
-- **Automated tests:** 25, run in CI on Ubuntu and Windows across Python
-  3.10–3.12, plus macOS (`python tests/test_runner.py`). The Fusion UI itself is verified
-  by the manual checklist in [`tests/MANUAL_TESTS.md`](tests/MANUAL_TESTS.md).
+- **Automated tests:** a Git regression suite (`python tests/test_runner.py`)
+  and unit tests (`python -m unittest discover -s tests/unit`), run in CI on
+  Ubuntu and Windows across Python 3.10–3.12 plus macOS, again under an
+  unusual Git configuration, and with per-module coverage minimums. The dialog
+  is tested against simulated Fusion objects; behaviour inside real Fusion is
+  checked by hand with [`tests/MANUAL_CHECKLIST.md`](tests/MANUAL_CHECKLIST.md)
+  before each release.
 
 ### First success, end to end
 
@@ -301,12 +305,13 @@ Privacy** section.
 <details>
 <summary><b>For developers (click to expand)</b></summary>
 
-**Project layout**: the add-in lives in [`src/`](src) (`Push_To_GitHub.py` is the Fusion UI; `fusion_git_core.py` and `dialog_helpers.py` are Fusion-free modules), docs in [`docs/`](docs), tests in [`tests/`](tests).
+**Project layout**: the add-in lives in [`src/`](src). `Push_To_GitHub.py` is the Fusion entry point; `push_dialog.py`, `fusion_export.py` and `addin_logging.py` talk to Fusion; `push_controller.py`, `settings_store.py`, `credentials.py`, `fusion_git_core.py` and `dialog_helpers.py` don't depend on Fusion. Docs are in [`docs/`](docs), tests in [`tests/`](tests). See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-**Testing** — 25 automated tests, including end-to-end git pipeline tests against local repositories:
+**Testing** — end-to-end Git tests against local repositories, plus unit tests for every module, including the dialog against simulated Fusion objects:
 
 ```
 python tests/test_runner.py
+python -m unittest discover -s tests/unit
 ```
 
 **CLI harness** — run the whole git pipeline without Fusion (useful for CI):

@@ -6,11 +6,14 @@ issue first so we can agree on the approach.
 ## Development setup
 
 You need Python 3.10+ and Git. No third-party Python packages are required to
-run the add-in or its tests.
+run the add-in or its tests (`coverage` is optional, for the coverage gate).
 
 | Check | Command |
 |---|---|
-| Automated tests | `python tests/test_runner.py` |
+| Git regression tests | `python tests/test_runner.py` |
+| Unit tests (incl. the dialog against simulated Fusion) | `python -m unittest discover -s tests/unit` |
+| Unusual Git config | set `GIT_CONFIG_GLOBAL` to `tests/hostile.gitconfig`, then run both suites |
+| Coverage gate | see the Coverage job in `.github/workflows/ci.yml`; thresholds in `scripts/coverage_gate.py` |
 | Lint | `pip install ruff==0.16.5`, then `ruff check src/ tests/ scripts/` |
 | Docs links | `node .github/scripts/check-docs.mjs` |
 | Release consistency | `python scripts/check_release.py` |
@@ -19,13 +22,47 @@ run the add-in or its tests.
 CI runs all of these on every pull request and uploads the built ZIP as a
 `Push_To_GitHub-test-build` artifact you can install in Fusion.
 
+### How the code is organised
+
+| Module | Role | Fusion? |
+|---|---|---|
+| `Push_To_GitHub.py` | Entry point: `run`/`stop`, toolbar button | yes |
+| `push_dialog.py` | The dialog: inputs, validation, events | yes |
+| `fusion_export.py` | Exports the design; its name and stable id | yes |
+| `addin_logging.py` | Log file, redaction, Clear Log | palette only |
+| `push_controller.py` | The push workflow and repository Edit/Remove | no |
+| `settings_store.py` | Versioned, atomic settings | no |
+| `credentials.py` | Stored tokens (Windows Credential Manager) | no |
+| `fusion_git_core.py` | Git: isolated commits, timeouts, credentials | no |
+| `dialog_helpers.py` | Small pure helpers | no |
+
+Keep Fusion API calls in the first four. A push is planned on Fusion's main
+thread (`PushController.plan`) and executed with Git only
+(`PushController.execute`); keep `execute` free of Fusion calls, because a
+later release runs it on a background thread.
+
+### Testing rules
+
+- Tests that need Fusion use the stand-ins in `tests/fakes/adsk`. They
+  simulate Fusion, they don't prove it: anything that depends on how real
+  Fusion behaves goes in [`tests/MANUAL_CHECKLIST.md`](tests/MANUAL_CHECKLIST.md).
+- Tests never touch your real settings, logs, Credential Manager or global Git
+  config. Use temp folders, `MemoryCredentialStore`, and
+  `GIT_CONFIG_NOSYSTEM=1` plus an empty `GIT_CONFIG_GLOBAL` (see `GitSandbox`
+  in `tests/unit/test_core_identity_history.py`). Never use a real host such
+  as github.com in credential tests.
+- Every test must assert something; the coverage gate fails tests that
+  don't. Coverage minimums are per module and only go up.
+- New risks go in [docs/RISK_REGISTER.md](docs/RISK_REGISTER.md); none is
+  accepted without the maintainer's explicit agreement.
+
 ## Pull requests
 
 - Add or update tests for behaviour you change. The Git pipeline tests run
   against local repositories and never touch GitHub.
-- For changes to the Fusion dialog, which has no automated tests yet, say in
-  the PR what you checked by hand in Fusion (see
-  [`tests/MANUAL_TESTS.md`](tests/MANUAL_TESTS.md)).
+- For changes to the Fusion dialog, add tests against the simulated Fusion
+  objects, and say in the PR what you checked by hand in real Fusion (see
+  [`tests/MANUAL_CHECKLIST.md`](tests/MANUAL_CHECKLIST.md)).
 - Update the docs in the same PR.
 - Never include tokens, private designs or unredacted logs.
 - The add-in must never force-push or rewrite history on GitHub; a test
@@ -56,8 +93,9 @@ cut only from commits on `main`, and nothing is published automatically.
    and creates a **draft** release with the ZIP, its `.sha256` file and notes
    from the CHANGELOG. If any step fails, no release is created.
 5. **Test the drafted ZIP.** Download it from the draft, install it in Fusion
-   on Windows following the README, and run the smoke checks in
-   [`tests/MANUAL_TESTS.md`](tests/MANUAL_TESTS.md).
+   on Windows following the README, and work through
+   [`tests/MANUAL_CHECKLIST.md`](tests/MANUAL_CHECKLIST.md). Review
+   [docs/RISK_REGISTER.md](docs/RISK_REGISTER.md) for the release.
 6. **Publish the draft** on GitHub. Check that the asset shows a SHA-256
    digest (`gh release view X.Y.Z --json assets`).
 
