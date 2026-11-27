@@ -171,8 +171,11 @@ def validate(zip_path: Path, expect_version: Optional[str] = None) -> List[str]:
                 manifest = json.loads(manifest_bytes.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                 errors.append(f"manifest is not valid JSON: {exc}")
+        if not isinstance(manifest, dict):
+            errors.append("manifest must be a JSON object")
+            manifest = {}
         for key in REQUIRED_MANIFEST_KEYS:
-            if manifest and key not in manifest:
+            if key not in manifest:
                 errors.append(f"manifest is missing '{key}'")
         if manifest:
             if manifest.get("type") != "addin":
