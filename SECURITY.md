@@ -47,9 +47,13 @@ stores them:
   through a **temporary credential helper** (`token_auth` in
   `src/fusion_git_core.py`):
   - The token is passed only to the commands that talk to GitHub
-    (`ls-remote`, `fetch`, `push`), in environment variables of that one
-    `git` process. Local git commands never receive it. Nothing is written to
-    disk.
+    (`ls-remote`, `fetch`, `push`). Local git commands never receive it.
+    Since 0.7.0 it is **not in any process's environment**: for each of those
+    commands the add-in writes it to a private file (a new folder only you can
+    open, the file created with owner-only permissions), the helper reads it
+    from there, and the file is deleted as soon as that one command ends. Only
+    the file's location is in Git's environment. A folder left behind by a
+    crash is deleted the next time a token is used.
   - For those commands, every other credential helper is switched off
     (`-c credential.helper=`), so GCM or a `store` helper can't save a copy of
     the token, and a stale saved credential can't be used instead of it.
@@ -87,11 +91,11 @@ stores them:
   - HTTP tracing you may have switched on (`GIT_TRACE_CURL`,
     `GIT_CURL_VERBOSE`) is off for these commands, and Git's redaction is
     forced on, so the token can't end up in a trace file or an error message.
-  - **One known limit:** while a push runs, the token is in the environment
-    of the `git` processes, where another program running as you could read
-    it. Such a program can already read the stored token from Windows
-    Credential Manager, so this isn't a new exposure, but it's tracked as open
-    (risk R-21) and planned to change before 1.0.
+  - **Known limit:** while one of those commands runs (usually seconds),
+    another program running as *you* could find and read the private file.
+    Such a program can already read the stored token from Windows Credential
+    Manager, so this isn't a new exposure (risk R-21). Other users of the
+    computer can't read it.
 
 The developer test harness `src/push_cli.py` (not part of the installed add-in)
 reads a token from the `FUSION_TO_GITHUB_TOKEN` environment variable or from a

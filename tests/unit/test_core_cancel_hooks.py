@@ -278,6 +278,79 @@ class HookIsolationTests(GitSandbox):
         self.assertIn("GIT_ASKPASS=/bin/evil", control)
 
 
+class TokenOutOfEnvironmentTests(GitSandbox):
+    """R-21 E4: the token is never in a git process's environment."""
+
+    def auth(self, **extra):
+        empty = tempfile.mkdtemp(prefix="ftg_nohooks_")
+        self.addCleanup(_paths.force_rmtree, empty)
+        return core.GitAuth(host="git.example.invalid", token=FAKE_TOKEN, hooks_dir=empty, **extra)
+
+    def credential_dirs(self):
+        root = tempfile.gettempdir()
+        return {n for n in os.listdir(root) if n.startswith(core._CREDENTIALS_DIR_PREFIX)}
+
+    def test_git_processes_get_a_file_path_not_the_token(self):
+        before = self.credential_dirs()
+        with mock.patch.dict(os.environ, {"FUSION_GIT_TOKEN": "inherited", "FUSION_GIT_USERNAME": "x"}):
+            seen = core.git_run(self.work, "-c", "alias.showenv=!env", "showenv", auth=self.auth()).stdout
+        self.assertNotIn(FAKE_TOKEN, seen)
+        self.assertNotIn("FUSION_GIT_TOKEN=", seen)  # inherited ones are removed too
+        self.assertNotIn("FUSION_GIT_USERNAME=", seen)
+        path = next(line.split("=", 1)[1] for line in seen.splitlines()
+                    if line.startswith(core.CREDENTIALS_FILE_ENV + "="))
+        self.assertFalse(os.path.exists(path), "the credential file outlived the git command")
+        self.assertEqual(self.credential_dirs(), before)
+
+    def test_the_helper_answers_from_the_file_for_its_host_only(self):
+        answer = core.git_run(self.work, "credential", "fill", auth=self.auth(username="octocat"),
+                              input_text="protocol=https\nhost=git.example.invalid\n\n").stdout
+        self.assertIn(f"password={FAKE_TOKEN}", answer)
+        self.assertIn("username=octocat", answer)
+        other = core.git_run(self.work, "credential", "fill", auth=self.auth(), check=False,
+                             input_text="protocol=https\nhost=evil.example.invalid\n\n").stdout
+        self.assertNotIn(FAKE_TOKEN, other)
+
+    def test_a_temporary_folder_with_spaces_works(self):
+        spaced = os.path.join(self.base, "Temp With Spaces")
+        os.makedirs(spaced)
+        auth = self.auth()
+        with mock.patch.object(core.tempfile, "tempdir", spaced):
+            answer = core.git_run(self.work, "credential", "fill", auth=auth,
+                                  input_text="protocol=https\nhost=git.example.invalid\n\n").stdout
+        self.assertIn(f"password={FAKE_TOKEN}", answer)
+        self.assertEqual(os.listdir(spaced), [])
+
+    def test_the_file_is_removed_when_git_fails_and_private_while_it_exists(self):
+        before = self.credential_dirs()
+        probe = os.path.join(self.base, "mode.txt").replace("\\", "/")
+        with self.assertRaises(core.GitError):
+            core.git_run(self.work, "-c", f'alias.fail=!ls -l "$FUSION_GIT_CREDENTIALS" > "{probe}"; exit 3',
+                         "fail", auth=self.auth())
+        self.assertEqual(self.credential_dirs(), before)
+        with open(probe, encoding="utf-8") as fh:
+            listing = fh.read()
+        if os.name != "nt":
+            self.assertTrue(listing.startswith("-rw-------"), listing)
+        self.assertIn("credential", listing)
+
+    def test_a_token_with_a_line_break_is_refused(self):
+        auth = core.GitAuth(host="git.example.invalid", token="abc\npassword=evil", hooks_dir=self.base)
+        with self.assertRaises(core.GitError):
+            core.git_run(self.work, "status", auth=auth)
+
+    def test_stale_folders_from_a_killed_process_are_swept(self):
+        stale = tempfile.mkdtemp(prefix=core._CREDENTIALS_DIR_PREFIX)
+        fresh = tempfile.mkdtemp(prefix=core._CREDENTIALS_DIR_PREFIX)
+        self.addCleanup(_paths.force_rmtree, fresh)
+        old = time.time() - core._STALE_CREDENTIALS_SECONDS - 60
+        os.utime(stale, (old, old))
+        with mock.patch.object(core, "_sweep_done", False):
+            core.git_run(self.work, "status", auth=self.auth())
+        self.assertFalse(os.path.exists(stale))
+        self.assertTrue(os.path.exists(fresh))
+
+
 class DiscoveryTests(unittest.TestCase):
     def test_override_wins_when_it_exists(self):
         with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as fh:

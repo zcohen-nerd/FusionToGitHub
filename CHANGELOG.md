@@ -75,6 +75,15 @@ so 0.4.0 remains the current release, and these notes add to 0.6.0's.
   forced there: moving it into the ADD-INS menu is respected (audit
   COMP-13). The tooltip says what the command does.
 
+### Security
+
+- **The stored token is no longer in any process environment** (risk
+  R-21, E4). For each Git command that needs it, the token is written to a
+  private file that exists only while that command runs; Git's credential
+  helper reads it from there. Programs Git starts, environment listings and
+  crash dumps no longer contain it. Tested with a synthetic token against a
+  local HTTPS server.
+
 ### Removed
 
 - **The STEP AP203/AP214 option.** Fusion's STEP export has no such

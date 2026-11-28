@@ -21,6 +21,7 @@ Commit hooks don't run for these commits (they are made with
 from __future__ import annotations
 
 import base64
+import contextlib
 import glob
 import hashlib
 import logging
@@ -361,18 +362,20 @@ def git_run(
     """
     merged_env: Dict[str, Optional[str]] = dict(env or {})
     config: Sequence[str] = ()
-    if auth is not None:
-        merged_env.update(auth.env)
-        config = auth.config
-    returncode, out, err = _run_git_bytes(
-        repo_path,
-        args,
-        env=merged_env or None,
-        network=network,
-        timeout=timeout,
-        input_bytes=input_text.encode("utf-8") if input_text is not None else None,
-        config=config,
-    )
+    with contextlib.ExitStack() as scope:
+        if auth is not None:
+            config = auth.config  # first: refuses a token without the empty hooks folder
+            merged_env.update(auth.env)
+            merged_env[CREDENTIALS_FILE_ENV] = scope.enter_context(_credentials_file(auth))
+        returncode, out, err = _run_git_bytes(
+            repo_path,
+            args,
+            env=merged_env or None,
+            network=network,
+            timeout=timeout,
+            input_bytes=input_text.encode("utf-8") if input_text is not None else None,
+            config=config,
+        )
     # UTF-8 with replacement: decoding with the Windows code page could fail
     # on names like "Łukasz" and silently lose the output (audit REL-03).
     stdout = out.decode("utf-8", errors="replace")
@@ -413,14 +416,62 @@ def git_available() -> bool:
 # Credentials and secrets
 # ---------------------------------------------------------------------------
 
-# Answers git's credential "get" request from environment variables that only
-# the network git process receives. "store" and "erase" requests are ignored,
-# so the token is never copied anywhere.
+# Answers git's credential "get" request from a private file that exists only
+# while one git command runs (see _credentials_file). Only the file's path is
+# in the git processes' environment, never the token (risk R-21, E4). "store"
+# and "erase" requests are ignored, so the token is never copied anywhere.
+CREDENTIALS_FILE_ENV = "FUSION_GIT_CREDENTIALS"
 _INLINE_CREDENTIAL_HELPER = (
     '!f() { test "$1" = get || exit 0; '
-    'echo "username=${FUSION_GIT_USERNAME:-x-access-token}"; '
-    'echo "password=${FUSION_GIT_TOKEN}"; }; f'
+    'cat "$FUSION_GIT_CREDENTIALS"; }; f'
 )
+_CREDENTIALS_DIR_PREFIX = "fusion_git_cred_"
+# A folder left by a process that was killed mid-command is removed the next
+# time a token is used, once it is this old.
+_STALE_CREDENTIALS_SECONDS = 15 * 60
+_sweep_done = False
+
+
+def _sweep_stale_credential_dirs() -> None:
+    global _sweep_done
+    if _sweep_done:
+        return
+    _sweep_done = True
+    root = tempfile.gettempdir()
+    try:
+        names = [n for n in os.listdir(root) if n.startswith(_CREDENTIALS_DIR_PREFIX)]
+    except OSError:
+        return
+    for name in names:
+        path = os.path.join(root, name)
+        try:
+            if time.time() - os.path.getmtime(path) > _STALE_CREDENTIALS_SECONDS:
+                shutil.rmtree(path, ignore_errors=True)
+        except OSError:
+            pass
+
+
+@contextmanager
+def _credentials_file(auth: "GitAuth"):
+    """A file with the credential for one git command; yields its path, then deletes it.
+
+    The folder is new and private (``mkdtemp``: owner-only on POSIX, and on
+    Windows inside the user's own temporary folder) and the file is created
+    exclusively with mode 0600. The path uses forward slashes, which the
+    helper's shell (Git for Windows' sh) reads on every platform.
+    """
+    if "\n" in auth.token or "\r" in auth.token or "\n" in auth.username:
+        raise GitError("The stored token contains a line break, so it can't be used. Store it again.")
+    _sweep_stale_credential_dirs()
+    folder = tempfile.mkdtemp(prefix=_CREDENTIALS_DIR_PREFIX)
+    try:
+        path = os.path.join(folder, "credential")
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(f"username={auth.username or 'x-access-token'}\npassword={auth.token}\n".encode("utf-8"))
+        yield path.replace("\\", "/")
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
 
 _URL_USERINFO_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)([^/@\s]+)@")
 _TOKEN_RES = (
@@ -444,7 +495,10 @@ class GitAuth:
     @property
     def env(self) -> Dict[str, Optional[str]]:
         values: Dict[str, Optional[str]] = {
-            "FUSION_GIT_TOKEN": self.token,
+            # The token is never put in the environment (R-21, E4); variables
+            # of these names inherited from elsewhere are removed.
+            "FUSION_GIT_TOKEN": None,
+            "FUSION_GIT_USERNAME": None,
             # Only https may run while the token is in the environment. This
             # overrides every protocol.*.allow setting, so repository config
             # (url.*.insteadOf to "ext::<command>", a file:// or ssh:// address
@@ -463,8 +517,6 @@ class GitAuth:
             "GIT_TRACE_CURL": None,
             "GIT_CURL_VERBOSE": None,
         }
-        if self.username:
-            values["FUSION_GIT_USERNAME"] = self.username
         return values
 
     @property
