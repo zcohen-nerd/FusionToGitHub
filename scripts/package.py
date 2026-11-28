@@ -6,7 +6,8 @@
 
 The ZIP is built from the *committed* tree at --ref, never from the working
 tree, with fixed timestamps, permissions and ordering. Building the same
-commit twice gives a byte-identical file on the same machine.
+commit twice gives a byte-identical file with the same zlib (another zlib,
+such as zlib-ng, compresses the same files differently; the contents match).
 
 Users unzip it into Fusion's AddIns folder, which gives
 ``AddIns/Push_To_GitHub/Push_To_GitHub.manifest``. The same file is the
