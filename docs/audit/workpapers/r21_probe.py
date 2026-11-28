@@ -188,7 +188,16 @@ if os.name == "nt":
     url = f"https://127.0.0.1:{hang.port}/acme/designs.git"
     repo = new_repo("e4", url)
     auth = auth_for(url)
-    env = dict(os.environ, **{k: v for k, v in auth.env.items() if v is not None})
+    # The environment exactly as git_run builds it. Since the E4 mitigation
+    # (0.7.0) the token is in a private file that exists only while one git
+    # command runs; the environment holds only that file's path.
+    credentials = getattr(core, "_credentials_file", None)
+    scope = credentials(auth) if credentials else None
+    path = scope.__enter__() if scope else None
+    env = {k: v for k, v in dict(os.environ, **{k: v for k, v in auth.env.items() if v is not None}).items()
+           if auth.env.get(k, "") is not None}
+    if path:
+        env[core.CREDENTIALS_FILE_ENV] = path
     cmd = [core.GIT_EXE] + sum((["-c", c] for c in auth.config), []) + ["ls-remote", "origin"]
     proc = subprocess.Popen(cmd, cwd=repo, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(3)
@@ -221,8 +230,15 @@ if os.name == "nt":
 
     seen_env = environment_of(proc.pid)
     results.append(f"E4 another process of the same user read git's environment: token visible={TOKEN in seen_env}")
+    if path:
+        with open(path, encoding="utf-8") as fh:
+            readable = TOKEN in fh.read()
+        results.append(f"E4 residual: the credential file is readable by the same user while git runs: {readable}")
     proc.kill()
     proc.wait()
+    if scope:
+        scope.__exit__(None, None, None)
+        results.append(f"E4 the credential file is gone after the command: {not os.path.exists(path)}")
 else:
     results.append("E4 skipped (Windows-only reader in this probe)")
 

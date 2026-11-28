@@ -18,7 +18,7 @@ The formal list of known risks to FusionToGitHub users and to the project
   **Resolved** (resolution criteria met), **Accepted** (maintainer agreed),
   **Acceptance proposed**.
 
-*Last reviewed: 2026-11-28, sprint S5 (development version 0.7.0, unpublished).*
+*Last reviewed: 2026-11-28, sprint S5 and the R-21 E4 follow-up (development version 0.7.0, unpublished).*
 
 ## Summary
 
@@ -44,7 +44,7 @@ The formal list of known risks to FusionToGitHub users and to the project
 | R-18 | Fusion test doubles diverge from real Fusion | 3×3 = 9 Medium | Open (new in S3; 25 assumptions in S4) | Manual checklist every release |
 | R-19 | Settings migration loses saved repositories | 1×3 = 3 Low | Mitigated (new in S3) | Confirm on a real 0.4.0 settings file |
 | R-20 | Per-design folders surprise existing users | 2×2 = 4 Low | Mitigated (S5: the dialog and summary say where files go) | S6 docs |
-| R-21 | A repository's own hooks or settings could expose the stored token | 1×4 = 4 Low | Mitigated, **not accepted** (maintainer, 2026-11-27) | Live push with a token; 1.0: token kept out of process environments |
+| R-21 | A repository's own hooks or settings could expose the stored token | 1×3 = 3 Low | Mitigated, **not accepted** (maintainer, 2026-11-27); E4 mitigated in 0.7.0 | Live push with a token (R1, R2, D3) |
 | R-22 | Masked token field unsupported in some Fusion builds | 2×3 = 6 Low | Open (new in S3) | Manual check of the Token field |
 | R-23 | Stored token sent to a server it wasn't stored for | 1×4 = 4 Low | **Resolved** (0.6.0) | — |
 | R-24 | Two saved repositories for one GitHub repository allocate design folders independently | 1×2 = 2 Low | Mitigated (S5: folders checked against GitHub) | Live check U14 |
@@ -156,10 +156,29 @@ The formal list of known risks to FusionToGitHub users and to the project
   | E1 | Tracing in the user's environment (`GIT_TRACE_CURL` / `GIT_CURL_VERBOSE` with `GIT_TRACE_REDACT=0`) | The `Authorization` header, with the token in base64, was written to the trace file, to stderr, and from there into the add-in's error message, whose redaction knew only the raw token | **Fixed.** Token-carrying commands force `GIT_TRACE_REDACT=1` and drop the HTTP trace variables; redaction also covers the base64 `user:token` form |
   | E2 | Redirect to another host (`http.followRedirects=true`) | The other host received no token | Safe; no change needed |
   | E3 | Another repository on the **same** host (`remote.origin.pushurl`, `url.*.insteadOf` / `pushInsteadOf`) | The token, and the design, went to an attacker-chosen repository; the host check passed | **Fixed.** A token push is refused unless the fetch, push and configured addresses are all the same repository and match the GitHub address saved for it. Checked in the dialog and again in the push |
-  | E4 | Another program running as the same user reads the environment of a running `git` process | The token is readable | **Open**, see below |
+  | E4 | Another program running as the same user reads the environment of a running `git` process | The token is readable | **Mitigated (0.7.0).** The token is no longer in any environment, see below |
 
-- **Remaining exposure (open, not accepted):**
-  - **E4.** During a push, the token sits in the environment of the `git` processes. Another program running as the same Windows user can read it there, with the same rights it needs to read the stored token directly from Windows Credential Manager (`CredRead`, no prompt). So it adds no new reader. On macOS, stored tokens aren't supported. **Proposed for 1.0:** stop passing the token in the environment. Hand it to the credential helper through a one-time local channel (a single-use loopback answer bound to a random nonce), or through a short-lived file that only the user can read. Then pair that with an OS store that has per-application access control, so the stored token itself is protected too.
+- **E4 mitigation (0.7.0):**
+  - **What was done.** For each Git command that carries the token, `git_run` writes the credential to a file and puts only that file's path in the environment (`FUSION_GIT_CREDENTIALS`). The inline helper `cat`s the file. Details:
+    - **Location:** a new `mkdtemp` folder. On Windows it is under `%LOCALAPPDATA%\PushToGitHub\credentials`, per user and not synced. `%TEMP%` is avoided because it can be redirected to a shared folder (E4 review). On POSIX it is under the temporary folder, with mode 0700.
+    - **File:** created exclusively (`O_EXCL`, mode 0600 where the OS honours it).
+    - **Removal:** when the command ends, whether it succeeded or failed, the file is overwritten with zeros and deleted, with one retry.
+    - **Leftovers:** folders left by a killed process are swept at most every 10 minutes once they are an hour old. That is longer than any Git command can run (10-minute limit). The sweep never follows links or junctions.
+    - **Inputs:** inherited `FUSION_GIT_TOKEN` and `FUSION_GIT_USERNAME` variables are removed, and a token or username containing CR, LF or NUL is refused.
+  - **What it removes.** The token no longer reaches every process Git starts: `git-remote-https`, the helper's shell, and anything a configuration could start. It no longer appears in environment listings, crash dumps or monitoring tools that record process environments. It only exists for the seconds a command runs, not for the whole push, including while a question is open.
+  - **Threat model and residual.**
+    - A program running as the same user can still find and read the file while a command runs. It needs the same rights it already needs to read the token from Windows Credential Manager (`CredRead`, no prompt), so there is no new reader.
+    - Other standard users can't open the folder under default profile permissions. A changed profile ACL is outside the add-in's control and isn't checked.
+    - The token now touches disk briefly. The file is overwritten before deletion, but an SSD may keep old blocks, and antivirus software may scan the file while it exists.
+  - **Alternatives considered:**
+    - A named pipe or loopback channel: needs a custom security descriptor on Windows, or a shell that can open sockets, which isn't available on every Git installation.
+    - `credential-cache`: not available in Git for Windows.
+    - Putting the token in `-c http.extraHeader`: visible on the command line to every user.
+    - Letting Git Credential Manager supply it: would apply the token to every repository on the host, which breaks R-23.
+  - **Evidence:**
+    - `TokenOutOfEnvironmentTests` in `tests/unit/test_core_cancel_hooks.py`: no token or inherited variable in the environment, the helper answering for its host only, temporary folders with spaces, the file removed after a failure, mode 0600 on POSIX, line breaks refused, the stale-folder sweep.
+    - The workpaper probe (`r21_probe.py`, E4) rerun against a local HTTPS server: the token was delivered (E1 "server got token=True"), another same-user process reading Git's environment block found no token, the file was readable during the command, and it was gone afterwards.
+  - **Still possible later:** an OS store with per-application access control, which would protect the stored token itself.
   - Other repository settings that neither run a program nor redirect the connection (for example `http.extraHeader` or cookie files) are not refused, because none of them can send the token elsewhere.
   - Anything that can write a repository's `.git` folder can usually also run code as the user some other way.
 

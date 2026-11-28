@@ -57,6 +57,13 @@ class GitSandbox(unittest.TestCase):
         self.addCleanup(patcher.stop)
         for key in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"):
             os.environ.pop(key, None)
+        # Stored-token credential files go here, never into the real
+        # %LOCALAPPDATA% or temporary folder.
+        self.credentials_root = os.path.join(self.base, "credentials")
+        os.makedirs(self.credentials_root)
+        root_patch = mock.patch.object(core, "_credentials_root", lambda: self.credentials_root)
+        root_patch.start()
+        self.addCleanup(root_patch.stop)
         self.origin = os.path.join(self.base, "origin.git")
         self.work = os.path.join(self.base, "work")
         core.git_run(self.base, "init", "--bare", "-b", "main", self.origin)
