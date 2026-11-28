@@ -41,9 +41,11 @@ except ImportError:  # pragma: no cover - only outside Fusion without the fakes
 STL_SINGLE = "single"
 STL_PER_BODY = "perBody"
 
+# STEP has no settings: Fusion's STEPExportOptions has no protocol choice,
+# so the AP203/AP214 option earlier versions showed did nothing (audit
+# BUG-03). A saved "step": {"protocol": ...} is ignored.
 FORMAT_SETTINGS_DEFAULT = {
     "stl": {"meshRefinement": "high", "files": STL_SINGLE},
-    "step": {"protocol": "AP214"},
 }
 
 # format -> setting key -> [(label shown in the dialog, stored value)]
@@ -59,12 +61,6 @@ FORMAT_SETTINGS_OPTIONS = {
             ("One file per body", STL_PER_BODY),
         ],
     },
-    "step": {
-        "protocol": [
-            ("AP203", "AP203"),
-            ("AP214 (default)", "AP214"),
-        ],
-    },
 }
 
 # Row labels in the dialog's settings table; the default is the format name.
@@ -72,6 +68,24 @@ FORMAT_SETTING_LABELS = {("stl", "files"): "STL files"}
 
 AVAILABLE_FORMATS = ["f3d", "step", "iges", "sat", "stl"]
 DEFAULT_FORMATS = ["f3d", "step", "stl"]
+
+# What each format is for, as shown in the dialog's "Files to include" list
+# (audit UX-06). The stored settings keep the short codes.
+FORMAT_CHOICE_LABELS = {
+    "f3d": "Fusion design (.f3d): the full editable design",
+    "step": "STEP (.step): for other CAD programs",
+    "iges": "IGES (.igs): for older CAD programs",
+    "sat": "SAT (.sat): ACIS solid model",
+    "stl": "STL (.stl, millimetres): for 3D printing",
+}
+
+
+def format_from_choice(label: str) -> str:
+    """The format code for a "Files to include" label (or a code)."""
+    for code, text in FORMAT_CHOICE_LABELS.items():
+        if label in (text, code):
+            return code
+    return label
 
 # Spellings saved configurations may use for the same format.
 FORMAT_ALIASES = {"stp": "step", "igs": "iges"}
@@ -174,6 +188,26 @@ def design_identity(design) -> Tuple[str, str]:
 # Walking the design (every access guarded: Fusion can raise on nested
 # references and on components that failed to load)
 # ----------------------------------------------------------------------
+
+
+def design_version_text(design) -> str:
+    """Which Fusion version of the design is backed up, in words ("v12", "v12 with unsaved changes").
+
+    "not saved yet" for a design that was never saved; "" if Fusion doesn't
+    say. Recorded in HISTORY.md and shown in the dialog and the summary.
+    """
+    try:
+        document = design.parentDocument
+        data_file = document.dataFile if document else None
+        if data_file is None:
+            return "not saved yet"
+        number = getattr(data_file, "versionNumber", None)
+        text = f"v{number}" if isinstance(number, int) and number > 0 else "saved"
+        if getattr(document, "isModified", False) is True:
+            text += " with unsaved changes"
+        return text
+    except Exception:
+        return ""
 
 
 def _items(collection) -> list:
@@ -326,15 +360,7 @@ def _options_for(em, root, fmt: str, path: str, settings: Dict[str, str], logger
         except TypeError:
             return em.createFusionArchiveExportOptions(path, root)
     if fmt == "step":
-        options = em.createSTEPExportOptions(path, root)
-        protocol = settings.get("protocol", FORMAT_SETTINGS_DEFAULT["step"]["protocol"])
-        if hasattr(options, "applicationProtocol"):
-            try:
-                options.applicationProtocol = str(protocol)
-            except Exception:
-                if logger:
-                    logger.debug("Failed to set STEP protocol to %s.", protocol, exc_info=True)
-        return options
+        return em.createSTEPExportOptions(path, root)
     if fmt == "iges":
         return em.createIGESExportOptions(path, root)
     return em.createSATExportOptions(path, root)
@@ -460,6 +486,9 @@ def linked_components_note(names: List[str]) -> str:
 __all__ = [
     "AVAILABLE_FORMATS",
     "DEFAULT_FORMATS",
+    "FORMAT_CHOICE_LABELS",
+    "design_version_text",
+    "format_from_choice",
     "ExportResult",
     "FORMAT_SETTINGS_DEFAULT",
     "FORMAT_SETTINGS_OPTIONS",

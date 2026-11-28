@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import base64
 import glob
+import hashlib
 import logging
 import os
 import posixpath
@@ -38,7 +39,7 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Protocol, Sequence, Tuple
 from urllib.parse import urlsplit
 
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 IS_WINDOWS = os.name == "nt"
 GIT_OVERRIDE_ENV = "FUSION_TO_GITHUB_GIT"
 
@@ -179,6 +180,32 @@ def generate_branch_name(template: str, design_basename: str, timestamp: Optiona
     branch_template = template or "fusion-export/{filename}-{timestamp}"
     populated = branch_template.replace("{filename}", design_basename).replace("{timestamp}", ts)
     return sanitize_branch_name(populated), ts
+
+
+_REF_FORBIDDEN = re.compile(r"[\x00-\x20\x7f~^:?*\[\\]")
+
+
+def branch_name_problem(name: str) -> str:
+    """Why git would refuse *name* as a branch name ("" if it is fine). No git call.
+
+    Mirrors ``git check-ref-format --branch`` closely enough for checking
+    what someone types; :func:`is_valid_branch_name` asks git itself before
+    a push.
+    """
+    if not name:
+        return "A branch name can't be empty."
+    if name.startswith("-"):
+        return "A branch name can't start with '-'."
+    if _REF_FORBIDDEN.search(name):
+        return "A branch name can't contain spaces or any of ~ ^ : ? * [ \\."
+    if ".." in name or "@{" in name or name == "@" or "//" in name:
+        return "A branch name can't contain '..', '@{' or '//'."
+    if name.startswith("/") or name.endswith(("/", ".")):
+        return "A branch name can't start with '/' or end with '/' or '.'."
+    for part in name.split("/"):
+        if part.startswith(".") or part.endswith(".lock"):
+            return "No part of a branch name can start with '.' or end with '.lock'."
+    return ""
 
 
 def is_valid_branch_name(name: str) -> bool:
@@ -362,8 +389,10 @@ def git_output(
     env: Optional[Dict[str, str]] = None,
     network: bool = False,
     auth: Optional["GitAuth"] = None,
+    timeout: Optional[float] = None,
 ) -> str:
-    return (git_run(repo_path, *args, check=True, env=env, network=network, auth=auth).stdout or "").strip()
+    return (git_run(repo_path, *args, check=True, env=env, network=network, auth=auth,
+                    timeout=timeout).stdout or "").strip()
 
 
 def _git_bytes(repo_path: str, *args: str, env: Optional[Dict[str, str]] = None) -> bytes:
@@ -626,11 +655,12 @@ def normalize_repo_path(rel_path: str) -> str:
 
 
 def remote_branches(
-    repo_path: str, auth: Optional[GitAuth] = None
+    repo_path: str, auth: Optional[GitAuth] = None, timeout: Optional[float] = None
 ) -> Tuple[Optional[str], Dict[str, str]]:
     """Return (default branch or None, {branch: tip sha}) as GitHub reports them now."""
     listing = git_output(
-        repo_path, "ls-remote", "--symref", "origin", "HEAD", "refs/heads/*", auth=auth, network=True
+        repo_path, "ls-remote", "--symref", "origin", "HEAD", "refs/heads/*", auth=auth, network=True,
+        timeout=timeout,
     )
     default = None
     heads: Dict[str, str] = {}
@@ -663,13 +693,15 @@ def _ensure_commit_available(repo_path: str, branch: str, sha: str, auth: Option
 
 def _history_entry(
     design_name: str, branch: str, message: str, rel_paths: Sequence[str], when: datetime,
-    notes: Sequence[str] = (),
+    notes: Sequence[str] = (), fusion_version: str = "",
 ) -> str:
     lines = [
         f"## {when.strftime('%Y-%m-%d %H:%M:%S')} - {design_name}",
         f"- **Branch:** `{branch}`",
         f'- **Commit Message:** "{message}"',
     ]
+    if fusion_version:
+        lines.append(f"- **Fusion version:** {fusion_version}")
     lines.extend(f"- **Note:** {note}" for note in notes)
     if rel_paths:
         lines.append("- **Files Updated:**")
@@ -704,6 +736,121 @@ def _updated_history(existing: bytes, entry: str, new_file_header: str = "# Chan
             split += len(newline)
         return existing[:split] + new_entry + existing[split:]
     return new_entry + existing
+
+
+# Which design a HISTORY.md belongs to (risk R-24): an HTML comment, hidden
+# on GitHub, holding a hash of the design's Fusion id (the id itself is not
+# published). Two saved repositories, or two computers, pushing different
+# designs that share a name then get different folders, and the same design
+# finds its folder again.
+#
+# The marker only counts on its own line in its fixed place: the line after
+# the "# History: <design>" title (or the first line of a file without a
+# title). A design name or commit message containing marker text, which
+# appears in the title and the entries, can't claim the file (found in the
+# S5 security review).
+_MARKER_LINE_RE = re.compile(rb"<!-- fusion-to-github design: ([0-9a-f]{8,64}) -->")
+_MARKER_SEARCH_BYTES = 4096
+# Bounds on what a repository's contents can make a push read (S5 review):
+# HISTORY.md files bigger than this are not opened, and only this many
+# design folders are examined; the saved folder is used beyond that.
+_MAX_HISTORY_BYTES = 1024 * 1024
+_MAX_FOLDERS_EXAMINED = 300
+
+
+def design_key(design_id: str) -> str:
+    """A short, stable, non-reversible key for a design id (for HISTORY.md markers)."""
+    return hashlib.sha256((design_id or "").encode("utf-8")).hexdigest()[:16]
+
+
+def history_owner(data: Optional[bytes]) -> Optional[str]:
+    """The design key a HISTORY.md is marked with, or None (no file, or no marker)."""
+    if not data:
+        return None
+    lines = data[:_MARKER_SEARCH_BYTES].split(b"\n")
+    candidate = lines[1] if lines[0].startswith(b"# ") and len(lines) > 1 else lines[0]
+    match = _MARKER_LINE_RE.fullmatch(candidate.rstrip(b"\r"))
+    return match.group(1).decode("ascii") if match else None
+
+
+def _with_marker(data: bytes, key: str) -> bytes:
+    """*data* (a HISTORY.md) with this design's marker, added after its title if missing."""
+    if history_owner(data) == key:
+        return data
+    newline = b"\r\n" if b"\r\n" in data else b"\n"
+    marker = f"<!-- fusion-to-github design: {key} -->".encode("ascii") + newline
+    if data.startswith(b"# "):
+        end = data.find(newline)
+        end = len(data) if end == -1 else end + len(newline)
+        return data[:end] + marker + data[end:]
+    return marker + data
+
+
+def _choose_design_folder(
+    repo_path: str,
+    base: Optional[str],
+    folder: str,
+    key: str,
+    relocate: Callable[[str], Tuple[Sequence[Tuple[str, str]], str]],
+) -> str:
+    """The folder this design's backup goes in, checked against what is on GitHub (risk R-24).
+
+    *folder* is the one the saved repository allocated. It is kept when its
+    HISTORY.md belongs to this design, has no marker (written before 0.7.0),
+    or doesn't exist yet. If another folder's HISTORY.md belongs to this
+    design, that one is used. If *folder*'s HISTORY.md belongs to a
+    different design, the next free "<name> (n)" is used instead.
+    """
+    if not base:
+        return folder
+    _, history = relocate(folder)
+    parts = history.split("/")
+    if folder not in parts:
+        return folder
+    at = len(parts) - 1 - parts[::-1].index(folder)
+    prefix, suffix = parts[:at], parts[at + 1:]
+    # -z: names exactly as stored (no quoting of non-ASCII names); -l: sizes.
+    listing = git_run(repo_path, "ls-tree", "-r", "-l", "-z", base, "--", "/".join(prefix) or ".").stdout
+    taken: Dict[str, str] = {}  # lower-case name -> name, for every entry at the folder level
+    histories: Dict[str, Tuple[str, int]] = {}  # folder -> (blob, size) of its HISTORY.md
+    for record in (listing or "").split("\0"):
+        meta, _, path = record.partition("\t")
+        fields = meta.split()
+        segments = path.split("/")
+        if len(fields) < 4 or len(segments) <= len(prefix) or segments[:len(prefix)] != prefix:
+            continue
+        name = segments[len(prefix)]
+        taken[name.lower()] = name
+        if segments[len(prefix) + 1:] == suffix and fields[1] == "blob":
+            histories[name] = (fields[2], int(fields[3]) if fields[3].isdigit() else _MAX_HISTORY_BYTES + 1)
+    # Windows and macOS don't tell "Bracket" from "bracket": a folder that
+    # differs only in case is the same folder (code review of S5).
+    requested = folder
+    same = taken.get(folder.lower())
+    if same is not None and same != folder and folder not in taken.values():
+        folder = same
+    owners: Dict[str, Optional[str]] = {}
+    examined = [folder] + sorted(n for n in histories if n != folder)
+    for name in examined[:_MAX_FOLDERS_EXAMINED]:
+        if name not in histories:
+            continue
+        blob, size = histories[name]
+        if size > _MAX_HISTORY_BYTES:
+            owners[name] = None  # too big to read: owner unknown
+            continue
+        owners[name] = history_owner(_git_bytes(repo_path, "cat-file", "blob", blob))
+    if owners.get(folder) == key:
+        return folder
+    mine = sorted(name for name, owner in owners.items() if owner == key)
+    if mine:
+        return mine[0]
+    if folder not in owners or owners[folder] is None:
+        return folder
+    stem = re.sub(r" \(\d+\)$", "", requested)
+    n = 2
+    while f"{stem} ({n})".lower() in taken:
+        n += 1
+    return f"{stem} ({n})"
 
 
 def _build_commit(
@@ -853,6 +1000,58 @@ def single_line(text: str) -> str:
     return " ".join(_NOT_ONE_LINE.sub(" ", text).split())
 
 
+@contextmanager
+def token_session(repo_path: str, origin_url: str, pat_credentials: Optional[Dict[str, str]]):
+    """The GitAuth for network commands with a stored token (None without one), set up safely.
+
+    Refuses, before anything is sent, a repository whose own settings could
+    pass the token to someone else, or send it to another repository (risk
+    R-21), and keeps repository hooks off while the token is in use.
+    """
+    if not (pat_credentials and pat_credentials.get("token")):
+        yield None
+        return
+    auth = token_auth(origin_url, pat_credentials["token"], pat_credentials.get("username", ""))
+    risky = risky_local_network_config(repo_path)
+    if risky:
+        raise GitError(risky_config_message(risky))
+    elsewhere = token_destination_problem(repo_path)
+    if elsewhere:
+        raise GitError(elsewhere)
+    hooks_dir = tempfile.mkdtemp(prefix="fusion_git_nohooks_")
+    try:
+        yield replace(auth, hooks_dir=hooks_dir)
+    finally:
+        shutil.rmtree(hooks_dir, ignore_errors=True)
+
+
+def check_connection(
+    repo_path: str,
+    pat_credentials: Optional[Dict[str, str]] = None,
+    cancel: Optional[threading.Event] = None,
+    timeout: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Ask GitHub, read-only, whether this repository can be reached with the sign-in Git will use.
+
+    Runs ``git ls-remote`` the way a push would (the same stored-token
+    safeguards; otherwise Git Credential Manager, which may open its
+    sign-in window). Nothing is changed anywhere. Returns ``{"ok": True,
+    "default_branch", "branches", "empty"}`` or ``{"ok": False, "error"}``
+    (secrets redacted), or ``{"ok": False, "cancelled": True}``.
+    """
+    secrets = (token_secrets(pat_credentials.get("token", ""), pat_credentials.get("username", ""))
+               if pat_credentials else [])
+    try:
+        origin_url = git_output(repo_path, "remote", "get-url", "--push", "origin")
+        with token_session(repo_path, origin_url, pat_credentials) as auth, cancel_scope(cancel):
+            default, heads = remote_branches(repo_path, auth, timeout=timeout)
+        return {"ok": True, "default_branch": default, "branches": len(heads), "empty": not heads}
+    except GitCancelled:
+        return {"ok": False, "cancelled": True, "error": "Cancelled."}
+    except (GitError, ValueError, OSError) as exc:
+        return {"ok": False, "error": redact_secrets(str(exc), secrets)}
+
+
 def push_export(
     repo_path: str,
     exports: Sequence[Tuple[str, str]],
@@ -874,8 +1073,21 @@ def push_export(
     history_notes: Sequence[str] = (),
     cancel: Optional[threading.Event] = None,
     large_files_confirmed: bool = False,
+    design_id: Optional[str] = None,
+    design_folder: Optional[str] = None,
+    relocate: Optional[Callable[[str], Tuple[Sequence[Tuple[str, str]], str]]] = None,
+    fusion_version: str = "",
+    commit_text: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Commit *exports* on top of GitHub's branch tip and push it, without touching the checkout.
+
+    With *design_id*, *design_folder* and *relocate* (folder name ->
+    (exports, history file) for that folder), the design's folder is checked
+    against the HISTORY.md markers on GitHub before the commit is built, and
+    the backup moves to the right folder if needed (risk R-24); the result's
+    ``design_folder`` says where it went. *fusion_version* is recorded in
+    the history entry. *commit_text* (what the user typed) fills ``{message}``
+    in the template after the other placeholders.
 
     *exports* is a list of ``(source file, path in the repository)``. The source
     files are read where they are (normally Fusion's temporary export folder);
@@ -964,6 +1176,14 @@ def push_export(
         if mode == MODE_SNAPSHOT and not override and not is_valid_branch_name(generated_name):
             raise ValueError(f"The branch name template produced '{generated_name}', which git can't use.")
 
+        key = design_key(design_id) if design_id else None
+        # A design that was never saved has a provisional, name-based id that
+        # changes when it is saved; it doesn't mark its history, so the saved
+        # design keeps the same folder (code review of S5).
+        mark = bool(key) and not (design_id or "").startswith("name:")
+        # The design's folder and history file; the folder check may move them.
+        folder_state: Dict[str, Any] = {"folder": design_folder, "history": history_file}
+
         def network(auth: Optional[GitAuth]) -> Optional[Dict[str, Any]]:
             confirmed_reuse = False
             bootstrapped = False
@@ -1035,19 +1255,32 @@ def push_export(
                 if base and base_branch:
                     base = _ensure_commit_available(repo_path, base_branch, base, auth)
 
+                if key and relocate and folder_state["folder"]:
+                    chosen = _choose_design_folder(repo_path, base, folder_state["folder"], key, relocate)
+                    if chosen != folder_state["folder"]:
+                        moved_exports, moved_history = relocate(chosen)
+                        files[:] = [(src, normalize_repo_path(rel)) for src, rel in moved_exports]
+                        folder_state.update(folder=chosen, history=moved_history)
+                        if logger:
+                            logger.info("Design folder on GitHub: '%s'", chosen)
+                history_path = folder_state["history"]
+
                 step("Preparing the commit…")
                 message = (
                     (commit_msg_template or "Design update: {filename}")
                     .replace("{filename}", design_name)
                     .replace("{branch}", branch)
                     .replace("{timestamp}", timestamp_str)
+                    # Last, so placeholders typed in the note stay as typed.
+                    .replace("{message}", single_line(commit_text or "") or "Design update")
                 )
                 extra: Dict[str, bytes] = {}
-                if history_file:
-                    rel_history = normalize_repo_path(history_file)
+                if history_path:
+                    rel_history = normalize_repo_path(history_path)
                     existing = _read_blob(repo_path, base, rel_history) or b""
                     entry = _history_entry(
-                        design_name, branch, message, [rel for _, rel in files], when, history_notes
+                        design_name, branch, message, [rel for _, rel in files], when, history_notes,
+                        fusion_version,
                     )
                     header = f"# {history_title}\n\n" if history_title else "# Changelog\n\n"
                     if not existing and legacy_history_file and _read_blob(
@@ -1059,7 +1292,8 @@ def push_export(
                             f"Earlier pushes are listed in `{legacy_history_file}` at the repository "
                             "root, written by versions before 0.5.0.\n\n"
                         )
-                    extra[rel_history] = _updated_history(existing, entry, header)
+                    updated = _updated_history(existing, entry, header)
+                    extra[rel_history] = _with_marker(updated, key) if mark else updated
                 commit = _build_commit(repo_path, base, files, extra, message, identity)
 
                 step("Pushing to GitHub…")
@@ -1087,6 +1321,8 @@ def push_export(
                         "files": [rel for _, rel in files],
                         "attempts": attempt,
                         "bootstrapped": bootstrapped,
+                        "design_folder": folder_state["folder"],
+                        "history_file": history_path,
                     }
                 output = proc.stderr or proc.stdout or ""
                 if not _is_push_rejection(output):
@@ -1101,27 +1337,14 @@ def push_export(
             )
             return None
 
-        auth = None
-        hooks_dir = None
-        if pat_credentials and pat_credentials.get("token"):
-            auth = token_auth(origin_url, pat_credentials["token"], pat_credentials.get("username", ""))
-            risky = risky_local_network_config(repo_path)
-            if risky:
-                raise GitError(risky_config_message(risky))
-            elsewhere = token_destination_problem(repo_path)
-            if elsewhere:
-                raise GitError(elsewhere)
-            hooks_dir = tempfile.mkdtemp(prefix="fusion_git_nohooks_")
-            auth = replace(auth, hooks_dir=hooks_dir)
-        try:
-            with cancel_scope(cancel):
-                return network(auth)
-        except GitCancelled:
-            return _cancelled_result(repo_path, state, auth, logger)
-        finally:
-            git_run(repo_path, "update-ref", "-d", _BASE_REF, check=False)
-            if hooks_dir:
-                shutil.rmtree(hooks_dir, ignore_errors=True)
+        with token_session(repo_path, origin_url, pat_credentials) as auth:
+            try:
+                with cancel_scope(cancel):
+                    return network(auth)
+            except GitCancelled:
+                return _cancelled_result(repo_path, state, auth, logger)
+            finally:
+                git_run(repo_path, "update-ref", "-d", _BASE_REF, check=False)
     except (GitError, ValueError, OSError) as exc:
         secrets = (token_secrets(pat_credentials.get("token", ""), pat_credentials.get("username", ""))
                    if pat_credentials else [])
@@ -1162,4 +1385,9 @@ __all__ = [
     "redact_secrets",
     "url_has_embedded_secret",
     "push_export",
+    "branch_name_problem",
+    "check_connection",
+    "design_key",
+    "history_owner",
+    "token_session",
 ]

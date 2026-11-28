@@ -13,7 +13,7 @@ No programming knowledge required. If you can install Fusion 360, you can use th
 - 💾 **One-click backup** — click a button in Fusion, type a short note, done
 - 🕐 **Full version history** — each backup is its own commit; the add-in never overwrites or deletes an earlier one
 - 📦 **Multiple file formats** — saves your design as F3D, STEP, STL, IGES, or SAT (you pick)
-- 📓 **Automatic logbook** — keeps a `CHANGELOG.md` file listing what changed and when
+- 📓 **Automatic logbook** — each design's folder has a `HISTORY.md` listing every backup: when, your note, and which Fusion version
 - 👥 **Easy sharing** — send anyone a link to view or download your designs
 - 🔒 **Private if you want** — GitHub lets you keep your designs completely private, for free
 
@@ -25,7 +25,7 @@ GitHub was built for programmers, so it uses a few odd words. Here's all you nee
 |------|------------------------|
 | **Repository** (or "repo") | A project folder on GitHub that remembers every version of its contents |
 | **Commit** | One saved snapshot, with a note about what changed |
-| **Branch** | A named snapshot line — each backup this add-in makes gets its own |
+| **Branch** | A line of history; your backups go on the repository's main one unless you choose otherwise |
 | **Push** | Uploading your snapshot to GitHub |
 
 The add-in handles all of this for you. You just click the button.
@@ -111,11 +111,13 @@ You only do this once per project.
 ### Step 2 — Connect Fusion to it
 
 1. In Fusion, click the **Push to GitHub** button
-2. The dropdown at the top is already set to **"🆕 Set up new GitHub repository..."** — leave it
-3. **Paste the web address** you copied into the **GitHub URL** box
-   (the add-in tidies it up automatically — you can leave the Repository Name blank and it will figure it out)
-4. Click **Browse…** to pick a folder on your computer for local copies, or accept the suggested one
-5. Click **OK**
+2. The Repository list is already set to **"Set up a new GitHub repository…"** — leave it.
+   (Not sure everything is installed? Click **Check My Setup…** first: it checks Git and your GitHub sign-in.)
+3. **Paste the web address** you copied into the **GitHub address** box
+   (the add-in tidies it up automatically — you can leave "Name in this list" blank and it will figure it out)
+4. Click **Choose folder…** to pick a folder on your computer for Git's copy, or accept the suggested one
+5. Type a note in **What changed?** — for a first backup, *"first version"* is fine
+6. Click **Back up now** (it stays greyed out until everything needed is filled in)
 
 The add-in sets everything up **and pushes your first backup right away**. From now on, your project appears in the dropdown, ready to use.
 
@@ -129,20 +131,21 @@ The add-in sets everything up **and pushes your first backup right away**. From 
 
 1. Open your design in Fusion
 2. Click **Push to GitHub**
-3. Type a short note about what you changed — e.g. *"made the bracket holes 5mm"*
-4. Click **OK**
+3. Type a short note in **What changed?** — e.g. *"made the bracket holes 5mm"*
+4. Click **Back up now**
 
-A success message tells you exactly what was backed up. That's the whole workflow.
+A message tells you what was backed up and where, and offers to **open it on GitHub** (Yes) or **copy the link** (No). That's the whole workflow.
 
 ### Where do my files go on GitHub?
 
-Each backup gets its own **snapshot branch** with a name like `fusion-export/Bracket-20260708-143022` (design name + date + time). To see your files on GitHub:
+Each design has its own folder in the repository, `designs/<design name>/`, holding the latest exported files and a `HISTORY.md` that lists every backup. Every backup is added to one running history on the repository's main branch, so the folder always shows the newest version and GitHub's **History** button on any file lists every earlier one. The dialog's **Saves to** line shows the branch and folder before you click.
 
-1. Open your repository page
-2. Click the **branch dropdown** (it says `main` near the top-left)
-3. Pick any snapshot to view or download the files from that moment
+Two options in the dialog's **Advanced** section change this:
 
-Each snapshot is built on top of the latest `main` on GitHub. The add-in never overwrites an earlier snapshot — each is its own commit, and they stay available as long as the repository does. (Teams that want to review and merge snapshots into `main` should read the [Team Guide](docs/TEAM_GUIDE.md).)
+- **Backup branch**: keep backups on a branch of their own (for example `fusion-backups`) instead of the main one. It is created on the first backup.
+- **Separate branch per backup**: every backup gets a new branch such as `fusion-export/Bracket-20260708-143022`, as versions before 0.7.0 did. Repositories set up with those versions keep working this way until you untick it.
+
+The add-in never overwrites or deletes an earlier backup and never force-pushes: each backup is a new commit, available as long as the repository is.
 
 The add-in **doesn't change the local folder** you picked during setup: it builds each backup directly from the exported files and sends it to GitHub. So the exports won't appear in that folder, and anything you were doing there (unsaved edits, other branches) is left exactly as it was.
 
@@ -154,7 +157,7 @@ GitHub rejects files of 100 MB or more, and warns about files over 50 MB. The ad
 
 ## Choosing file formats
 
-In the dialog's **Export Formats** section you can pick any combination:
+In the dialog's **Files to include** list you can pick any combination:
 
 | Format | Choose it when… |
 |--------|-----------------|
@@ -199,7 +202,8 @@ The add-in explains problems in plain messages and keeps your work safe: it neve
 | **"Git executable not found"** | Install Git from [git-scm.com](https://git-scm.com/downloads) with default options, then restart your computer |
 | **Sign-in / permission errors** | Make sure you can open your repository's page on github.com while signed in; then try again |
 
-- **See what happened**: expand **Logging** in the dialog and click **Open Log File…**
+- **Check everything**: click **Check My Setup…** in the dialog. It checks Git, your GitHub sign-in and the repository, and says what to fix
+- **See what happened**: expand **Help & Privacy** in the dialog and click **Open Log File…**
 - **More help**: the [Troubleshooting Guide](docs/TROUBLESHOOTING.md) covers everything else
 
 ---
@@ -224,14 +228,14 @@ Full details — exactly what is stored where, how to delete vs. revoke a token,
 and how to report a security problem — are in **[SECURITY.md](SECURITY.md)**.
 What the add-in stores and sends in general (no telemetry; your exports, note
 and Git name/email go to your repository and nowhere else) is in
-**[PRIVACY.md](PRIVACY.md)**, also linked from the dialog's **Logging &
+**[PRIVACY.md](PRIVACY.md)**, also linked from the dialog's **Help &
 Privacy** section.
 
 ---
 
 ## Status, supported versions, and known limits
 
-- **Version:** **`0.6.0`**. The version is set once, in the add-in manifest;
+- **Version:** **`0.7.0`** (in development; the current release is 0.4.0). The version is set once, in the add-in manifest;
   the runtime constant, the CLI `--version`, the log banner, the README and the
   top `CHANGELOG.md` entry must match it. CI tests (`T_VERSION`, `T_RELEASE`)
   fail if they drift, and the release workflow refuses a Git tag that doesn't
@@ -250,13 +254,15 @@ Privacy** section.
   (or at the Windows fallback `C:\Program Files\Git\bin\git.exe`).
 - **You create the GitHub repository yourself** on github.com; the add-in never
   creates one via the API.
-- **Every push makes a new branch** (`fusion-export/<design>-<timestamp>`),
-  built on the latest `main` on GitHub. It only adds to `main` if you name
-  `main` in Branch Name Override, and then it asks first. Merging snapshots into
-  `main` is a manual step — see the [Team Guide](docs/TEAM_GUIDE.md). If the
-  GitHub repository is completely empty, the first backup also adds a small
-  first commit to `main` (a `.gitattributes` file that stops Git from altering
-  CAD files).
+- **Repositories set up with 0.7.0 or later keep one running history** on
+  the repository's main branch (or the Backup branch you choose), in
+  `designs/<design>/`. Each backup only adds or replaces that design's files
+  and `HISTORY.md`; nothing else on the branch changes. Repositories set up
+  with earlier versions keep making a new branch per push
+  (`fusion-export/<design>-<timestamp>`) until you untick **Separate branch per
+  backup**. If the GitHub repository is completely empty, the first backup
+  also adds a small first commit to `main` (a `.gitattributes` file that stops
+  Git from altering CAD files).
 - **Your local folder is never changed.** Backups are built straight from the
   exported files, so uncommitted work, other branches and stashes in the local
   repository are untouched, whether a push succeeds or fails.
@@ -315,11 +321,12 @@ Privacy** section.
 <details>
 <summary><b>Extra features in the dialog (click to expand)</b></summary>
 
-- **Commit / branch templates** — customize how snapshot names and notes are generated using `{filename}` and `{timestamp}` placeholders
-- **Export Subfolder** — keep exports organized in a folder inside the repository (e.g. `exports/`)
-- **Branch Name Override** — push to a specific branch name of your choosing; if the branch already exists, the add-in asks and then adds the new version to it. If GitHub has newer commits on that branch than your computer, the push is refused and nothing on GitHub changes
+- **Backup branch** — keep backups on a branch of their own instead of the repository's main branch
+- **Separate branch per backup** — a new branch for every backup (named by the **Branch name template**), as versions before 0.7.0 did; **Use this branch instead** sends one backup to a branch you name, asking first if it already exists
+- **Commit message format** — how each commit is titled, with `{message}` (what you typed), `{filename}` and `{timestamp}`
+- **Design folders go in** — the folder that holds one folder per design (`designs` by default; blank for the top level)
 - **Use Stored Token** (Windows only) — store a GitHub Personal Access Token in Windows Credential Manager so you're never asked to sign in; set it up via **Manage Token…** in the Advanced section. Prefer a **fine-grained** token scoped to just this repo with **Contents: Read and write** — see [SECURITY.md](SECURITY.md).
-- **Log Level** — turn on DEBUG logging when investigating a problem
+- **Log detail** (Help & Privacy) — turn on DEBUG logging when investigating a problem
 
 </details>
 

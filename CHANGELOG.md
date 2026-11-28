@@ -7,6 +7,94 @@ All notable changes to the FusionToGitHub add-in. Versions follow
 file must match it; `scripts/check_release.py` and the `T_VERSION` test enforce
 this, and the release workflow refuses a tag that differs.
 
+## 0.7.0 — Unreleased
+
+**One running history by default, a simpler dialog that explains itself,
+Check My Setup, links to the backup on GitHub, and the add-in's own icon.**
+
+Development release (sprint S5); not published. 0.6.0 is also unpublished,
+so 0.4.0 remains the current release, and these notes add to 0.6.0's.
+
+### Added
+
+- **One running history (new repositories).** A repository set up with this
+  version adds every backup to one history on the repository's main branch,
+  with each design in its own folder under `designs/` (for example
+  `designs/Bracket/`). The folder always shows the latest version, and its
+  `HISTORY.md` lists every backup. Advanced → *Backup branch* keeps the
+  backups on a branch of their own instead (for example `fusion-backups`);
+  Advanced → *Separate branch per backup* restores the snapshot branches of
+  earlier versions.
+- **Open on GitHub and Copy Link.** After a backup the summary says where it
+  went (branch and folder), the commit, the Fusion version and the files,
+  and offers to open the design's folder on GitHub or copy the link.
+- **Check My Setup** (in the Repository section) checks Git and its
+  version, your name and email, the GitHub sign-in helper, the repository
+  folder and its address, and then tests the connection to GitHub without
+  changing anything. Each result says what to do next. With no saved
+  repository yet, problems that would stop a first backup (such as Git
+  missing) are reported as soon as the dialog opens.
+- **Fusion version in the history.** The summary and `HISTORY.md` record
+  which Fusion version of the design was backed up, and whether it had
+  unsaved changes (the dialog also says so before you back up).
+- **The add-in's own icon:** an isometric cube with an orange branch, on
+  the toolbar button (16 and 32 px, with high-resolution versions), in
+  Fusion's Scripts and Add-Ins list and for store listings. It replaces the
+  earlier icon, which contained GitHub's logo. The icons are generated from
+  one vector drawing (`scripts/make_icons.py`, see `branding/README.md`).
+
+### Changed
+
+- **OK is "Back up now" and stays disabled** until everything needed is
+  filled in; a line under the files says what is missing, in plain words.
+- **"What changed?" is required and starts empty** every time, instead of
+  repeating the previous message. New repositories title each commit
+  "<design>: <what changed>"; repositories saved earlier keep their commit
+  template.
+- **A simpler dialog.** The basic view shows the design (and its Fusion
+  version), the repository, where the backup will go, "What changed?" and
+  the files to include, each described ("STEP (.step): for other CAD
+  programs"). History options, branch and folder settings, the commit
+  format and the stored token moved to **Advanced**; logs and the privacy
+  policy to **Help & Privacy**. "Set up a new GitHub repository…" is now
+  the last entry of the repository list, and returning users start on
+  their saved repository.
+- **Plain-language errors.** Every error shown in Fusion starts with what
+  went wrong and what to do next (sign-in refused, repository not found,
+  no internet connection, a protected branch, a file too large for GitHub,
+  another Git program using the folder, …), with Git's own message kept
+  underneath as technical details. Python tracebacks are never shown in a
+  dialog any more; they go to the log file only.
+- **Design folders are checked against GitHub.** Each design's `HISTORY.md`
+  now carries a hidden marker (a hash of the design's Fusion id, not the id
+  itself). Before a backup, the add-in looks at the folders already on
+  GitHub, so two saved repositories (or two computers) pushing different
+  designs with the same name get different folders, and a design finds its
+  own folder again (risk R-24).
+- The toolbar button is shown on the toolbar by default but no longer
+  forced there: moving it into the ADD-INS menu is respected (audit
+  COMP-13). The tooltip says what the command does.
+
+### Removed
+
+- **The STEP AP203/AP214 option.** Fusion's STEP export has no such
+  setting, so the option did nothing (audit BUG-03). A saved choice is
+  ignored.
+
+### Upgrading
+
+- Repositories saved by earlier versions **keep their snapshot branches**
+  and settings; nothing is migrated. To switch one to a running history,
+  untick Advanced → *Separate branch per backup*.
+
+### Quality
+
+- Fusion's simulated API now disables OK while `validateInputs` says the
+  inputs aren't valid, and every dialog test fails if a traceback reaches a
+  message box. New tests cover the error catalog, the links, Check My
+  Setup, the history modes, the design-folder markers (against real Git)
+  and the icons (the committed files must match the generator).
+
 ## 0.6.0 — Unreleased
 
 **Pushes run in the background, exports are checked, updates work without

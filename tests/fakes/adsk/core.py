@@ -599,6 +599,9 @@ class UserInterface:
         self.input_answers = deque()
         self.input_prompts = []
         self.folder_answers = deque()
+        # (text in the question, answer) used when no answer is scripted;
+        # for questions a test doesn't care about, such as "Open it on GitHub?".
+        self.auto_answers = []
         self.progress_dialogs = []
         self.commandDefinitions = CommandDefinitions()
         utilities = ToolbarPanel("SolidUtilitiesAddinsPanel", "ADD-INS")
@@ -620,6 +623,9 @@ class UserInterface:
         self.questions.append(text)
         if self.answers:
             return self.answers.popleft()
+        for marker, answer in self.auto_answers:
+            if marker in text:
+                return answer
         self.unscripted.append(text)
         return DialogResults.DialogNo
 
@@ -786,13 +792,24 @@ def _terminate(command):
     command.destroy.fire(CommandEventArgs(command))
 
 
+def ok_enabled(command):
+    """Whether OK can be clicked: Fusion asks validateInputs, and OK is greyed out while it says no."""
+    args = ValidateInputsEventArgs(command, command.commandInputs)
+    command.validateInputs.fire(args)
+    return bool(args.areInputsValid)
+
+
 def press_ok(command):
     """Click OK: fire execute; unless executeFailed was set, the command ends (destroy).
 
-    Returns the event args (check executeFailed).
+    A user can't click a disabled OK button, so this fails the test when
+    validateInputs says the inputs aren't valid. Returns the event args
+    (check executeFailed).
     """
     if command.isTerminated:
         raise AssertionError("the dialog has closed")
+    if not ok_enabled(command):
+        raise AssertionError("OK is disabled: validateInputs says the inputs aren't valid")
     args = CommandEventArgs(command)
     command.execute.fire(args)
     if not args.executeFailed:

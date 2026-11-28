@@ -24,6 +24,7 @@ import adsk.fusion
 from test_core_identity_history import GitSandbox
 
 import addin_logging
+import fusion_bridge
 import Push_To_GitHub as addin
 import push_worker
 from credentials import MemoryCredentialStore
@@ -70,10 +71,20 @@ class AddinTestCase(GitSandbox):
         browser = mock.patch("webbrowser.open")
         self.opened_urls = browser.start()
         self.addCleanup(browser.stop)
+        # Never the real clipboard; tests read self.copied instead.
+        self.copied = []
+        clipboard = mock.patch("github_links.copy_to_clipboard",
+                               side_effect=lambda text: self.copied.append(text) or True)
+        clipboard.start()
+        self.addCleanup(clipboard.stop)
+        # "Open it on GitHub?" after a successful push: Cancel (close) unless
+        # a test scripts an answer.
+        self.ui.auto_answers.append((fusion_bridge.LINK_QUESTION, DialogResults.DialogCancel))
         warned = mock.patch.object(addin, "_duplicate_warned", False)
         warned.start()
         self.addCleanup(warned.stop)
         self.addCleanup(self._check_background_work_ended)
+        self.addCleanup(self._check_no_traceback_was_shown)
         # Registered last, so it runs first: every question must have been
         # expected (scripted) and every scripted answer used.
         self.addCleanup(self._check_questions_were_scripted)
@@ -88,6 +99,11 @@ class AddinTestCase(GitSandbox):
         if running or leftover or violations:
             self.fail(f"push still running: {running}; worker threads left: {leftover}; "
                       f"Fusion UI used off the main thread: {violations}")
+
+    def _check_no_traceback_was_shown(self):
+        shown = [text for text in self.ui.texts() if "Traceback (most recent call last)" in text]
+        if shown:
+            self.fail("A Python traceback reached a message box (audit UX-04): " + shown[0][:500])
 
     def _check_questions_were_scripted(self):
         unscripted = list(self.ui.unscripted)
@@ -126,9 +142,20 @@ class AddinTestCase(GitSandbox):
     def answer(self, *results):
         self.ui.answers.extend(results)
 
-    def push(self, command, timeout=PUSH_TIMEOUT):
+    def describe(self, command, message="Test backup"):
+        """Type into "What changed?" (required before OK is enabled), unless something is there."""
+        field = command.commandInputs.itemById("commitMsgPush")
+        if message and not field.value.strip():
+            adsk.core.change_input(command, "commitMsgPush", value=message)
+
+    def press_ok(self, command, message="Test backup"):
+        """Describe the change (unless already done), then click OK."""
+        self.describe(command, message)
+        return adsk.core.press_ok(command)
+
+    def push(self, command, timeout=PUSH_TIMEOUT, message="Test backup"):
         """Press OK, then run Fusion's "message loop" until the background push has finished."""
-        args = adsk.core.press_ok(command)
+        args = self.press_ok(command, message)
         self.wait_for_push(timeout)
         return args
 

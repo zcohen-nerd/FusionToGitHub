@@ -31,7 +31,14 @@ class LifecycleTests(AddinTestCase):
         self.assertIsNotNone(self.ui.commandDefinitions.itemById(addin.CMD_ID))
         controls = self.controls()
         self.assertEqual([panel for panel, _ in controls], ["SolidUtilitiesAddinsPanel"])
-        self.assertTrue(controls[0][1].isPromoted)
+        # On the toolbar by default, but never forced there (audit COMP-13).
+        self.assertTrue(controls[0][1].isPromotedByDefault)
+        self.assertFalse(controls[0][1].isPromoted)
+        definition = self.ui.commandDefinitions.itemById(addin.CMD_ID)
+        self.assertEqual(definition.resourceFolder, addin.RESOURCE_FOLDER)
+        for name in ("16x16.png", "32x32.png", "16x16@2x.png", "32x32@2x.png"):
+            self.assertTrue(os.path.isfile(os.path.join(definition.resourceFolder, name)), name)
+        self.assertNotIn("changelog", addin.CMD_TOOLTIP.lower())
         self.assertEqual(adsk.auto_terminate_calls[-1], False)
         self.assertEqual(len(addin.handlers), 1)
 
@@ -164,7 +171,7 @@ class LifecycleTests(AddinTestCase):
     def test_stop_removes_button_definition_and_all_handlers(self):
         addin.run(None)
         self.ui.open_command(addin.CMD_ID)
-        self.assertEqual(len(addin.dialog_handlers), 2)
+        self.assertEqual(len(addin.dialog_handlers), 3)  # input changed, validate inputs, execute
         addin.stop(None)
         self.assertEqual(self.controls(), [])
         self.assertEqual(self.app.registered_custom_events, [])
@@ -183,7 +190,7 @@ class LifecycleTests(AddinTestCase):
         first = self.ui.open_command(addin.CMD_ID)
         second = self.ui.open_command(addin.CMD_ID)
         gc.collect()
-        self.assertEqual(len(addin.dialog_handlers), 2)
+        self.assertEqual(len(addin.dialog_handlers), 3)
         # Fusion holds handlers weakly: the first dialog's were released.
         self.assertEqual(len(first.inputChanged.handlers), 0)
         self.assertEqual(len(second.inputChanged.handlers), 1)
@@ -193,16 +200,23 @@ class LifecycleTests(AddinTestCase):
         command = self.ui.open_command(addin.CMD_ID)
         with mock.patch.object(push_dialog.PushDialog, "on_input_changed", side_effect=RuntimeError("boom")):
             adsk.core.change_input(command, "commitMsgPush", value="x")  # must not raise
+        with mock.patch.object(push_dialog.PushDialog, "validate", side_effect=RuntimeError("boom")):
+            self.assertTrue(adsk.core.ok_enabled(command))  # a failing check leaves OK usable
         with mock.patch.object(push_dialog.PushDialog, "_execute", side_effect=RuntimeError("boom")):
-            args = adsk.core.press_ok(command)
+            args = adsk.core.CommandEventArgs(command)
+            command.execute.fire(args)  # as if OK were clicked
         self.assertTrue(args.executeFailed)
-        self.assertIn("ExecuteHandler failed", self.last_message())
+        shown = self.last_message()
+        self.assertIn("Something went wrong while starting the backup. Nothing was pushed.", shown)
+        self.assertIn("RuntimeError: boom", shown)
+        self.assertNotIn("Traceback", shown)
 
     def test_dialog_creation_failure_is_reported_not_raised(self):
         addin.run(None)
         with mock.patch.object(push_dialog.PushDialog, "build", side_effect=RuntimeError("broken")):
             self.ui.open_command(addin.CMD_ID)
-        self.assertIn("GitCommandCreatedEventHandler failed", self.last_message())
+        self.assertIn("Something went wrong while opening the Push to GitHub dialog", self.last_message())
+        self.assertNotIn("Traceback", self.last_message())
 
     def test_log_file_is_written_and_secrets_are_redacted(self):
         addin.run(None)

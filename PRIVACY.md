@@ -34,8 +34,8 @@ repository address you configured (for example `github.com/you/designs`):
 | **Your commit note** | The message you type, plus the design name. |
 | **Your Git name and email** | Git records them as the author of every commit. Use GitHub's private "noreply" address if you don't want your email published: GitHub → *Settings → Emails → Keep my email addresses private*, then use the `…@users.noreply.github.com` address it shows. |
 | **Date, time and time zone** | Git stores when each commit was made, with your time zone offset. |
-| **A history file** | A `CHANGELOG.md` in the repository listing each push: date and time, design name, branch, your note and the file names. |
-| **Branch names** | For example `fusion-export/Bracket-20261127-101500`. |
+| **A history file per design** | A `HISTORY.md` in the design's folder listing each backup: date and time, design name, branch, your note, the file names, and which Fusion version of the design it was (for example "v12 with unsaved changes"). Since 0.7.0 it also carries a hidden marker: a 16-character hash of the design's Fusion document id (not the id itself), so the add-in can tell designs with the same name apart. The marker is the same in every repository the design is backed up to, so someone who can see two such repositories can tell they hold the same design (not which design it is). Versions before 0.6.0 kept one `CHANGELOG.md` for the whole repository instead. |
+| **Branch names** | The branch backups go to: the repository's main branch or a backup branch you chose, or, with "Separate branch per backup", a new branch such as `fusion-export/Bracket-20261127-101500`. |
 
 The receiving service (normally **GitHub, Inc.**) handles this data under its
 own terms and privacy statement. **If the repository is public, anyone can see
@@ -46,6 +46,11 @@ for designs you don't want to publish.
 
 If you sign in through Git Credential Manager, the sign-in happens between Git,
 your browser and GitHub; the add-in doesn't see it.
+
+**Check My Setup** asks the repository's server which branches it has, with
+the same sign-in a backup uses. Nothing is sent to the repository and nothing
+is changed. **Copy Link** uses your computer's own clipboard tool; **Open on
+GitHub** opens the link in your browser.
 
 ## What is stored on your computer
 

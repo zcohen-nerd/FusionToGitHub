@@ -54,7 +54,11 @@ THRESHOLDS = {
     "Push_To_GitHub.py": 60,
     # S4 background push (0.6.0).
     "push_worker.py": 90,
-    "fusion_bridge.py": 81,
+    "fusion_bridge.py": 83,
+    # S5 (0.7.0).
+    "error_catalog.py": 93,
+    "github_links.py": 88,
+    "setup_check.py": 90,
 }
 # Combined minimums across related modules (statements + branches).
 GROUPS = {

@@ -18,7 +18,7 @@ The formal list of known risks to FusionToGitHub users and to the project
   **Resolved** (resolution criteria met), **Accepted** (maintainer agreed),
   **Acceptance proposed**.
 
-*Last reviewed: 2026-11-27, sprint S4 (target release 0.6.0).*
+*Last reviewed: 2026-11-28, sprint S5 (development version 0.7.0, unpublished).*
 
 ## Summary
 
@@ -37,19 +37,20 @@ The formal list of known risks to FusionToGitHub users and to the project
 | R-11 | Autodesk App Store rejection | 2×2 = 4 Low | Open (separate track after 1.0) | Questions to Autodesk |
 | R-12 | Single maintainer's capacity | 3×2 = 6 Low | **Accepted** (2026-11-27) | — |
 | R-13 | Fusion API changes break the add-in | 2×3 = 6 Low | Mitigated | Manual check every release |
-| R-14 | Git is an external dependency | 3×1 = 3 Low | **Accepted** (2026-11-27) | S5 setup check states the minimum version |
+| R-14 | Git is an external dependency | 3×1 = 3 Low | **Accepted** (2026-11-27) | — (S5: Check My Setup states the minimum version) |
 | R-15 | Two copies installed after an upgrade | 2×1 = 2 Low | Mitigated (S4: warning, no second button) | Live duplicate check (checklist K) |
 | R-16 | Supply-chain compromise of a release | 1×3 = 3 Low | **Resolved** (0.3.3) | Keep actions pinned |
 | R-17 | Contributor attribution | 1×1 = 1 Low | **Resolved** (0.3.3) | — |
 | R-18 | Fusion test doubles diverge from real Fusion | 3×3 = 9 Medium | Open (new in S3; 25 assumptions in S4) | Manual checklist every release |
 | R-19 | Settings migration loses saved repositories | 1×3 = 3 Low | Mitigated (new in S3) | Confirm on a real 0.4.0 settings file |
-| R-20 | Per-design folders surprise existing users | 3×2 = 6 Low | Open (new in S3) | Release notes; S5 docs |
+| R-20 | Per-design folders surprise existing users | 2×2 = 4 Low | Mitigated (S5: the dialog and summary say where files go) | S6 docs |
 | R-21 | A repository's own hooks or settings could expose the stored token | 1×4 = 4 Low | Mitigated, **not accepted** (maintainer, 2026-11-27) | Live push with a token; 1.0: token kept out of process environments |
 | R-22 | Masked token field unsupported in some Fusion builds | 2×3 = 6 Low | Open (new in S3) | Manual check of the Token field |
 | R-23 | Stored token sent to a server it wasn't stored for | 1×4 = 4 Low | **Resolved** (0.6.0) | — |
-| R-24 | Two saved repositories for one GitHub repository allocate design folders independently | 2×2 = 4 Low | Open (new in S3) | Seed folder names from the repository's tree (S5) |
+| R-24 | Two saved repositories for one GitHub repository allocate design folders independently | 1×2 = 2 Low | Mitigated (S5: folders checked against GitHub) | Live check U14 |
 | R-25 | An update in a running Fusion loads the previous version's modules | 1×3 = 3 Low | Mitigated (S4, reported by DiegoV71) | Live stop → update → run and Store update (checklist K) |
 | R-26 | A failed or partial export is pushed as if it were a complete backup | 2×4 = 8 Medium | Mitigated (S4: all or nothing) | Live failure check |
+| R-27 | Backups added straight to a repository's main branch | 2×2 = 4 Low | Mitigated (new in S5) | Live checks U8, U9, U16 |
 
 ## Details
 
@@ -110,7 +111,8 @@ The formal list of known risks to FusionToGitHub users and to the project
 - **Mitigation:** the manual Fusion checklist runs before each release, with the Fusion build recorded; API calls with version differences already have fallbacks (format table, LogLevels).
 
 ### R-14 — Git is an external dependency — Accepted
-- **Why accepted:** bundling Git would make the add-in far larger and leave security updates to this project. "Git not found" is explained in the dialog; S5's setup check will state the minimum version.
+- **Why accepted:** bundling Git would make the add-in far larger and leave security updates to this project. "Git not found" is explained in the dialog.
+- **S5:** Check My Setup reports the Git version found and where, warns below 2.30 (the oldest version the add-in is meant for; older ones aren't tested), and reports a missing Git with a download link as soon as a new user opens the dialog.
 - **Decision:** accepted by the maintainer on 2026-11-27.
 
 ### R-15 — Two copies installed after an upgrade — Mitigated
@@ -130,8 +132,8 @@ The formal list of known risks to FusionToGitHub users and to the project
 
 ### R-20 — Per-design folders surprise existing users — Open (new in S3)
 - **Cause:** decision Q11 puts each design's exports and its `HISTORY.md` in a folder named after the design. Users upgrading from 0.4.0 will see new pushes land in `<design>/` instead of the repository root; the old `CHANGELOG.md` stays where it was and is referenced from each new history file.
-- **Mitigation:** CHANGELOG and release notes explain the change.
-- **Resolved when:** S5's documentation and success dialog show where files go.
+- **Mitigation:** CHANGELOG and release notes explain the change. Since S5 the dialog's "Saves to" line shows the branch and folder before a backup, and the summary after it shows where it went, with a link to the folder on GitHub.
+- **Resolved when:** S6's user documentation describes the layout.
 
 ### R-21 — A repository's own hooks or settings could expose the stored token — Mitigated (S4)
 - **Cause:** the token is passed to the network `git` process in its environment, and that process obeys the repository's own `.git/config`. Three routes were found and reproduced with a fake token and fake hosts:
@@ -168,10 +170,14 @@ The formal list of known risks to FusionToGitHub users and to the project
 - **Mitigation:** the server is stored with the token (Credential Manager comment field) and checked against the folder's actual push address, including the port, before every push; changing a repository's folder or server turns off Use Stored Token. Tokens from before 0.5.0 are bound on first use.
 - **Resolution evidence:** `ReviewFixTests` in `tests/unit/test_push_controller.py`.
 
-### R-24 — Design folders allocated independently by two saved repositories — Open (new in S3)
+### R-24 — Design folders allocated independently by two saved repositories — Mitigated (S5)
 - **Cause:** the design-to-folder map lives in each saved repository's settings. Two saved entries pointing at the same GitHub repository (or two computers) could each give a different design the folder "Bracket".
 - **Impact:** two designs' files and histories in one folder.
-- **Resolved when:** folder allocation also checks the folders already in the repository on GitHub (planned with S5's single-history default).
+- **Mitigation (S5):** each design's `HISTORY.md` carries a hidden marker with a hash of the design's Fusion id. Before building a commit, the push reads the markers of the design folders on the branch it builds on. A folder whose history belongs to another design is never used; the backup goes to the next free "<name> (n)". A design whose marked folder already exists under another name goes there. The settings then remember the folder. The marker is a 16-character SHA-256 prefix, so the Fusion id itself isn't published (PRIVACY.md).
+- **Hardening from the S5 reviews:** the marker only counts on its own line right after the title, so marker text inside a design name or a note can't claim a folder. Folder names are read without Git's quoting, so non-ASCII names are checked too. A folder that differs only in letter case counts as the same folder (Windows and macOS can't hold both). A design that was never saved (a provisional, name-based id) doesn't mark its folder, so once saved it keeps that folder instead of moving. What a repository can make a push read is bounded: HISTORY.md files over 1 MB aren't opened, and at most 300 design folders are examined.
+- **Limits:** a history written before 0.7.0, or by a never-saved design, has no marker, so it can't be told apart and is kept by whichever design uses it next (and marked). Two pushes racing on the same branch can still both pick a free name; the second is rejected as non-fast-forward and rebuilt on the first, which re-runs the check. A "Design folders go in" template that puts the design's name inside a longer folder name (for example `{filename}-{timestamp}`) gets no check. Anyone with write access to the repository can add a folder carrying another design's marker; such a person could change the repository in any way anyway. The marker is the same in every repository a design is backed up to, so it shows that two backups are of the same design (without saying which).
+- **Evidence:** `tests/unit/test_core_design_folders.py` (real Git), `DesignFolderOwnershipTests` in `tests/unit/test_dialog_ux.py`.
+- **Resolved when:** live check U14 passes.
 
 ### R-25 — An update in a running Fusion loads the previous version's modules — Mitigated (S4)
 - **Reported by:** DiegoV71 ([issue #11](https://github.com/zcohen-nerd/FusionToGitHub/issues/11)), with a reproduction. A Community Store update from 0.3.3 to 0.4.0 in the same Fusion process on macOS (Fusion 2706.1.17) didn't start 0.4.0, and the Store rolled back to 0.3.3. Outside Fusion, with 0.3.3's `fusion_git_core` and `dialog_helpers` already loaded under their bare names, importing 0.4.0 raises `ImportError: cannot import name 'push_export' from 'fusion_git_core'`.
@@ -187,6 +193,13 @@ The formal list of known risks to FusionToGitHub users and to the project
 - **Assumption:** the tests emulate Fusion as its add-in template implies: the folder is loaded as a package, and Run re-executes the main file. Autodesk doesn't document this. If Fusion instead loaded the main file as a plain top-level module, the add-in would refuse to start (by design, with a message). Checklist K finds out either way, and it must pass before release.
 - **Found in review (fixed):** forgetting a module in `sys.modules` isn't enough, because `from . import x` reads the package's attribute `x` first. The old version's dialog, bridge and logging modules came back after an update. The purge now also detaches them from the package; the update and rollback scenarios check every module the add-in reaches (26 references).
 - **Resolved when:** the live checks (checklist K: stop → update → run, Community Store update, rollback, restarts, Run on Startup) pass in Fusion, ideally including DiegoV71's macOS Store retest.
+
+### R-27 — Backups added straight to a repository's main branch — Mitigated (new in S5)
+- **Cause:** decision 1 makes one running history on the repository's default branch the default for new repositories (audit UX-01). Someone who shares a repository with other work may not want commits on `main`, and a protected `main` refuses them.
+- **Impact:** unexpected commits on `main`, or a refused backup.
+- **Mitigation:** the dialog shows "Saves to: <branch> › <folder>" before every backup. Advanced → Backup branch sends backups to a branch of their own, which is created on the first backup. A refusal because of branch protection is explained ("…that branch is protected") with that suggestion. Commits are fast-forward only and touch only the design's folder, so nothing else on `main` is ever changed. Repositories saved by earlier versions keep their snapshot branches.
+- **Evidence:** `HistoryModeTests` in `tests/unit/test_dialog_ux.py`, `ErrorCatalogTests` in `tests/unit/test_ux_helpers.py`.
+- **Resolved when:** live checks U8, U9 and U16 pass.
 
 ### R-26 — A failed or partial export pushed as a complete backup — Mitigated (S4)
 - **Was:** an export that raised was logged and skipped, so a push could contain only some of the requested formats (or none), and a file Fusion wrote empty or truncated was pushed as is.

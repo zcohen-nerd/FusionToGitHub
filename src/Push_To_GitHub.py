@@ -108,6 +108,7 @@ import adsk.fusion  # noqa: E402,F401
 import adsk.cam  # noqa: E402,F401
 
 from . import addin_logging  # noqa: E402
+from . import error_catalog  # noqa: E402
 from .fusion_git_core import VERSION as CORE_VERSION  # noqa: E402
 
 VERSION = CORE_VERSION
@@ -123,7 +124,10 @@ REPO_BASE_DIR = os.path.expanduser("~/FusionGitRepos")
 # users' toolbar placement/promotion, so it stays frozen as VERSION advances.
 CMD_ID = "PushToGitHub_Cmd_ZAC_V7_4"
 CMD_NAME = "Push to GitHub"
-CMD_TOOLTIP = "Exports/configures, updates changelog, and pushes design to GitHub."
+CMD_TOOLTIP = "Back up the open design to a GitHub repository, with its history."
+# The button's icons (16x16.png, 32x32.png and their @2x versions); see
+# branding/README.md. "" (Fusion's default icon) if the folder is missing.
+RESOURCE_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources")
 PANEL_ID = "SolidUtilitiesAddinsPanel"
 FALLBACK_PANEL_ID = "SolidScriptsAddinsPanel"
 CONTROL_ID = CMD_ID + "_Control"
@@ -256,11 +260,16 @@ class GitCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
                 bridge=bridge,
             )
             push_dialog.open_dialog(ctx, args.command)
-        except Exception:
-            if local_ui_ref:
-                local_ui_ref.messageBox(f"GitCommandCreatedEventHandler failed:\n{traceback.format_exc()}", CMD_NAME)
+        except Exception as exc:
+            # The traceback goes to the log, never into a dialog (audit UX-04).
             if logger:
                 logger.exception("GitCommandCreatedEventHandler failed")
+            else:
+                print(traceback.format_exc())
+            if local_ui_ref:
+                local_ui_ref.messageBox(
+                    error_catalog.unexpected_error("opening the Push to GitHub dialog", exc), CMD_NAME
+                )
 
 
 # -----------------------------
@@ -324,11 +333,14 @@ def run(context):
 
     try:
         logger = addin_logging.setup_logger(CMD_ID, app, adsk.core.LogLevels, CMD_NAME)
-    except Exception:
-        msg_log_fail = f"CRITICAL: Failed to setup file logger: {traceback.format_exc()}"
-        print(msg_log_fail)
+    except Exception as exc:
+        print(f"CRITICAL: Failed to setup file logger: {traceback.format_exc()}")
         if ui:
-            ui.messageBox(msg_log_fail, CMD_NAME + " - Logging Error")
+            ui.messageBox(
+                "The add-in couldn't create its log file, so problems won't be recorded. Backups still "
+                f"work.\n\nTechnical details:\n{type(exc).__name__}: {exc}",
+                CMD_NAME + " - Logging Error",
+            )
 
     try:
         if logger:
@@ -349,7 +361,8 @@ def run(context):
             # (or by a copy that is no longer running): start afresh.
             _delete_all_controls(CONTROL_ID)
             existing.deleteMe()
-        push_cmd_def = ui.commandDefinitions.addButtonDefinition(CMD_ID, CMD_NAME, CMD_TOOLTIP, "")
+        resources = RESOURCE_FOLDER if os.path.isdir(RESOURCE_FOLDER) else ""
+        push_cmd_def = ui.commandDefinitions.addButtonDefinition(CMD_ID, CMD_NAME, CMD_TOOLTIP, resources)
         owns_command = True
 
         from . import fusion_bridge
@@ -381,8 +394,9 @@ def run(context):
                 raise
 
         if git_push_control and git_push_control.isValid:
+            # Shown on the toolbar by default, but the user's own choice to
+            # move it into the panel's menu is respected (audit COMP-13).
             git_push_control.isPromotedByDefault = True
-            git_push_control.isPromoted = True
             git_push_control.isVisible = True
         else:
             msg = f"Command control '{CONTROL_ID}' is invalid after creation."
@@ -394,14 +408,15 @@ def run(context):
         is_initialized = True
         if logger:
             logger.info(f"'{CMD_NAME}' Add-In Loaded and running. {VERSION}")
-    except Exception:
+    except Exception as exc:
         error_msg = "Failed to run the Add-In (run function)\n" + traceback.format_exc()
         if logger:
             logger.error(error_msg)
-        elif ui:
-            ui.messageBox(error_msg, CMD_NAME + " - Critical Error")
         else:
             print(error_msg)
+        if ui:
+            ui.messageBox(error_catalog.unexpected_error("starting the add-in", exc, nothing_pushed=False),
+                          CMD_NAME + " - Critical Error")
         adsk.autoTerminate(True)
 
 
@@ -449,12 +464,13 @@ def stop(context):
             logger.info(f"'{CMD_NAME}' Add-In Stopped. Shutting down logger.")
         addin_logging.shutdown_logger()
         logger = None
-    except Exception:
+    except Exception as exc:
         error_msg = "Failed to stop the Add-In cleanly (stop function)\n" + traceback.format_exc()
         if logger:
             logger.error(error_msg)
-        elif ui:
-            ui.messageBox(error_msg, CMD_NAME + " - Stop Error")
         else:
             print(error_msg)
+        if ui:
+            ui.messageBox(error_catalog.unexpected_error("stopping the add-in", exc, nothing_pushed=False),
+                          CMD_NAME + " - Stop Error")
 
