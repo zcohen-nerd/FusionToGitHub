@@ -57,10 +57,11 @@ GitHub** opens the link in your browser.
 | What | Where | Kept until |
 |------|-------|-----------|
 | Saved repository settings: folder, address, formats, templates, options | `.fusion_git_repos.json` in your home folder | You delete it |
-| Activity log: what the add-in did, with folder paths, repository addresses, design names and Git messages. Passwords and tokens are removed before anything is written. | `.PushToGitHub_AddIn_Data/` in your home folder: up to four files of 1 MB each; the oldest is overwritten | You clear it (**Logging & Privacy → Clear Log**) |
+| Activity log: what the add-in did, with folder paths, repository addresses, design names and Git messages. Passwords and tokens are removed before anything is written. | `.PushToGitHub_AddIn_Data/` in your home folder: up to four files of 1 MB each; the oldest is overwritten | You clear it (**Help & Privacy → Clear Log**) |
 | Optional stored token (Windows only, if you use **Manage Token…**) | Windows Credential Manager, entry `FusionToGitHub::<repository name>` | You delete it (**Manage Token… → Delete**) |
-| Your Git name and email, if Git didn't have them yet | Your global Git configuration (`~/.gitconfig`), used by every Git repository on this computer | You change or remove it |
+| Your Git name and email, if Git didn't have them yet | With that repository's saved settings (above); in your global Git configuration (`~/.gitconfig`) only if you chose "all repositories" | You change or remove it |
 | Exported files during a push | A temporary folder | Deleted automatically when the push ends |
+| The stored token, while one Git command that needs it runs | A file in `%LOCALAPPDATA%\PushToGitHub\credentials` (Windows) | Overwritten and deleted when that command ends (seconds); a leftover from a crash is deleted by a later push after an hour |
 | The local repository folder you chose during setup | That folder | You delete it. (Pushing never changes it.) |
 
 On macOS the settings file and logs are readable only by your user account. On

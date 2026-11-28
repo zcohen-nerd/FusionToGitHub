@@ -159,9 +159,17 @@ The formal list of known risks to FusionToGitHub users and to the project
   | E4 | Another program running as the same user reads the environment of a running `git` process | The token is readable | **Mitigated (0.7.0).** The token is no longer in any environment, see below |
 
 - **E4 mitigation (0.7.0):**
-  - **What was done.** For each Git command that carries the token, `git_run` writes the credential to a private file and puts only that file's path in the environment (`FUSION_GIT_CREDENTIALS`). The file is created exclusively, with mode 0600, in a new `mkdtemp` folder: owner-only on POSIX, and on Windows inside the user's own temporary folder. The inline helper `cat`s the file. The folder is deleted when the command ends, whether it succeeded or failed. Folders left by a killed process are swept on the next token use once they are 15 minutes old. Inherited `FUSION_GIT_TOKEN` and `FUSION_GIT_USERNAME` variables are removed.
+  - **What was done.** For each Git command that carries the token, `git_run` writes the credential to a file and puts only that file's path in the environment (`FUSION_GIT_CREDENTIALS`). The inline helper `cat`s the file. Details:
+    - **Location:** a new `mkdtemp` folder. On Windows it is under `%LOCALAPPDATA%\PushToGitHub\credentials`, per user and not synced. `%TEMP%` is avoided because it can be redirected to a shared folder (E4 review). On POSIX it is under the temporary folder, with mode 0700.
+    - **File:** created exclusively (`O_EXCL`, mode 0600 where the OS honours it).
+    - **Removal:** when the command ends, whether it succeeded or failed, the file is overwritten with zeros and deleted, with one retry.
+    - **Leftovers:** folders left by a killed process are swept at most every 10 minutes once they are an hour old. That is longer than any Git command can run (10-minute limit). The sweep never follows links or junctions.
+    - **Inputs:** inherited `FUSION_GIT_TOKEN` and `FUSION_GIT_USERNAME` variables are removed, and a token or username containing CR, LF or NUL is refused.
   - **What it removes.** The token no longer reaches every process Git starts: `git-remote-https`, the helper's shell, and anything a configuration could start. It no longer appears in environment listings, crash dumps or monitoring tools that record process environments. It only exists for the seconds a command runs, not for the whole push, including while a question is open.
-  - **Threat model and residual.** A program running as the same user can still find and read the file while a command runs. It needs the same rights it already needs to read the token from Windows Credential Manager (`CredRead`, no prompt), so there is no new reader. Other users can't read it. The token now touches disk briefly; a deleted file's bytes may stay on the disk until overwritten.
+  - **Threat model and residual.**
+    - A program running as the same user can still find and read the file while a command runs. It needs the same rights it already needs to read the token from Windows Credential Manager (`CredRead`, no prompt), so there is no new reader.
+    - Other standard users can't open the folder under default profile permissions. A changed profile ACL is outside the add-in's control and isn't checked.
+    - The token now touches disk briefly. The file is overwritten before deletion, but an SSD may keep old blocks, and antivirus software may scan the file while it exists.
   - **Alternatives considered:**
     - A named pipe or loopback channel: needs a custom security descriptor on Windows, or a shell that can open sockets, which isn't available on every Git installation.
     - `credential-cache`: not available in Git for Windows.

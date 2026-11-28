@@ -49,11 +49,15 @@ stores them:
   - The token is passed only to the commands that talk to GitHub
     (`ls-remote`, `fetch`, `push`). Local git commands never receive it.
     Since 0.7.0 it is **not in any process's environment**: for each of those
-    commands the add-in writes it to a private file (a new folder only you can
-    open, the file created with owner-only permissions), the helper reads it
-    from there, and the file is deleted as soon as that one command ends. Only
-    the file's location is in Git's environment. A folder left behind by a
-    crash is deleted the next time a token is used.
+    commands the add-in writes it to a file in a new folder, the helper reads
+    it from there, and when that one command ends the file is overwritten and
+    deleted. Only the file's location is in Git's environment. On Windows the
+    folder is in your own `%LOCALAPPDATA%\PushToGitHub\credentials` (by
+    default only you, the system and administrators can open it, and it isn't
+    synced), not in the temporary folder, which can be redirected to a shared
+    place. On macOS and Linux it is an owner-only folder in the temporary
+    folder. A folder left behind by a crash is deleted by a later push once it
+    is an hour old (no Git command runs that long).
   - For those commands, every other credential helper is switched off
     (`-c credential.helper=`), so GCM or a `store` helper can't save a copy of
     the token, and a stale saved credential can't be used instead of it.
@@ -91,11 +95,14 @@ stores them:
   - HTTP tracing you may have switched on (`GIT_TRACE_CURL`,
     `GIT_CURL_VERBOSE`) is off for these commands, and Git's redaction is
     forced on, so the token can't end up in a trace file or an error message.
-  - **Known limit:** while one of those commands runs (usually seconds),
-    another program running as *you* could find and read the private file.
-    Such a program can already read the stored token from Windows Credential
-    Manager, so this isn't a new exposure (risk R-21). Other users of the
-    computer can't read it.
+  - **Known limits:** while one of those commands runs (usually seconds),
+    another program running as *you* could find and read the file. Such a
+    program can already read the stored token from Windows Credential Manager,
+    so this isn't a new exposure (risk R-21). Other standard users can't open
+    the folder, unless you have changed the permissions of your profile
+    folders. Because the token is briefly on disk, its bytes may remain in
+    unused disk space after deletion, and antivirus software may scan the
+    file while it exists.
 
 The developer test harness `src/push_cli.py` (not part of the installed add-in)
 reads a token from the `FUSION_TO_GITHUB_TOKEN` environment variable or from a

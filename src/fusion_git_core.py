@@ -30,6 +30,7 @@ import posixpath
 import re
 import shutil
 import signal
+import stat as stat_module
 import subprocess
 import tempfile
 import threading
@@ -426,44 +427,102 @@ _INLINE_CREDENTIAL_HELPER = (
     'cat "$FUSION_GIT_CREDENTIALS"; }; f'
 )
 _CREDENTIALS_DIR_PREFIX = "fusion_git_cred_"
-# A folder left by a process that was killed mid-command is removed the next
-# time a token is used, once it is this old.
-_STALE_CREDENTIALS_SECONDS = 15 * 60
-_sweep_done = False
+# Every git command is stopped after TIMEOUTS["network"] (10 minutes), so a
+# credential folder older than an hour can't belong to a running command:
+# it was left by a process that was killed, and is removed.
+_STALE_CREDENTIALS_SECONDS = 60 * 60
+_SWEEP_INTERVAL_SECONDS = 10 * 60
+_last_sweep = 0.0
+
+
+def _credentials_root() -> str:
+    """The folder that holds the per-command credential folders.
+
+    On Windows, the user's own ``%LOCALAPPDATA%`` (only the user, SYSTEM and
+    administrators can open it by default; never roamed or synced), not
+    ``%TEMP%``, which can be redirected to a shared folder (S5 security
+    review). Elsewhere the temporary folder, where ``mkdtemp`` makes
+    owner-only (0700) folders.
+    """
+    if IS_WINDOWS:
+        local = os.environ.get("LOCALAPPDATA", "").strip()
+        if local and os.path.isdir(local):
+            root = os.path.join(local, "PushToGitHub", "credentials")
+            try:
+                os.makedirs(root, exist_ok=True)
+                return root
+            except OSError:
+                pass
+    return tempfile.gettempdir()
+
+
+def _is_plain_dir(path: str) -> bool:
+    """A real folder: not a symbolic link or a Windows junction."""
+    try:
+        if os.path.islink(path) or getattr(os.path, "isjunction", lambda p: False)(path):
+            return False
+        return stat_module.S_ISDIR(os.lstat(path).st_mode)
+    except OSError:
+        return False
+
+
+def _remove_credentials(folder: str) -> bool:
+    """Overwrite, then delete, a credential folder; retry once (antivirus can hold a file briefly)."""
+    for attempt in range(2):
+        try:
+            if _is_plain_dir(folder):
+                for name in os.listdir(folder):
+                    path = os.path.join(folder, name)
+                    if os.path.isfile(path) and not os.path.islink(path):
+                        size = os.path.getsize(path)
+                        with open(path, "r+b") as fh:
+                            fh.write(b"\0" * size)
+                            fh.flush()
+                        os.remove(path)
+                os.rmdir(folder)
+            return not os.path.exists(folder)
+        except OSError:
+            if attempt == 0:
+                time.sleep(0.2)
+    return not os.path.exists(folder)
 
 
 def _sweep_stale_credential_dirs() -> None:
-    global _sweep_done
-    if _sweep_done:
+    """Remove credential folders left by killed processes (at most every 10 minutes)."""
+    global _last_sweep
+    now = time.time()
+    if now - _last_sweep < _SWEEP_INTERVAL_SECONDS:
         return
-    _sweep_done = True
-    root = tempfile.gettempdir()
-    try:
-        names = [n for n in os.listdir(root) if n.startswith(_CREDENTIALS_DIR_PREFIX)]
-    except OSError:
-        return
-    for name in names:
-        path = os.path.join(root, name)
+    _last_sweep = now
+    for root in dict.fromkeys((_credentials_root(), tempfile.gettempdir())):
         try:
-            if time.time() - os.path.getmtime(path) > _STALE_CREDENTIALS_SECONDS:
-                shutil.rmtree(path, ignore_errors=True)
+            names = [n for n in os.listdir(root) if n.startswith(_CREDENTIALS_DIR_PREFIX)]
         except OSError:
-            pass
+            continue
+        for name in names:
+            path = os.path.join(root, name)
+            try:
+                if _is_plain_dir(path) and now - os.lstat(path).st_mtime > _STALE_CREDENTIALS_SECONDS:
+                    _remove_credentials(path)
+            except OSError:
+                pass
 
 
 @contextmanager
 def _credentials_file(auth: "GitAuth"):
     """A file with the credential for one git command; yields its path, then deletes it.
 
-    The folder is new and private (``mkdtemp``: owner-only on POSIX, and on
-    Windows inside the user's own temporary folder) and the file is created
-    exclusively with mode 0600. The path uses forward slashes, which the
-    helper's shell (Git for Windows' sh) reads on every platform.
+    The folder is new (``mkdtemp``, 0700 on POSIX) inside ``_credentials_root``,
+    and the file is created exclusively with mode 0600. When the command ends
+    the file is overwritten and deleted. The path uses forward slashes, which
+    the helper's shell (Git for Windows' sh) reads on every platform.
     """
-    if "\n" in auth.token or "\r" in auth.token or "\n" in auth.username:
-        raise GitError("The stored token contains a line break, so it can't be used. Store it again.")
+    for value in (auth.token, auth.username):
+        if any(c in value for c in "\r\n\0"):
+            raise GitError("The stored token or its username contains a line break or a NUL character, "
+                           "so it can't be used. Store it again.")
     _sweep_stale_credential_dirs()
-    folder = tempfile.mkdtemp(prefix=_CREDENTIALS_DIR_PREFIX)
+    folder = tempfile.mkdtemp(prefix=_CREDENTIALS_DIR_PREFIX, dir=_credentials_root())
     try:
         path = os.path.join(folder, "credential")
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
@@ -471,7 +530,13 @@ def _credentials_file(auth: "GitAuth"):
             fh.write(f"username={auth.username or 'x-access-token'}\npassword={auth.token}\n".encode("utf-8"))
         yield path.replace("\\", "/")
     finally:
-        shutil.rmtree(folder, ignore_errors=True)
+        if not _remove_credentials(folder):
+            # Left for the next sweep; the caller's log records it.
+            _credential_cleanup_failures.append(folder)
+
+
+# Folders that couldn't be deleted at once (normally empty); kept for tests and diagnostics.
+_credential_cleanup_failures: List[str] = []
 
 _URL_USERINFO_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)([^/@\s]+)@")
 _TOKEN_RES = (

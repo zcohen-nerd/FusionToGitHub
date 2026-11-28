@@ -125,6 +125,8 @@ class _LocalOriginAuth(core.GitAuth):
 
 
 FAKE_TOKEN = "ghp_" + "q" * 36
+# Before any test patches it (GitSandbox points it at a temporary folder).
+REAL_CREDENTIALS_ROOT = core._credentials_root
 
 
 class HookIsolationTests(GitSandbox):
@@ -287,8 +289,7 @@ class TokenOutOfEnvironmentTests(GitSandbox):
         return core.GitAuth(host="git.example.invalid", token=FAKE_TOKEN, hooks_dir=empty, **extra)
 
     def credential_dirs(self):
-        root = tempfile.gettempdir()
-        return {n for n in os.listdir(root) if n.startswith(core._CREDENTIALS_DIR_PREFIX)}
+        return set(os.listdir(core._credentials_root()))
 
     def test_git_processes_get_a_file_path_not_the_token(self):
         before = self.credential_dirs()
@@ -301,6 +302,7 @@ class TokenOutOfEnvironmentTests(GitSandbox):
                     if line.startswith(core.CREDENTIALS_FILE_ENV + "="))
         self.assertFalse(os.path.exists(path), "the credential file outlived the git command")
         self.assertEqual(self.credential_dirs(), before)
+        self.assertEqual(core._credential_cleanup_failures, [])
 
     def test_the_helper_answers_from_the_file_for_its_host_only(self):
         answer = core.git_run(self.work, "credential", "fill", auth=self.auth(username="octocat"),
@@ -315,7 +317,7 @@ class TokenOutOfEnvironmentTests(GitSandbox):
         spaced = os.path.join(self.base, "Temp With Spaces")
         os.makedirs(spaced)
         auth = self.auth()
-        with mock.patch.object(core.tempfile, "tempdir", spaced):
+        with mock.patch.object(core, "_credentials_root", lambda: spaced):
             answer = core.git_run(self.work, "credential", "fill", auth=auth,
                                   input_text="protocol=https\nhost=git.example.invalid\n\n").stdout
         self.assertIn(f"password={FAKE_TOKEN}", answer)
@@ -334,18 +336,51 @@ class TokenOutOfEnvironmentTests(GitSandbox):
             self.assertTrue(listing.startswith("-rw-------"), listing)
         self.assertIn("credential", listing)
 
-    def test_a_token_with_a_line_break_is_refused(self):
-        auth = core.GitAuth(host="git.example.invalid", token="abc\npassword=evil", hooks_dir=self.base)
-        with self.assertRaises(core.GitError):
-            core.git_run(self.work, "status", auth=auth)
+    def test_a_token_or_username_with_a_line_break_or_nul_is_refused(self):
+        for token, username in (("abc\npassword=evil", ""), ("abc\rdef", ""), ("abc\0def", ""),
+                                (FAKE_TOKEN, "me\rhost=evil"), (FAKE_TOKEN, "me\0")):
+            auth = core.GitAuth(host="git.example.invalid", token=token, username=username, hooks_dir=self.base)
+            with self.assertRaises(core.GitError):
+                core.git_run(self.work, "status", auth=auth)
+
+    def test_windows_keeps_credentials_in_local_app_data_not_temp(self):
+        # S5 security review: %TEMP% can be redirected to a shared folder.
+        local = os.path.join(self.base, "LocalAppData")
+        os.makedirs(local)
+        with mock.patch.object(core, "IS_WINDOWS", True), \
+                mock.patch.dict(os.environ, {"LOCALAPPDATA": local, "TEMP": self.base, "TMP": self.base}):
+            self.assertEqual(REAL_CREDENTIALS_ROOT(), os.path.join(local, "PushToGitHub", "credentials"))
+        self.assertTrue(os.path.isdir(os.path.join(local, "PushToGitHub", "credentials")))
+
+    def test_the_file_is_overwritten_before_it_is_deleted(self):
+        folder = tempfile.mkdtemp(prefix=core._CREDENTIALS_DIR_PREFIX, dir=core._credentials_root())
+        path = os.path.join(folder, "credential")
+        with open(path, "wb") as fh:
+            fh.write(b"password=" + FAKE_TOKEN.encode())
+        written = []
+        real_open = open
+
+        def spy(file, mode="r", *args, **kwargs):
+            handle = real_open(file, mode, *args, **kwargs)
+            if file == path and "+" in mode:
+                written.append(file)
+            return handle
+
+        with mock.patch("builtins.open", spy):
+            self.assertTrue(core._remove_credentials(folder))
+        self.assertEqual(written, [path])
+        self.assertFalse(os.path.exists(folder))
+        self.assertFalse(core._is_plain_dir(path))  # a file is never treated as a credential folder
 
     def test_stale_folders_from_a_killed_process_are_swept(self):
-        stale = tempfile.mkdtemp(prefix=core._CREDENTIALS_DIR_PREFIX)
-        fresh = tempfile.mkdtemp(prefix=core._CREDENTIALS_DIR_PREFIX)
-        self.addCleanup(_paths.force_rmtree, fresh)
+        stale = tempfile.mkdtemp(prefix=core._CREDENTIALS_DIR_PREFIX, dir=core._credentials_root())
+        fresh = tempfile.mkdtemp(prefix=core._CREDENTIALS_DIR_PREFIX, dir=core._credentials_root())
+        # Younger than the longest a git command can run (10 minutes): kept.
+        recent = time.time() - core.TIMEOUTS["network"] - 60
+        os.utime(fresh, (recent, recent))
         old = time.time() - core._STALE_CREDENTIALS_SECONDS - 60
         os.utime(stale, (old, old))
-        with mock.patch.object(core, "_sweep_done", False):
+        with mock.patch.object(core, "_last_sweep", 0.0):
             core.git_run(self.work, "status", auth=self.auth())
         self.assertFalse(os.path.exists(stale))
         self.assertTrue(os.path.exists(fresh))

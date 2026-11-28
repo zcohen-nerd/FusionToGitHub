@@ -302,7 +302,12 @@ class TestRunner:
         self.log_test_start("T_CORE_03", "Stored-token credential scoping")
         base = tempfile.mkdtemp(prefix="fusion_cred_")
         try:
+            import fusion_git_core as _core
             from fusion_git_core import GitError, git_run, token_auth
+
+            # Credential files go to this test folder, not the real %LOCALAPPDATA%.
+            _saved_root = _core._credentials_root
+            _core._credentials_root = lambda: base
 
             problems = []
             # Never let these credential commands reach the developer's real
@@ -352,6 +357,8 @@ class TestRunner:
         except Exception as e:
             self.record_result("T_CORE_03", "Stored-token credential scoping", False, str(e))
         finally:
+            if "_saved_root" in locals():
+                _core._credentials_root = _saved_root
             self._cleanup_dir(base)
 
     def test_secret_redaction_and_urls(self):
