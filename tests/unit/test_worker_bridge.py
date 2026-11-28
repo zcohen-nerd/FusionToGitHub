@@ -16,7 +16,7 @@ from unittest import mock
 
 import _paths  # noqa: F401
 from addin_harness import AddinTestCase, DialogResults, worker_threads
-from adsk.core import press_ok
+
 from test_core_cancel_hooks import write_hook
 
 import fusion_bridge
@@ -39,14 +39,14 @@ class BridgeTestCase(AddinTestCase):
         """An ordinary push, so the empty "GitHub" repository has a main branch."""
         command = self.open_dialog()
         self.assertFalse(self.push(command).executeFailed, self.ui.texts())
-        self.assertIn("Pushed to GitHub", self.last_message())
+        self.assertIn("Backed up \"Bracket\" to GitHub.", self.last_message())
 
     def start_push_held_by_hook(self, hook, body):
         """Start a push that the remote holds in *hook*; return once the hook is running."""
         marker = os.path.join(self.base, f"{hook}.ran")
         write_hook(self.origin, hook, f'touch "{marker.replace(chr(92), "/")}"\n{body}')
         command = self.open_dialog()
-        args = press_ok(command)
+        args = self.press_ok(command)
         self.assertFalse(args.executeFailed, self.ui.texts())
         self.assertTrue(command.isTerminated)  # the dialog has closed; git is still running
         self.app.process_events(timeout=30, until=lambda: os.path.exists(marker))
@@ -69,21 +69,21 @@ class ProgressAndSummaryTests(BridgeTestCase):
         self.assertFalse(progress.isShowing)
         self.assertIn("Pushing to GitHub…", progress.shown)
         self.assertTrue(len(progress.messages) >= 2, progress.messages)  # git steps arrived
-        self.assertIn("Pushed to GitHub, branch: fusion-export/Bracket-", self.last_message())
-        self.assertIn("Your local repository folder was not changed.", self.last_message())
+        self.assertIn("Saved to: fusion-export/Bracket-", self.last_message())
+        self.assertIn("Nothing in your local repository folder was changed.", self.last_message())
         self.assertFalse(addin.bridge.busy)
         self.assertFalse(push_worker.is_busy())
 
     def test_document_closed_during_the_push_changes_nothing(self):
         command = self.open_dialog()
-        press_ok(command)
+        self.press_ok(command)
         self.app.activeProduct = None  # the user closed the design; the worker never asks Fusion
         self.wait_for_push()
-        self.assertIn("Pushed to GitHub", self.last_message())
+        self.assertIn("Backed up \"Bracket\" to GitHub.", self.last_message())
 
     def test_exported_files_are_removed_after_the_push(self):
         command = self.open_dialog()
-        press_ok(command)
+        self.press_ok(command)
         export_dir = os.path.dirname(addin.bridge.worker.plan.exports[0][0])
         self.assertTrue(os.path.isdir(export_dir))  # still there while git reads it
         self.wait_for_push()
@@ -105,7 +105,7 @@ class ProgressAndSummaryTests(BridgeTestCase):
                      f"https://user:{TOKEN}@example.invalid/acme/designs.git")
         command = self.open_dialog()
         self.push(command)
-        self.assertIn("Git operations failed", self.last_message())
+        self.assertIn("The backup didn't complete", self.last_message())
         texts = "\n".join(self.ui.texts())
         self.assertIn("contains a password or token", texts)
         self.assertNotIn(TOKEN, texts)
@@ -119,7 +119,7 @@ class QuestionTests(BridgeTestCase):
         self.answer(YES)  # add this export to the main branch?
         self.assertFalse(self.push(command).executeFailed)
         self.assertTrue(any("main branch" in q for q in self.ui.questions), self.ui.questions)
-        self.assertIn("Pushed to GitHub, branch: main", self.last_message())
+        self.assertIn("Saved to: main", self.last_message())
 
     def test_declining_branch_reuse_pushes_nothing(self):
         self.first_push()
@@ -138,13 +138,13 @@ class QuestionTests(BridgeTestCase):
             self.assertFalse(self.push(command).executeFailed, self.ui.texts())
         large = [q for q in self.ui.questions if "exports are large" in q]
         self.assertEqual(len(large), 1)  # asked on the main thread, not again by the worker
-        self.assertIn("Pushed to GitHub", self.last_message())
+        self.assertIn("Backed up \"Bracket\" to GitHub.", self.last_message())
 
     def test_declining_large_files_keeps_the_dialog_open(self):
         with mock.patch.object(core, "SIZE_WARN_BYTES", 1):
             command = self.open_dialog()
             self.answer(NO)
-            args = press_ok(command)
+            args = self.press_ok(command)
         self.assertTrue(args.executeFailed)
         self.assertFalse(command.isTerminated)
         self.assertEqual(self.last_message(), fusion_bridge.NOTHING_PUSHED)
@@ -154,7 +154,7 @@ class QuestionTests(BridgeTestCase):
     def test_too_large_files_are_refused_before_the_push_starts(self):
         with mock.patch.object(core, "SIZE_BLOCK_BYTES", 1):
             command = self.open_dialog()
-            args = press_ok(command)
+            args = self.press_ok(command)
         self.assertTrue(args.executeFailed)
         self.assertIn("GitHub rejects files of 100 MB or more", self.last_message())
         self.assertFalse(push_worker.is_busy())
@@ -197,7 +197,7 @@ class CancelTests(BridgeTestCase):
         self.first_push()
         self.start_push_held_by_hook("pre-receive", "sleep 30\nexit 1")
         second = self.open_dialog()
-        args = press_ok(second)
+        args = self.press_ok(second)
         self.assertTrue(args.executeFailed)
         self.assertFalse(second.isTerminated)  # the dialog stays open
         self.assertEqual(self.last_message(), fusion_bridge.BUSY_TEXT)
@@ -236,7 +236,7 @@ class CancelTests(BridgeTestCase):
         with mock.patch.object(push_worker, "is_busy", return_value=False), \
                 mock.patch.object(fusion_bridge.WorkerBridge, "busy", new_callable=mock.PropertyMock,
                                   return_value=False):
-            args = press_ok(second)
+            args = self.press_ok(second)
         self.assertTrue(args.executeFailed)
         self.assertEqual(self.last_message(), fusion_bridge.BUSY_TEXT)
         self.assertIs(bridge.job, running)
@@ -253,12 +253,12 @@ class CancelTests(BridgeTestCase):
             return False if message.get("type") in ("done", "failed") else real_post(message)
 
         with mock.patch.object(addin.bridge, "post", side_effect=lose_the_result):
-            press_ok(command)
+            self.press_ok(command)
             push_worker.shutdown_active(30)
         self.assertIs(addin.bridge.worker.terminal_delivered, False)
         self.assertFalse(addin.bridge.busy)  # the lost job is dropped
         self.assertFalse(self.push(self.open_dialog()).executeFailed, self.ui.texts())
-        self.assertIn("Pushed to GitHub", self.last_message())
+        self.assertIn("Backed up \"Bracket\" to GitHub.", self.last_message())
 
     def test_a_message_box_that_lets_the_push_finish_leaves_no_progress_window(self):
         # Fusion may keep delivering events while a message box is open: the
@@ -273,7 +273,7 @@ class CancelTests(BridgeTestCase):
         self.assertFalse(addin.bridge.busy)
         self.assertIsNone(addin.bridge.progress)
         self.assertFalse(any(p.isShowing for p in self.ui.progress_dialogs))
-        self.assertIn("Git operations failed", "\n".join(self.ui.texts()))
+        self.assertIn("The backup didn't complete", "\n".join(self.ui.texts()))
 
     def test_stop_during_a_push_ends_it_and_leaves_nothing_behind(self):
         self.first_push()
@@ -329,7 +329,7 @@ class EventTests(AddinTestCase):
         self.design()
         command = self.open_dialog()
         addin.bridge.close()
-        args = press_ok(command)
+        args = self.press_ok(command)
         self.assertTrue(args.executeFailed)
         self.assertIn("background push isn't available", self.last_message())
 

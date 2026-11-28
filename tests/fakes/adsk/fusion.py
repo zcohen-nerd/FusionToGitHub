@@ -231,13 +231,15 @@ class ExportManager:
 
 
 class DataFile:
-    def __init__(self, file_id):
+    def __init__(self, file_id, version_number=1):
         self.id = file_id
+        self.versionNumber = version_number
 
 
 class Document:
-    def __init__(self, data_file=None):
+    def __init__(self, data_file=None, is_modified=False):
         self.dataFile = data_file
+        self.isModified = is_modified
 
 
 class Design:

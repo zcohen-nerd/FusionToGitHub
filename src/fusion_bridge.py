@@ -16,11 +16,15 @@ from __future__ import annotations
 
 import json
 import logging
+import posixpath
+import webbrowser
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
+from urllib.parse import urlsplit
 
 import adsk.core
 
+from . import error_catalog, github_links, setup_check
 from .push_worker import PushWorker, WorkerBusy
 
 EVENT_SUFFIX = "_PushWorker"
@@ -36,36 +40,74 @@ BUSY_TEXT = (
 
 @dataclass
 class PushJob:
-    """What the summary needs once the dialog has closed. Plain data."""
+    """What the summary needs once the dialog has closed. Plain data, apart from *on_result*."""
 
     repo_name: str
     exported_names: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
+    design_name: str = ""
+    remote_url: str = ""
+    fusion_version: str = ""
+    # "push", or "setup_check" for Check My Setup's connection test.
+    kind: str = "push"
+    # Check My Setup: the local checks already made, as dicts (setup_check.Check).
+    checks: List[Dict[str, str]] = field(default_factory=list)
+    # Called on Fusion's main thread with the push result, before the summary.
+    on_result: Optional[Callable[[Dict[str, Any]], Any]] = None
 
 
 # -- texts (no Fusion calls) --------------------------------------------------
 
 
-def success_text(repo_name: str, git_result: Dict[str, Any], exported_names, warnings) -> str:
-    branch = git_result.get("branch", "<unknown>")
+LINK_QUESTION = "Open it on GitHub?\nYes: open in your browser    No: copy the link    Cancel: close"
+
+
+def export_folder(git_result: Dict[str, Any]) -> str:
+    """The folder the backup's files went to in the repository ("" for the top level)."""
+    files = git_result.get("files") or []
+    return posixpath.dirname(files[0]) if files else ""
+
+
+def backup_link(remote_url: str, git_result: Dict[str, Any]) -> Optional[str]:
+    """A link to the backup on GitHub (its folder on its branch), or None."""
+    return github_links.folder_url(remote_url, git_result.get("branch") or "", export_folder(git_result))
+
+
+def success_text(repo_name: str, git_result: Dict[str, Any], exported_names, warnings, *,
+                 design_name: str = "", remote_url: str = "", fusion_version: str = "",
+                 link: Optional[str] = None) -> str:
+    """The summary of a successful backup, in plain words (audit UX-05)."""
+    branch = git_result.get("branch") or "?"
+    folder = export_folder(git_result)
     commit_short = (git_result.get("commit") or "")[:7]
-    lines = [
-        f"✅ Pushed to GitHub, branch: {branch}" + (f" (commit {commit_short})" if commit_short else ""),
-        f"Settings for '{repo_name}' updated.",
-    ]
+    what = f'"{design_name}"' if design_name else "Your design"
+    web = github_links.web_repository_url(remote_url)
+    repository = urlsplit(web).path.strip("/") if web else repo_name
+    where = f"{branch} › {folder}/" if folder else branch
+    lines =[f"Backed up {what} to GitHub.", "", f"Repository: {repository}", f"Saved to: {where}"]
+    version = f"Commit: {commit_short}" if commit_short else ""
+    if fusion_version:
+        version += (" · " if version else "") + f"Fusion version: {fusion_version}"
+    if version:
+        lines.append(version)
     if exported_names:
-        lines += ["", "Exported files:"] + [f" • {name}" for name in exported_names]
+        lines.append("Files: " + ", ".join(posixpath.basename(name) for name in exported_names))
     notes = []
-    if git_result.get("reused_branch"):
-        notes.append("Added a new commit to the existing branch.")
     if git_result.get("bootstrapped"):
-        notes.append(
-            f"The repository was empty, so a first commit was added to '{git_result.get('base_branch') or 'main'}'."
-        )
-    notes.append("Your local repository folder was not changed.")
-    lines += ["", "Git flow details:"] + [f" • {note}" for note in notes]
+        notes.append(f"The GitHub repository was empty, so it was set up with a '{git_result.get('base_branch') or 'main'}' branch.")
+    if git_result.get("relocated_from"):
+        # Either another design owns the folder this one was given, or this
+        # design already has a folder on GitHub (risk R-24).
+        notes.append(f"On GitHub this design's folder is '{git_result.get('design_folder')}', not "
+                     f"'{git_result['relocated_from']}' (that name is used by another design, or this "
+                     "design was backed up there before), so the backup went there.")
+    if notes:
+        lines += [""] + notes
     if warnings:
-        lines += ["", "Warnings:"] + [f" • {w}" for w in warnings]
+        lines += ["", "Please note:"] + [f" • {w}" for w in warnings]
+    lines += ["", "Nothing in your local repository folder was changed."]
+    if link:
+        lines += ["", LINK_QUESTION]
     return "\n".join(lines)
 
 
@@ -93,13 +135,17 @@ def cancelled_text(result: Dict[str, Any]) -> str:
 
 def failed_text(git_result_missing: bool, warnings, error: str = "") -> str:
     if git_result_missing:
-        lines = ["Git operations failed. See the messages above for details."]
+        lines = ["The backup didn't complete. The previous message said why.",
+                 "", error_catalog.LOG_HINT]
     else:
         lines = [
-            "The push stopped because of an unexpected error:",
-            error,
+            "The backup stopped because of an unexpected error. Check the repository on GitHub before "
+            "backing up again.",
             "",
-            "Check the repository on GitHub before pushing again; the log file has the details.",
+            error_catalog.LOG_HINT,
+            "",
+            "Technical details:",
+            error,
         ]
     if warnings:
         lines += ["", "Warnings:"] + [f" • {w}" for w in warnings]
@@ -221,7 +267,7 @@ class WorkerBridge:
         worker = PushWorker(controller, plan, self.post, self.logger, on_finish=on_finish)
         self.job, self.worker = job, worker
         self._cancel_shown = False
-        self._show_progress("Pushing to GitHub…")
+        self._show_progress(self._progress_message())
         try:
             worker.start()
         except BaseException:
@@ -261,7 +307,10 @@ class WorkerBridge:
                 self._show_progress(self._progress_message())
         elif kind in ("warn", "error"):
             self._hide_progress()
-            self.ui.messageBox(message.get("text", ""), self.title)
+            text = message.get("text", "")
+            if kind == "error":
+                text = error_catalog.explain(text)
+            self.ui.messageBox(text, self.title)
             if self.worker is worker:  # not finished while the message was open
                 self._show_progress(self._progress_message())
         elif kind in ("done", "failed"):
@@ -278,7 +327,9 @@ class WorkerBridge:
             progress.message = "Cancelling…"
 
     def _progress_message(self) -> str:
-        return "Cancelling…" if self.worker is not None and self.worker.cancel_requested else "Pushing to GitHub…"
+        if self.worker is not None and self.worker.cancel_requested:
+            return "Cancelling…"
+        return "Checking your setup…" if self.job is not None and self.job.kind == "setup_check" else "Pushing to GitHub…"
 
     def _show_progress(self, text: str) -> None:
         try:
@@ -305,6 +356,10 @@ class WorkerBridge:
         self._hide_progress()
         self.progress = None
         self.job = self.worker = None
+        if job.kind == "setup_check":
+            self._finish_setup_check(job, message)
+            return
+        link = None
         if message.get("type") == "failed":
             text = failed_text(False, job.warnings, message.get("error", ""))
         else:
@@ -314,14 +369,64 @@ class WorkerBridge:
             elif result.get("cancelled"):
                 text = cancelled_text(result)
             else:
-                text = success_text(job.repo_name, result, job.exported_names, job.warnings)
+                result = dict(result)
+                if job.on_result is not None:
+                    try:
+                        moved_from = job.on_result(result)
+                        if moved_from:
+                            result["relocated_from"] = moved_from
+                    except Exception:
+                        if self.logger:
+                            self.logger.exception("Recording the push result failed")
+                link = backup_link(job.remote_url, result)
+                text = success_text(job.repo_name, result, job.exported_names, job.warnings,
+                                    design_name=job.design_name, remote_url=job.remote_url,
+                                    fusion_version=job.fusion_version, link=link)
         if self.logger:
             self.logger.info("Push finished: %s", text.splitlines()[0])
+        if not link:
+            self.ui.messageBox(text, self.title)
+            return
+        answer = self.ui.messageBox(text, self.title, adsk.core.MessageBoxButtonTypes.YesNoCancelButtonType)
+        if answer == adsk.core.DialogResults.DialogYes:
+            self.open_link(link)
+        elif answer == adsk.core.DialogResults.DialogNo:
+            self.copy_link(link)
+
+    def open_link(self, link: str) -> None:
+        try:
+            if webbrowser.open(link):
+                return
+        except Exception:
+            if self.logger:
+                self.logger.exception("Couldn't open the browser")
+        self.copy_link(link, "The browser couldn't be opened.")
+
+    def copy_link(self, link: str, reason: str = "") -> None:
+        prefix = f"{reason} " if reason else ""
+        if github_links.copy_to_clipboard(link):
+            self.ui.messageBox(f"{prefix}The link is on the clipboard:\n{link}", self.title)
+        else:
+            # The link is selectable in the input box, so it can be copied by hand.
+            self.ui.inputBox(f"{prefix}Copy this link (select it and press Ctrl+C or Cmd+C):", self.title, link)
+
+    def _finish_setup_check(self, job: PushJob, message: Dict[str, Any]) -> None:
+        checks: List[Any] = list(job.checks)
+        if message.get("type") == "failed":
+            checks.append(setup_check.Check(setup_check.PROBLEM, "The connection test stopped unexpectedly.",
+                                            message.get("error", "")))
+        else:
+            checks.append(setup_check.connection_check(message.get("result")))
+        text = setup_check.format_report(checks)
+        if self.logger:
+            self.logger.info("Setup check finished: %s", text.splitlines()[1] if len(text.splitlines()) > 1 else "")
         self.ui.messageBox(text, self.title)
 
 
 __all__ = [
     "BUSY_TEXT",
+    "LINK_QUESTION",
+    "backup_link",
     "EVENT_SUFFIX",
     "NOTHING_PUSHED",
     "PushEventHandler",

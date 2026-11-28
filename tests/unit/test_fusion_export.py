@@ -58,11 +58,13 @@ class AllFormatsTests(ExportCase):
         self.assertFalse(result.ok)
         self.assertEqual(result.files, [])
 
-    def test_step_protocol_and_stl_refinement_are_applied(self):
+    def test_stl_refinement_is_applied_and_an_old_step_protocol_setting_is_ignored(self):
+        # The STEP AP203/AP214 option did nothing in Fusion and was removed
+        # (audit BUG-03); a setting saved by an older version is ignored.
         design = self.design()
         self.export(design, ["step", "stl"], {"step": {"protocol": "AP203"}, "stl": {"meshRefinement": "low"}})
         by_format = {o.format: o for o in design.exportManager.executed}
-        self.assertEqual(by_format["step"].applicationProtocol, "AP203")
+        self.assertEqual(by_format["step"].applicationProtocol, "AP214")  # the fake's untouched default
         self.assertEqual(by_format["stl"].meshRefinement, adsk.fusion.MeshRefinementSettings.MeshRefinementLow)
 
 

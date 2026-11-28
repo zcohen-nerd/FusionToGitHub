@@ -54,7 +54,14 @@ PACKAGE_FILES: Dict[str, str] = {
     "src/export_checks.py": "export_checks.py",
     "src/push_worker.py": "push_worker.py",
     "src/fusion_bridge.py": "fusion_bridge.py",
+    "src/error_catalog.py": "error_catalog.py",
+    "src/github_links.py": "github_links.py",
+    "src/setup_check.py": "setup_check.py",
     "src/AddInIcon.svg": "AddInIcon.svg",
+    "src/resources/16x16.png": "resources/16x16.png",
+    "src/resources/16x16@2x.png": "resources/16x16@2x.png",
+    "src/resources/32x32.png": "resources/32x32.png",
+    "src/resources/32x32@2x.png": "resources/32x32@2x.png",
     "LICENSE": "LICENSE",
 }
 # Developer tools kept in the repo but never shipped (maintainer decision Q12).

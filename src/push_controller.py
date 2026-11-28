@@ -32,12 +32,43 @@ from urllib.parse import urlsplit
 from . import fusion_git_core as git_core
 from .credentials import CredentialError, CredentialStore
 from .dialog_helpers import expand_export_subfolder, normalize_export_subfolder, publication_notice
-from .settings_store import SettingsError, SettingsStore, design_folder
+from .settings_store import SettingsError, SettingsStore, design_folder, history_mode
 
 HISTORY_FILE_NAME = "HISTORY.md"
 LEGACY_HISTORY_FILE = "CHANGELOG.md"
-DEFAULT_COMMIT_TEMPLATE = "Design update: {filename}"
+# "{message}" is what the user typed in "What changed?". Templates saved
+# before 0.7.0 have no "{message}"; for them the typed text is the whole
+# commit message, as before.
+DEFAULT_COMMIT_TEMPLATE = "{filename}: {message}"
 DEFAULT_BRANCH_FORMAT = "fusion-export/{filename}-{timestamp}"
+# Where new profiles put each design's folder (decision 1: designs/<name>/).
+NEW_PROFILE_SUBFOLDER = "designs"
+FALLBACK_MESSAGE = "Design update"
+
+
+def new_profile_settings() -> Dict[str, Any]:
+    """Settings a repository set up with this version starts with (audit UX-01).
+
+    One running history on the repository's default branch, each design in
+    ``designs/<name>/``. Profiles saved by earlier versions don't have
+    ``historyMode`` and keep their snapshot branches (settings_store.history_mode).
+    """
+    return {
+        "historyMode": git_core.MODE_SINGLE,
+        "targetBranch": "",
+        "exportSubfolder": NEW_PROFILE_SUBFOLDER,
+        "defaultMessage": DEFAULT_COMMIT_TEMPLATE,
+        "branchFormat": DEFAULT_BRANCH_FORMAT,
+    }
+
+
+def compose_commit_message(template: str, typed: str) -> str:
+    """The commit message template with what the user typed ("What changed?") filled in."""
+    typed = git_core.single_line(typed)
+    template = template or DEFAULT_COMMIT_TEMPLATE
+    if "{message}" in template:
+        return template.replace("{message}", typed or FALLBACK_MESSAGE)
+    return typed or template
 
 # ask_identity() -> (name, email, use_for_all_repositories) or None if cancelled
 IdentityPrompt = Callable[[], Optional[Tuple[str, str, bool]]]
@@ -61,6 +92,9 @@ class PushRequest:
     # Recorded in the design's HISTORY.md entry (for example, that the design
     # has linked components and the backup may not be self-contained).
     history_notes: List[str] = field(default_factory=list)
+    # The Fusion version that was backed up, as text ("v12", "v12 with
+    # unsaved changes", "not saved yet"); recorded in HISTORY.md.
+    fusion_version: str = ""
 
 
 @dataclass
@@ -85,6 +119,14 @@ class PushPlan:
     # Set once the "these exports are large" question was answered Yes (on
     # Fusion's main thread), so the background push doesn't ask it again.
     large_files_confirmed: bool = False
+    target_branch: Optional[str] = None
+    # The design and its folder, so the push can check the folder against
+    # GitHub and move it if another design owns it (risk R-24).
+    design_id: str = ""
+    design_folder: str = ""
+    export_template: str = ""
+    source_files: List[str] = field(default_factory=list)
+    fusion_version: str = ""
 
 
 def design_destination(profile: Dict[str, Any], design_id: str, design_name: str) -> Tuple[str, str]:
@@ -100,7 +142,11 @@ def design_destination(profile: Dict[str, Any], design_id: str, design_name: str
     the exports only, so the history keeps accumulating in one file.
     """
     template = normalize_export_subfolder(profile.get("exportSubfolder", ""))
-    folder_name = design_folder(profile, design_id, design_name)
+    return destination_for(template, design_folder(profile, design_id, design_name))
+
+
+def destination_for(template: str, folder_name: str) -> Tuple[str, str]:
+    """(export folder, HISTORY.md path) for a design whose folder is *folder_name*."""
 
     def place(tmpl: str) -> str:
         if "{filename}" in tmpl:
@@ -414,6 +460,7 @@ class PushController:
 
             profile = self.profile(request.profile_name)  # re-read: updates above changed it
             folder, history_file = design_destination(profile, request.design_id, request.design_name)
+            folder_name = profile["designs"][request.design_id]["folder"]
             exports = [(path, f"{folder}/{os.path.basename(path)}") for path in exported_files]
             self.store.update(request.profile_name, {"designs": profile.get("designs", {})})
             self.store.save()
@@ -425,19 +472,24 @@ class PushController:
             profile_name=request.profile_name,
             repo_path=repo_path,
             exports=exports,
-            message_template=request.commit_message.strip()
-            or profile.get("defaultMessage")
-            or DEFAULT_COMMIT_TEMPLATE,
+            message_template=compose_commit_message(profile.get("defaultMessage", ""), request.commit_message),
             design_name=request.design_name,
-            mode=profile.get("historyMode", git_core.MODE_SNAPSHOT),
+            mode=history_mode(profile),
             branch_format=profile.get("branchFormat") or DEFAULT_BRANCH_FORMAT,
-            branch_override=git_core.sanitize_branch_name(override) if override else None,
+            branch_override=(git_core.sanitize_branch_name(override)
+                             if override and history_mode(profile) == git_core.MODE_SNAPSHOT else None),
             history_file=history_file,
             history_title=f"History: {request.design_name}",
             identity=identity,
             pat_credentials=pat,
             notes=notes,
             history_notes=list(request.history_notes),
+            target_branch=(profile.get("targetBranch") or "").strip() or None,
+            design_id=request.design_id,
+            design_folder=folder_name,
+            export_template=normalize_export_subfolder(profile.get("exportSubfolder", "")),
+            source_files=list(exported_files),
+            fusion_version=request.fusion_version,
         )
 
     # -- push: git phase ----------------------------------------------------
@@ -455,6 +507,11 @@ class PushController:
         callbacks. Setting *cancel* (a threading.Event) stops the running git
         command; the result then says whether the export reached GitHub.
         """
+        def relocate(folder_name: str):
+            folder, history = destination_for(plan.export_template, folder_name)
+            return [(path, f"{folder}/{os.path.basename(path)}") for path in plan.source_files], history
+
+        can_relocate = bool(plan.design_id and plan.design_folder and plan.source_files and plan.history_file)
         return self.git.push_export(
             plan.repo_path,
             plan.exports,
@@ -474,7 +531,42 @@ class PushController:
             history_notes=plan.history_notes,
             cancel=cancel,
             large_files_confirmed=plan.large_files_confirmed,
+            target_branch=plan.target_branch,
+            design_id=plan.design_id or None,
+            design_folder=plan.design_folder or None,
+            relocate=relocate if can_relocate else None,
+            fusion_version=plan.fusion_version,
         )
+
+    def record_result(self, plan: PushPlan, result: Optional[Dict[str, Any]]) -> Optional[str]:
+        """After a push (main thread): remember a design folder the push moved to (risk R-24).
+
+        Re-reads the settings file first, so a dialog opened meanwhile isn't
+        overwritten with stale data. Returns the folder the design was moved
+        away from (None if it stayed where it was).
+        """
+        result = result or {}
+        folder = result.get("design_folder")
+        if not folder or folder == plan.design_folder or not plan.design_id or result.get("cancelled"):
+            return None
+        fresh = SettingsStore(self.store.path)
+        fresh.load()
+        profile = fresh.get(plan.profile_name)
+        if profile is not None and not fresh.report.read_only:
+            designs = dict(profile.get("designs") or {})
+            entry = dict(designs.get(plan.design_id) or {})
+            entry.update(folder=folder, name=plan.design_name)
+            designs[plan.design_id] = entry
+            try:
+                fresh.update(plan.profile_name, {"designs": designs})
+                fresh.save()
+                self.store.data = fresh.data
+            except (SettingsError, OSError) as exc:
+                # The markers on GitHub stay authoritative: the next push finds
+                # the folder again even if this couldn't be saved.
+                if self.logger:
+                    self.logger.warning("Couldn't record the design's folder '%s': %s", folder, exc)
+        return plan.design_folder
 
 
 __all__ = [
@@ -485,6 +577,9 @@ __all__ = [
     "PushPlan",
     "PushRefused",
     "PushRequest",
+    "compose_commit_message",
     "design_destination",
+    "destination_for",
+    "new_profile_settings",
     "server_of",
 ]

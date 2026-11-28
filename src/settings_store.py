@@ -40,6 +40,11 @@ from .portable_names import portable_name
 SCHEMA_VERSION = 1
 LEGACY_META_KEY = "__meta__"
 KNOWN_FORMATS = ("f3d", "step", "stl", "iges", "sat")
+# How a profile records its backups (decision 1, audit UX-01). A profile
+# without "historyMode" was made before 0.7.0 and keeps its snapshot
+# branches; new profiles are created with "single".
+HISTORY_MODES = ("single", "snapshot")
+LEGACY_HISTORY_MODE = "snapshot"
 # Settings older versions stored that no longer do anything (force push, a
 # pre-filled branch override); dropped on migration.
 OBSOLETE_PROFILE_KEYS = ("skipPullDefault", "lastBranchPreview")
@@ -83,7 +88,7 @@ def validate_profile(profile: Any) -> List[str]:
     if not isinstance(profile, dict):
         return ["is not an object"]
     problems = []
-    for key in ("path", "url", "defaultMessage", "branchFormat", "exportSubfolder", "logLevel"):
+    for key in ("path", "url", "defaultMessage", "branchFormat", "exportSubfolder", "logLevel", "targetBranch"):
         if key in profile and not isinstance(profile[key], str):
             problems.append(f"'{key}' is not text")
     if not profile.get("path"):
@@ -95,6 +100,8 @@ def validate_profile(profile: Any) -> List[str]:
         problems.append("'exportFormats' is not a list of names")
     if "formatSettings" in profile and not isinstance(profile["formatSettings"], dict):
         problems.append("'formatSettings' is not an object")
+    if "historyMode" in profile and profile["historyMode"] not in HISTORY_MODES:
+        problems.append("'historyMode' is not 'single' or 'snapshot'")
     for key in ("useStoredPat", "publicationNoticeAccepted"):
         if key in profile and not isinstance(profile[key], bool):
             problems.append(f"'{key}' is not true/false")
@@ -449,13 +456,22 @@ def design_folder(profile: Dict[str, Any], design_id: str, design_name: str) -> 
     return folder
 
 
+def history_mode(profile: Dict[str, Any]) -> str:
+    """The profile's history mode; profiles from before 0.7.0 keep snapshot branches."""
+    mode = profile.get("historyMode")
+    return mode if mode in HISTORY_MODES else LEGACY_HISTORY_MODE
+
+
 __all__ = [
+    "HISTORY_MODES",
+    "LEGACY_HISTORY_MODE",
     "SCHEMA_VERSION",
     "KNOWN_FORMATS",
     "LoadReport",
     "SettingsError",
     "SettingsStore",
     "design_folder",
+    "history_mode",
     "migrate",
     "safe_folder_name",
     "validate_profile",

@@ -12,9 +12,10 @@ from pathlib import Path
 
 import _paths  # noqa: F401
 from addin_harness import AddinTestCase, DialogResults
-from adsk.core import change_input, click, press_ok, select_item
+from adsk.core import change_input, click, ok_enabled, select_item
 
 import fusion_git_core as core
+from fusion_export import FORMAT_CHOICE_LABELS, format_from_choice
 from push_dialog import ADD_NEW_OPTION
 
 YES, NO, CANCEL = DialogResults.DialogYes, DialogResults.DialogNo, DialogResults.DialogCancel
@@ -28,6 +29,16 @@ def selected(command, input_id):
     return [i.name for i in item(command, input_id).listItems if i.isSelected]
 
 
+def selected_formats(command):
+    return sorted(format_from_choice(name) for name in selected(command, "exportFormatsConfig"))
+
+
+def choose_formats(command, *codes):
+    for fmt_item in item(command, "exportFormatsConfig").listItems:
+        fmt_item.isSelected = format_from_choice(fmt_item.name) in codes
+    change_input(command, "exportFormatsConfig")
+
+
 class OpeningTests(AddinTestCase):
     def test_lists_saved_repositories_and_selects_the_last_used(self):
         self.seed(
@@ -36,10 +47,13 @@ class OpeningTests(AddinTestCase):
         )
         command = self.open_dialog()
         names = [i.name for i in item(command, "repoSelector").listItems]
-        self.assertEqual(names, [ADD_NEW_OPTION, "Alpha", "Zeta"])
+        self.assertEqual(names, ["Alpha", "Zeta", ADD_NEW_OPTION])
         self.assertEqual(selected(command, "repoSelector"), ["Alpha"])
-        self.assertEqual(sorted(selected(command, "exportFormatsConfig")), ["sat", "stl"])
-        self.assertEqual(item(command, "commitMsgPush").value, "previous note")
+        self.assertEqual(selected_formats(command), ["sat", "stl"])
+        self.assertEqual(sorted(selected(command, "exportFormatsConfig")),
+                         sorted([FORMAT_CHOICE_LABELS["sat"], FORMAT_CHOICE_LABELS["stl"]]))
+        # "What changed?" starts empty every time (UX-10), so OK starts disabled.
+        self.assertEqual(item(command, "commitMsgPush").value, "")
         self.assertFalse(item(command, "gitUrl").isVisible)  # saved repo: setup fields hidden
         self.assertTrue(item(command, "editRepo").isVisible)
         self.assertEqual(self.ui.messages, [])  # nothing unusual to report
@@ -86,7 +100,7 @@ class SelectionAndValidationTests(AddinTestCase):
         command = self.open_dialog()
         change_input(command, "gitUrl", value="github.com/acme/widgets")
         self.assertIn("https://github.com/acme/widgets.git", item(command, "conversionStatus").text)
-        self.assertIn("Repository name: widgets", item(command, "conversionStatus").text)
+        self.assertIn("Listed here as: widgets", item(command, "conversionStatus").text)
         self.assertIn("valid", item(command, "gitValidationStatus").text)
         change_input(command, "gitUrl", value="not a url")
         self.assertIn("❌", item(command, "gitValidationStatus").text)
@@ -95,22 +109,24 @@ class SelectionAndValidationTests(AddinTestCase):
         command = self.open_dialog()
         change_input(command, "gitUrl", value="https://me:ghp_" + "x" * 36 + "@github.com/acme/widgets.git")
         self.assertIn("token", item(command, "gitValidationStatus").text)
-        args = press_ok(command)
-        self.assertTrue(args.executeFailed)
-        self.assertIn("Please fix these issues", self.last_message())
+        self.design()
+        change_input(command, "commitMsgPush", value="first")
+        self.assertFalse(ok_enabled(command))  # OK stays disabled (UX-02)
+        self.assertIn("password or token", item(command, "validationSummary").text)
         self.assertFalse(os.path.exists(self.repos_dir))
 
     def test_changing_formats_rebuilds_the_settings_table_without_id_clashes(self):
         command = self.open_dialog()
-        formats = item(command, "exportFormatsConfig")
-        for fmt_item in formats.listItems:
-            fmt_item.isSelected = fmt_item.name in ("step", "stl")
-        change_input(command, "exportFormatsConfig")
+        choose_formats(command, "step", "stl")
         change_input(command, "exportFormatsConfig")  # a second rebuild must not collide
         table = item(command, "formatSettingsTable")
-        self.assertEqual(table.rowCount, 4)  # header + step + stl mesh + stl files
+        # header + stl mesh + stl files; STEP has no settings (its protocol
+        # option did nothing and was removed, audit BUG-03)
+        self.assertEqual(table.rowCount, 3)
         labels = sorted(cell.text for (row, col), cell in table.cells.items() if col == 0 and row > 0)
-        self.assertEqual(labels, ["STEP", "STL", "STL files"])
+        self.assertEqual(labels, ["STL", "STL files"])
+        choose_formats(command, "step")
+        self.assertFalse(table.isVisible)  # nothing to set
 
     def test_format_setting_choice_is_saved_with_the_push(self):
         self.seed({"Designs": self.work_profile(exportFormats=["stl"])}, meta={"lastSelectedRepo": "Designs"})
@@ -250,13 +266,15 @@ class PushTests(AddinTestCase):
         self.assertFalse(args.executeFailed, self.ui.texts())
         self.assertTrue(command.isTerminated)  # the dialog closed when the push started
         success = self.last_message()
-        self.assertIn("Pushed to GitHub, branch: fusion-export/Bracket-", success)
-        self.assertIn("Bracket/Bracket.step", success)
+        self.assertIn('Backed up "Bracket" to GitHub.', success)
+        self.assertIn("Saved to: fusion-export/Bracket-", success)  # a profile from before 0.7.0
+        self.assertIn("Files: Bracket.step", success)
+        self.assertIn("Fusion version: v1", success)
         branch = next(b for b in self.remote_branches() if b.startswith("fusion-export/"))
         self.assertEqual(self.remote_files(branch), [".gitattributes", "Bracket/Bracket.step", "Bracket/HISTORY.md"])
         self.assertIn("holes 5mm", core.git_run(self.origin, "log", "-1", "--format=%s", branch).stdout)
         self.assertTrue(self.profile("Designs")["publicationNoticeAccepted"])
-        self.assertEqual(self.settings()["meta"]["lastCommitMessage"], "holes 5mm")
+        self.assertNotIn("lastCommitMessage", self.settings()["meta"])  # never pre-filled again
         self.assertTrue(any("publishes your design" in q or "pushes your design" in q for q in self.ui.questions))
 
     def test_declining_the_publication_notice_keeps_the_dialog_open(self):
@@ -264,7 +282,7 @@ class PushTests(AddinTestCase):
         self.design()
         command = self.open_dialog()
         self.answer(NO)
-        args = press_ok(command)
+        args = self.press_ok(command)
         self.assertTrue(args.executeFailed)
         self.assertIn("Push cancelled", self.last_message())
         self.assertEqual(self.remote_branches(), [])
@@ -292,7 +310,7 @@ class PushTests(AddinTestCase):
         self.design()
         command = self.open_dialog()
         self.answer(YES)  # the one-time publication notice
-        args = press_ok(command)  # inputBox queue empty → cancelled
+        args = self.press_ok(command)  # inputBox queue empty → cancelled
         self.assertTrue(args.executeFailed)
         self.assertEqual(self.remote_branches(), [])
         self.assertNotIn("gitIdentity", self.profile("Designs"))
@@ -302,7 +320,7 @@ class PushTests(AddinTestCase):
         self.design()
         command = self.open_dialog()
         self.answer(YES)  # the one-time publication notice
-        args = press_ok(command)
+        args = self.press_ok(command)
         self.assertTrue(args.executeFailed)
         self.assertIn("No stored token", self.last_message())
         self.assertEqual(self.remote_branches(), [])
@@ -316,21 +334,24 @@ class PushTests(AddinTestCase):
         self.answer(YES)  # the one-time publication notice
         args = self.push(command)
         self.assertFalse(args.executeFailed)
-        self.assertTrue(any(t.startswith("Push failed") for t in self.ui.texts()), self.ui.texts())
-        self.assertIn("Git operations failed", self.last_message())
+        explained = [t for t in self.ui.texts() if t.startswith("GitHub couldn't find the repository")]
+        self.assertTrue(explained, self.ui.texts())
+        self.assertIn("Technical details:", explained[0])  # Git's own words are kept below
+        self.assertIn("The backup didn't complete", self.last_message())
 
     def test_no_design_open(self):
         self.seed({"Designs": self.work_profile()}, meta={"lastSelectedRepo": "Designs"})
         command = self.open_dialog()
-        args = press_ok(command)
-        self.assertTrue(args.executeFailed)
-        self.assertIn("No active Fusion design", self.last_message())
+        change_input(command, "commitMsgPush", value="x")
+        self.assertFalse(ok_enabled(command))
+        self.assertIn("Open a Fusion design first.", item(command, "validationSummary").text)
+        self.assertIn("No design is open", item(command, "designStatus").text)
 
     def test_failed_export_is_reported_and_nothing_is_pushed(self):
         self.seed({"Designs": self.work_profile()}, meta={"lastSelectedRepo": "Designs"})
         self.design().exportManager.fail_formats = {"step"}
         command = self.open_dialog()
-        args = press_ok(command)
+        args = self.press_ok(command)
         self.assertTrue(args.executeFailed)
         self.assertIn("Nothing was pushed because these exports failed", self.last_message())
         self.assertEqual(self.remote_branches(), [])
@@ -352,7 +373,10 @@ class PushTests(AddinTestCase):
         self.assertEqual(self.profile("MyDesigns")["path"], clone)
         self.assertTrue(os.path.isdir(os.path.join(clone, ".git")))
         self.assertFalse(os.path.exists(os.path.join(self.repos_dir, "NewRepo")))
-        self.assertTrue(any(b.startswith("fusion-export/") for b in self.remote_branches()))
+        # A repository set up now keeps one running history on main (UX-01).
+        self.assertEqual(self.profile("MyDesigns")["historyMode"], "single")
+        self.assertEqual(self.remote_branches(), ["main"])
+        self.assertIn("designs/Bracket/Bracket.f3d", self.remote_files("main"))
 
 
 class LogAndPrivacyTests(AddinTestCase):
@@ -429,7 +453,7 @@ class ReviewFixDialogTests(AddinTestCase):
         before = Path(self.settings_path).read_bytes()
         self.design()
         command = self.open_dialog()
-        args = press_ok(command)
+        args = self.press_ok(command)
         self.assertTrue(args.executeFailed)
         self.assertEqual(Path(self.settings_path).read_bytes(), before)
         self.assertEqual(self.remote_branches(), [])

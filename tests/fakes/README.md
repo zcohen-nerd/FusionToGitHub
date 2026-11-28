@@ -115,3 +115,21 @@ Assumptions about Fusion, to confirm in Fusion itself:
 26. A modal `messageBox` may let Fusion deliver other events (custom events
     from the background push) while it is open. The fake does that only when a
     test sets `ui.while_message_box_open`; the bridge must cope either way.
+
+### Dialog validation (S5)
+
+27. Fusion fires `validateInputs` after `commandCreated` and after each input
+    change, and before OK can be clicked; while the handler sets
+    `args.areInputsValid = False`, OK is greyed out. The fake's `press_ok`
+    fails a test that clicks a disabled OK; `ok_enabled(command)` asks.
+28. `Command.okButtonText` renames the OK button ("Back up now").
+29. A `TextBoxCommandInput`'s `text` can be changed while the dialog is open
+    and the new text is shown at once (used for the "Saves to" line and the
+    validation summary).
+30. `ToolbarControl.isPromotedByDefault = True` shows a newly added button
+    on the toolbar; a user who moves it into the panel's menu keeps that
+    choice, because the add-in no longer sets `isPromoted` (audit COMP-13).
+31. `CommandDefinitions.addButtonDefinition(id, name, tooltip, folder)` reads
+    `16x16.png`, `32x32.png` and their `@2x` versions from *folder*.
+32. `webbrowser.open(url)` opens the user's browser from Fusion's Python, and
+    `clip.exe` (Windows) or `pbcopy` (macOS) can be run to copy a link.

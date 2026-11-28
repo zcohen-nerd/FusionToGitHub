@@ -50,6 +50,7 @@ def install(folder, version=None, marker=None):
     """
     os.makedirs(folder, exist_ok=True)
     for src, arc in runtime_files().items():
+        os.makedirs(os.path.dirname(os.path.join(folder, arc)), exist_ok=True)  # resources/
         shutil.copyfile(os.path.join(ROOT, src), os.path.join(folder, arc))
         if marker and arc.endswith(".py"):
             with open(os.path.join(folder, arc), "a", encoding="utf-8") as fh:

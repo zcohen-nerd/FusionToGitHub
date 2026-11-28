@@ -14,11 +14,12 @@ issue.
 The steps form **one session**, in this order: each step leaves Fusion in the
 state the next one needs. It starts from the previous release (0.4.0) so the
 upgrade, migration and same-session update checks happen naturally. Expect
-about 90 minutes.
+about 2 hours.
 
 Every acceptance criterion has an ID: the letter of its original checklist
 section and its position there (A1 … M3). The table at the end shows where
-each one is checked. R1–R2 are new live checks of the R-21 protections.
+each one is checked. R1–R2 are new live checks of the R-21 protections;
+U1–U16 cover 0.7.0's dialog, history modes, links and icon (step 4a).
 
 | Item | Value |
 |---|---|
@@ -95,6 +96,63 @@ Push the inch design to the repository from step 1 with F3D + STEP + STL.
       input events).
 - [ ] **H18** The Edit Repository and Remove Repository controls are laid out
       sensibly in the Repository group.
+
+## 4a. The 0.7.0 dialog, history and links (S5)
+
+For 0.7.0 and later. Assumptions 27–32 in `tests/fakes/README.md`.
+
+- [ ] **U1** The OK button reads **Back up now** and is greyed out until
+      "What changed?" is filled in; the line under the files says what is
+      missing, and disappears once it's complete.
+- [ ] **U2** "What changed?" is empty every time the dialog opens.
+- [ ] **U3** **Icon:** the toolbar button shows the blue cube with the
+      orange branch, legible in Fusion's light and dark themes, at 100 % and
+      at a high display scale (150 % or more); the same icon appears in
+      Utilities → Add-Ins → Scripts and Add-Ins. Record a screenshot.
+- [ ] **U4** Move the button from the toolbar into the ADD-INS menu
+      ("Move to menu"/unpin), then Stop and Run the add-in and restart
+      Fusion: it stays in the menu (audit COMP-13).
+- [ ] **U5** "Files to include" lists descriptive names ("STEP (.step): for
+      other CAD programs" …); choosing STEP adds no settings row.
+- [ ] **U6** The Design line shows the design's name and "Fusion version:
+      vN"; after an unsaved edit it says "with unsaved changes" and that
+      Fusion's own history doesn't include them until you save.
+- [ ] **U7** "Saves to" changes when you pick another repository, set
+      Advanced → Backup branch, or tick Separate branch per backup.
+- [ ] **U8** **Running history:** with a repository set up in step 5 (or
+      a new one), back up the same design twice: on GitHub, `main` has
+      `designs/<design>/` with the files and a `HISTORY.md` listing both
+      backups with their Fusion versions, and there are no
+      `fusion-export/...` branches.
+- [ ] **U9** Set Advanced → Backup branch to `fusion-backups` and back up:
+      the branch appears on GitHub with the design's folder; `main` doesn't
+      change.
+- [ ] **U10** The repository saved by 0.4.0 (step 1) still makes a new
+      `fusion-export/...` branch per backup, and Separate branch per backup
+      is ticked for it.
+- [ ] **U11** After a backup, **Yes** opens the design's folder on GitHub in
+      the browser; after another, **No** says the link is on the clipboard,
+      and pasting it into the browser opens the same folder.
+- [ ] **U12** **Check My Setup** with a saved repository: a report with an
+      OK line for Git (and its version), the sign-in helper and the folder,
+      a GitHub sign-in window if Git Credential Manager needs one, and
+      "GitHub accepted the sign-in…". Nothing is pushed. Fusion stays usable
+      while it runs.
+- [ ] **U13** With the network off, a backup fails with a message that starts
+      "Couldn't reach GitHub." and has Git's own message under "Technical
+      details". No dialog in this whole session shows a Python traceback.
+- [ ] **U14** **Two saved repositories for one GitHub repository** (risk
+      R-24): add the test repository again under a second name and folder.
+      Back up a design called `Bracket` through the first, then a
+      *different* design also called `Bracket` through the second: they
+      land in `designs/Bracket/` and `designs/Bracket (2)/`, and the summary
+      explains the second folder.
+- [ ] **U15** *(if available)* On a computer, or Windows account, without
+      Git: opening the dialog with no saved repository reports "Git was not
+      found" with a download link before anything else.
+- [ ] **U16** *(if available)* With branch protection on `main` (GitHub →
+      Settings → Branches), a running-history backup fails with "…that
+      branch is protected" and suggests a Backup branch.
 
 ## 5. New repository setup
 
@@ -297,4 +355,5 @@ so the push takes a while.
 | L. Synced folders | L1–L2 | 11 |
 | M. macOS | M1–M3 | 13 |
 | R-21 live checks | R1–R2 | 8 |
+| 0.7.0 dialog, history, links, icon (S5) | U1–U16 | 4a (U8 after step 5; U13 with step 9's network test) |
 
