@@ -19,7 +19,8 @@ about 2 hours.
 Every acceptance criterion has an ID: the letter of its original checklist
 section and its position there (A1 … M3). The table at the end shows where
 each one is checked. R1–R2 are new live checks of the R-21 protections;
-U1–U16 cover 0.7.0's dialog, history modes, links and icon (step 4a).
+U1–U16 cover 0.7.0's dialog, history modes, links and icon (step 4a);
+W1–W6 check the documentation against Fusion (step 14).
 
 | Item | Value |
 |---|---|
@@ -84,12 +85,12 @@ Push the inch design to the repository from step 1 with F3D + STEP + STL.
 
 ## 4. The dialog itself
 
-- [ ] **H1** Opening the dialog several times, and changing Export Formats
+- [ ] **H1** Opening the dialog several times, and changing Files to include
       several times, never shows an error (input ids are reused after
       `deleteMe()`).
 - [ ] **H2** The Format Settings table rebuilds correctly when formats
       change.
-- [ ] **H3** The repository dropdown selects one item; Export Formats allows
+- [ ] **H3** The repository dropdown selects one item; Files to include allows
       several.
 - [ ] **H4** Choosing a repository fills in its saved settings without
       triggering extra questions (setting values from code doesn't fire
@@ -246,7 +247,7 @@ so the push takes a while.
 - [ ] **D1** **Advanced → Manage Token… → Yes**: the Token field shows
       **dots**, not the token.
 - [ ] **H5** The Token field shows dots (`isPassword`).
-- [ ] **D2** Save Token: confirmed; "Use Stored Token" ticked; the field is
+- [ ] **D2** Save Token: confirmed; "Use stored token" ticked; the field is
       empty.
 - [ ] **D3** A push with the stored token succeeds.
 - [ ] **R1** In the repository's local folder run
@@ -337,6 +338,27 @@ so the push takes a while.
 - [ ] **M3** Steps 3, 6, 7 and 10 behave as on Windows; record anything
       different, with the Fusion build.
 
+## 14. Documentation matches Fusion (0.8.0, S6)
+
+- [ ] **W1** **Install by the book:** on a Windows account where the add-in
+      isn't installed (or after step W4), follow `docs/INSTALL.md` word for
+      word, without other help: the button appears. Note any step that was
+      unclear or wrong.
+- [ ] **W2** **Restore by the book:** follow `docs/RESTORE.md` to download an
+      earlier backup's `.f3d` from a file's History on GitHub and open it in
+      Fusion: it opens as a new design with its timeline, and the original
+      design is unchanged. Also open the STEP file of the same backup. (With
+      J2 this covers getting an earlier version back.)
+- [ ] **W3** Every dialog label and message quoted in `docs/USER_GUIDE.md` and
+      `docs/TROUBLESHOOTING.md` that you met in this session matches what
+      Fusion showed; list any that don't.
+- [ ] **W4** **Uninstall by the book** (`docs/INSTALL.md` → Uninstall): the
+      add-in disappears; only the files the table lists remain.
+- [ ] **W5** Capture the screenshots listed in `docs/SCREENSHOTS.md` (Fusion
+      build and date recorded there).
+- [ ] **W6** *(if available)* The Community Store shows the add-in's cube icon
+      (from `community-store.json`) on its card.
+
 ## Coverage of the acceptance criteria
 
 | Original section | Criteria | Checked in step |
@@ -356,4 +378,5 @@ so the push takes a while.
 | M. macOS | M1–M3 | 13 |
 | R-21 live checks | R1–R2 | 8 |
 | 0.7.0 dialog, history, links, icon (S5) | U1–U16 | 4a (U8 after step 5; U13 with step 9's network test) |
+| Documentation matches Fusion (S6) | W1–W6 | 14 |
 

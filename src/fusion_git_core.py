@@ -41,7 +41,7 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Protocol, Sequence, Tuple
 from urllib.parse import urlsplit
 
-VERSION = "0.7.0"
+VERSION = "0.8.0"
 IS_WINDOWS = os.name == "nt"
 GIT_OVERRIDE_ENV = "FUSION_TO_GITHUB_GIT"
 
@@ -710,7 +710,7 @@ def token_auth(remote_url: str, token: str, username: str = "") -> GitAuth:
     if parsed.scheme.lower() != "https" or not parsed.hostname:
         raise GitError(
             "A stored token is only sent to https:// addresses, and this repository's "
-            f"address is '{redact_secrets(remote_url)}'. Untick 'Use Stored Token', or "
+            f"address is '{redact_secrets(remote_url)}'. Untick 'Use stored token', or "
             "change the repository's address to its https:// form."
         )
     host = parsed.hostname.lower() + (f":{parsed.port}" if parsed.port else "")

@@ -222,7 +222,7 @@ class EditRemoveTests(AddinTestCase):
         self.assertFalse(self.profile("Designs")["useStoredPat"])
         self.assertFalse(item(command, "useStoredPat").value)
         self.assertEqual(core.git_run(self.work, "remote", "get-url", "origin").stdout, origin_before)
-        self.assertIn("Use Stored Token", self.last_message())
+        self.assertIn("Use stored token", self.last_message())
 
     def test_invalid_edit_changes_nothing(self):
         command = self.open_dialog()

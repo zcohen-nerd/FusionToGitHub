@@ -1,0 +1,20 @@
+name: Feature request
+description: Suggest an improvement.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The task or problem, in your own words. What happens today?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help?
+      description: How you imagine it working. Alternatives you've considered are welcome too.
+  - type: markdown
+    attributes:
+      value: |
+        The add-in is a backup tool for one person or a small team; it deliberately doesn't merge or lock CAD files (see [Teams](https://github.com/zcohen-nerd/FusionToGitHub/blob/main/docs/TEAMS.md)). It is maintained by one volunteer, so not every idea can be built.

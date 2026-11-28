@@ -76,12 +76,22 @@ dialog tests check this). The icons are generated: edit
 - For changes to the Fusion dialog, add tests against the simulated Fusion
   objects, and say in the PR what you checked by hand in real Fusion (see
   [`tests/MANUAL_CHECKLIST.md`](tests/MANUAL_CHECKLIST.md)).
-- Update the docs in the same PR.
+- Update the docs in the same PR. Each procedure lives in exactly one
+  document ([docs/README.md](docs/README.md) lists them); link to it rather
+  than repeating it. The docs check (`.github/scripts/check-docs.mjs`) also
+  fails on destructive Git commands, the old `FusionToGitHub` install folder,
+  the product's former name outside a file path (it is *Autodesk Fusion*),
+  and hard-coded test counts.
+- Screenshots come from real Fusion only, never from mock-ups or the
+  simulated Fusion ([docs/SCREENSHOTS.md](docs/SCREENSHOTS.md)).
 - Never include tokens, private designs or unredacted logs.
 - The add-in must never force-push or rewrite history on GitHub; a test
   (`T_NOFORCE`) enforces this.
 - External contributions are credited in the CHANGELOG with the contributor's
   GitHub handle and the PR number.
+- AI-assisted contributions are welcome when you have reviewed and tested
+  them yourself and can explain them; say so in the PR.
+- Follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Releasing
 
@@ -118,6 +128,21 @@ next patch version. Never move or re-push a tag that has been pushed.
 **Dry run:** *Actions → Release → Run workflow* on any branch builds and
 uploads the ZIP as an artifact without creating a release. To rehearse the
 whole flow, push a test tag to a fork.
+
+**Community Store.** The [Fusion Community Store](https://github.com/4FusionLab/CommunityStore)
+installs published releases from this repository. What it needs is already in
+place:
+- a numeric tag equal to the manifest version;
+- the ZIP as a release asset, with GitHub's SHA-256 digest;
+- the stable add-in ID;
+- `community-store.json` at the repository root, naming the icon (and later
+  the screenshots; PNG, JPEG or WebP, at most 1 MiB each, no SVG);
+- the `fusion360-addin` topic.
+
+Tags with a suffix (`1.0.0-rc.1`) can't be installed through the Store, so
+release candidates use a numeric version (0.9.x) and are marked
+*pre-release*. The Store shows the repository description on its card, the
+release notes (up to 16,000 characters), and the README at the tag.
 
 **One-time repository settings** (maintainer, in GitHub settings): turn on
 *Immutable releases*; add a tag ruleset that blocks updating or deleting

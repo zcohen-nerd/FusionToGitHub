@@ -2,9 +2,8 @@
 """
 FusionToGitHub - Automated Test Runner
 
-This script automates the execution of testable components from the TESTING.md
-systematic test plan. It focuses on programmatically verifiable tests while
-providing guidance for manual UI tests.
+This script runs the Git pipeline and release integration tests (see
+tests/TESTING.md). Checks that need real Fusion are in tests/MANUAL_CHECKLIST.md.
 
 Usage:
     python test_runner.py [--verbose] [--category CATEGORY]
@@ -1607,7 +1606,7 @@ class TestRunner:
                         print(f"    {result.message}")
 
         print("\nNOTE: This covers automated tests only.")
-        print("See TESTING.md for complete manual test procedures.")
+        print("Checks in real Fusion: tests/MANUAL_CHECKLIST.md.")
 
 
 def _src_version() -> str:

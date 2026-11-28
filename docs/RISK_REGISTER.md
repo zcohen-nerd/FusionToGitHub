@@ -18,7 +18,7 @@ The formal list of known risks to FusionToGitHub users and to the project
   **Resolved** (resolution criteria met), **Accepted** (maintainer agreed),
   **Acceptance proposed**.
 
-*Last reviewed: 2026-11-28, sprint S5 and the R-21 E4 follow-up (development version 0.7.0, unpublished).*
+*Last reviewed: 2026-11-28, sprint S6 (development version 0.8.0, unpublished).*
 
 ## Summary
 
@@ -43,7 +43,7 @@ The formal list of known risks to FusionToGitHub users and to the project
 | R-17 | Contributor attribution | 1×1 = 1 Low | **Resolved** (0.3.3) | — |
 | R-18 | Fusion test doubles diverge from real Fusion | 3×3 = 9 Medium | Open (new in S3; 25 assumptions in S4) | Manual checklist every release |
 | R-19 | Settings migration loses saved repositories | 1×3 = 3 Low | Mitigated (new in S3) | Confirm on a real 0.4.0 settings file |
-| R-20 | Per-design folders surprise existing users | 2×2 = 4 Low | Mitigated (S5: the dialog and summary say where files go) | S6 docs |
+| R-20 | Per-design folders surprise existing users | 1×2 = 2 Low | **Resolved** (0.8.0: dialog, summary and user documentation) | — |
 | R-21 | A repository's own hooks or settings could expose the stored token | 1×3 = 3 Low | Mitigated, **not accepted** (maintainer, 2026-11-27); E4 mitigated in 0.7.0 | Live push with a token (R1, R2, D3) |
 | R-22 | Masked token field unsupported in some Fusion builds | 2×3 = 6 Low | Open (new in S3) | Manual check of the Token field |
 | R-23 | Stored token sent to a server it wasn't stored for | 1×4 = 4 Low | **Resolved** (0.6.0) | — |
@@ -130,10 +130,10 @@ The formal list of known risks to FusionToGitHub users and to the project
 - **Mitigation:** the pre-0.5.0 file is copied once to `.fusion_git_repos.json.v0-backup` before its first rewrite; unreadable files are preserved; invalid entries are kept; saves are atomic. Covered by unit tests.
 - **Resolved when:** a real settings file from 0.4.0 has been upgraded in Fusion without loss.
 
-### R-20 — Per-design folders surprise existing users — Open (new in S3)
+### R-20 — Per-design folders surprise existing users — Resolved (0.8.0)
 - **Cause:** decision Q11 puts each design's exports and its `HISTORY.md` in a folder named after the design. Users upgrading from 0.4.0 will see new pushes land in `<design>/` instead of the repository root; the old `CHANGELOG.md` stays where it was and is referenced from each new history file.
 - **Mitigation:** CHANGELOG and release notes explain the change. Since S5 the dialog's "Saves to" line shows the branch and folder before a backup, and the summary after it shows where it went, with a link to the folder on GitHub.
-- **Resolved when:** S6's user documentation describes the layout.
+- **Resolved (S6, 0.8.0):** the user guide (*Where backups go*), the restore guide and the README describe the layout, including the snapshot branches of repositories set up earlier.
 
 ### R-21 — A repository's own hooks or settings could expose the stored token — Mitigated (S4)
 - **Cause:** the token is passed to the network `git` process in its environment, and that process obeys the repository's own `.git/config`. Three routes were found and reproduced with a fake token and fake hosts:
@@ -186,7 +186,7 @@ The formal list of known risks to FusionToGitHub users and to the project
 
 ### R-23 — Stored token sent to a server it wasn't stored for — Resolved (0.6.0)
 - **Found by:** the S3 independent security review. Tokens were stored per repository name; pointing a saved repository at a clone on another server, or re-adding a removed repository's name, could have reused the token there.
-- **Mitigation:** the server is stored with the token (Credential Manager comment field) and checked against the folder's actual push address, including the port, before every push; changing a repository's folder or server turns off Use Stored Token. Tokens from before 0.5.0 are bound on first use.
+- **Mitigation:** the server is stored with the token (Credential Manager comment field) and checked against the folder's actual push address, including the port, before every push; changing a repository's folder or server turns off Use stored token. Tokens from before 0.5.0 are bound on first use.
 - **Resolution evidence:** `ReviewFixTests` in `tests/unit/test_push_controller.py`.
 
 ### R-24 — Design folders allocated independently by two saved repositories — Mitigated (S5)

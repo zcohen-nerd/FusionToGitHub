@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Troubleshooting guide
+    url: https://github.com/zcohen-nerd/FusionToGitHub/blob/main/docs/TROUBLESHOOTING.md
+    about: Every message the add-in shows, with the fix.
+  - name: Report a security problem
+    url: https://github.com/zcohen-nerd/FusionToGitHub/blob/main/SECURITY.md#reporting-a-problem
+    about: Please don't describe security problems in a public issue.

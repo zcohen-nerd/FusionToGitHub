@@ -12,6 +12,8 @@ are not updated afterwards.
 | [annexes/ANNEX-7_Docs_OSS_Branding_workpaper.md](annexes/ANNEX-7_Docs_OSS_Branding_workpaper.md) | Audit workpaper: documentation, open-source hygiene and branding |
 | [S3_Implementation_Report.md](S3_Implementation_Report.md) | Sprint S3: testability and application architecture (developed as 0.5.0, shipped in 0.6.0) |
 | [S4_Implementation_Report.md](S4_Implementation_Report.md) | Sprint S4: Fusion integration and export reliability (0.6.0) |
+| [S5_Implementation_Report.md](S5_Implementation_Report.md) | Sprint S5: user experience and branding (0.7.0), with its independent reviews; the R-21 E4 follow-up is recorded in the risk register |
+| [S6_Implementation_Report.md](S6_Implementation_Report.md) | Sprint S6: documentation and community (0.8.0) |
 | [workpapers/r21_ext_transport_probe.py](workpapers/r21_ext_transport_probe.py) | Reproduction for risk R-21: repository config starting a program (`ext::`) in a token-carrying Git process |
 | [workpapers/r21_probe.py](workpapers/r21_probe.py) | Reproduction for risk R-21: tracing, redirects, another repository on the same host, and the process environment |
 

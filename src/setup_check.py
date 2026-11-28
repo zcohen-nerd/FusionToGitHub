@@ -105,7 +105,7 @@ def check_sign_in(git=git_core, profile: Optional[Dict[str, Any]] = None, token_
         if token_stored:
             return Check(OK, "This repository uses a stored token to sign in to GitHub.")
         return Check(PROBLEM, "This repository is set to use a stored token, but none is stored.",
-                     next_step="Store one with Advanced → Manage Token…, or untick Use Stored Token.")
+                     next_step="Store one with Advanced → Manage Token…, or untick Use stored token.")
     helpers = _config(git, None, "--get-all", "credential.helper").lower()
     if "manager" in helpers:
         return Check(OK, "Git Credential Manager will handle GitHub sign-in.",
