@@ -62,13 +62,20 @@ def new_profile_settings() -> Dict[str, Any]:
     }
 
 
-def compose_commit_message(template: str, typed: str) -> str:
-    """The commit message template with what the user typed ("What changed?") filled in."""
+def commit_message_parts(template: str, typed: str) -> Tuple[str, str]:
+    """(template, text for {message}) for a commit: push_export fills {message} last."""
     typed = git_core.single_line(typed)
     template = template or DEFAULT_COMMIT_TEMPLATE
     if "{message}" in template:
-        return template.replace("{message}", typed or FALLBACK_MESSAGE)
-    return typed or template
+        return template, typed or FALLBACK_MESSAGE
+    # A template saved before 0.7.0: the typed text is the whole message.
+    return ("{message}", typed) if typed else (template, "")
+
+
+def compose_commit_message(template: str, typed: str) -> str:
+    """The commit message template with what the user typed ("What changed?") filled in."""
+    template, text = commit_message_parts(template, typed)
+    return template.replace("{message}", text)
 
 # ask_identity() -> (name, email, use_for_all_repositories) or None if cancelled
 IdentityPrompt = Callable[[], Optional[Tuple[str, str, bool]]]
@@ -127,6 +134,8 @@ class PushPlan:
     export_template: str = ""
     source_files: List[str] = field(default_factory=list)
     fusion_version: str = ""
+    # What the user typed; fills {message} in message_template.
+    commit_text: str = ""
 
 
 def design_destination(profile: Dict[str, Any], design_id: str, design_name: str) -> Tuple[str, str]:
@@ -468,11 +477,13 @@ class PushController:
             raise PushRefused(f"The push couldn't be prepared: {git_core.redact_secrets(str(exc))}") from exc
 
         override = (request.branch_override or "").strip()
+        message_template, commit_text = commit_message_parts(profile.get("defaultMessage", ""), request.commit_message)
         return PushPlan(
             profile_name=request.profile_name,
             repo_path=repo_path,
             exports=exports,
-            message_template=compose_commit_message(profile.get("defaultMessage", ""), request.commit_message),
+            message_template=message_template,
+            commit_text=commit_text,
             design_name=request.design_name,
             mode=history_mode(profile),
             branch_format=profile.get("branchFormat") or DEFAULT_BRANCH_FORMAT,
@@ -536,6 +547,7 @@ class PushController:
             design_folder=plan.design_folder or None,
             relocate=relocate if can_relocate else None,
             fusion_version=plan.fusion_version,
+            commit_text=plan.commit_text,
         )
 
     def record_result(self, plan: PushPlan, result: Optional[Dict[str, Any]]) -> Optional[str]:

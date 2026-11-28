@@ -20,6 +20,8 @@ import re
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
+from .fusion_git_core import redact_secrets
+
 DETAIL_MAX_LINES = 12
 DETAIL_MAX_CHARS = 1200
 LOG_HINT = "The log file has the full details (Help & Privacy → Open Log File)."
@@ -142,7 +144,7 @@ def unexpected_error(what: str, exc: BaseException, *, nothing_pushed: bool = Tr
     *what* says what was happening ("starting the backup"). The exception's
     type and first line are kept for support; the traceback goes to the log.
     """
-    first_line = (str(exc).strip().splitlines() or [""])[0][:300]
+    first_line = redact_secrets((str(exc).strip().splitlines() or [""])[0][:300])
     summary = type(exc).__name__ + (f": {first_line}" if first_line else "")
     lines = [f"Something went wrong while {what}."]
     if nothing_pushed:

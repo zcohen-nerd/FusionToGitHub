@@ -15,7 +15,8 @@ import fusion_git_core as core
 import github_links as gl
 import setup_check as sc
 from fusion_export import design_version_text, format_from_choice
-from push_controller import DEFAULT_COMMIT_TEMPLATE, compose_commit_message, new_profile_settings
+from push_controller import (DEFAULT_COMMIT_TEMPLATE, commit_message_parts, compose_commit_message,
+                             new_profile_settings)
 from settings_store import history_mode, validate_profile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -75,6 +76,9 @@ class ErrorCatalogTests(unittest.TestCase):
         self.assertTrue(text.startswith("Something went wrong while starting the backup. Nothing was pushed."))
         self.assertIn("KeyError: 'designs'", text)
         self.assertFalse(ec.contains_traceback(text))
+        token = "ghp_" + "s" * 36
+        leaked = ec.unexpected_error("x", ValueError(f"bad https://me:{token}@github.com/a/b"))
+        self.assertNotIn(token, leaked)
 
 
 class GitHubLinkTests(unittest.TestCase):
@@ -91,6 +95,10 @@ class GitHubLinkTests(unittest.TestCase):
             "C:\\repos\\designs": None,
             "https://github.com/acme": None,
             "": None,
+            # scp-style addresses whose "host" isn't a host name (S5 security review)
+            "git@github.com#@evil.example/x:a/b": None,
+            "git@evil.example/x?:a/b": None,
+            "git@ho st:a/b": None,
         }
         for remote, expected in cases.items():
             with self.subTest(remote=remote):
@@ -111,12 +119,17 @@ class GitHubLinkTests(unittest.TestCase):
         self.assertEqual(gl.folder_url("https://gitlab.example.invalid/a/b.git", "main", "x"),
                          "https://gitlab.example.invalid/a/b")
         self.assertIsNone(gl.folder_url("C:/local/bare.git", "main", "x"))
+        # No "." or ".." path segments in a link.
+        self.assertEqual(gl.folder_url("https://github.com/a/b", "main", "../x"), "https://github.com/a/b/tree/main")
+        self.assertEqual(gl.folder_url("https://github.com/a/b", "../main", "x"), "https://github.com/a/b")
 
     def test_copy_uses_the_system_tool_and_reports_failure(self):
         with mock.patch.object(gl.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as run:
             self.assertTrue(gl.copy_to_clipboard("https://github.com/a/b"))
         command = run.call_args[0][0]
-        self.assertEqual(command, ["clip"] if os.name == "nt" else ["pbcopy"])
+        # A full path, so a clip.exe in the current folder can't be picked up.
+        self.assertTrue(os.path.isabs(command[0]), command)
+        self.assertTrue(os.path.basename(command[0]).lower() in ("clip.exe", "pbcopy"), command)
         with mock.patch.object(gl.subprocess, "run", side_effect=OSError("missing")):
             self.assertFalse(gl.copy_to_clipboard("https://github.com/a/b"))
         self.assertFalse(gl.copy_to_clipboard(""))
@@ -167,6 +180,9 @@ class SetupCheckTests(unittest.TestCase):
         self.assertEqual(sc.check_sign_in(gcm).status, sc.OK)
         none = FakeGit()
         self.assertEqual(sc.check_sign_in(none, is_windows=True).status, sc.WARN)
+        secret = FakeGit(config={"credential.helper": "!f() { echo password=hunter2; }; f"})
+        shown = sc.check_sign_in(secret, is_windows=True)
+        self.assertNotIn("hunter2", shown.detail + shown.title)
         keychain = FakeGit(config={"credential.helper": "osxkeychain"})
         self.assertEqual(sc.check_sign_in(keychain, is_windows=False).status, sc.WARN)
         self.assertEqual(sc.check_sign_in(none, {"useStoredPat": True}, token_stored=True).status, sc.OK)
@@ -240,6 +256,10 @@ class HistoryModeAndMessageTests(unittest.TestCase):
         self.assertEqual(compose_commit_message("Design update: {filename}", ""), "Design update: {filename}")
         self.assertEqual(compose_commit_message("", ""), "{filename}: Design update")
         self.assertEqual(compose_commit_message("{message}", "two\nlines"), "two lines")
+        # push_export fills {message} last, so placeholders typed in the note stay as typed.
+        self.assertEqual(commit_message_parts("Design update: {filename}", "fix {timestamp} bug"),
+                         ("{message}", "fix {timestamp} bug"))
+        self.assertEqual(commit_message_parts(DEFAULT_COMMIT_TEMPLATE, ""), (DEFAULT_COMMIT_TEMPLATE, "Design update"))
 
     def test_branch_name_problems(self):
         for good in ("main", "fusion-backups", "team/cad", "v1.2"):
@@ -281,6 +301,7 @@ class IconTests(unittest.TestCase):
             import make_icons
         finally:
             sys.path.remove(os.path.join(ROOT, "scripts"))
+        self.assertEqual(len(make_icons.OUTPUTS), 10)
         for path, (size, _) in make_icons.OUTPUTS.items():
             with open(os.path.join(ROOT, path), "rb") as fh:
                 data = fh.read()

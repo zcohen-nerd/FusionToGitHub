@@ -743,8 +743,19 @@ def _updated_history(existing: bytes, entry: str, new_file_header: str = "# Chan
 # published). Two saved repositories, or two computers, pushing different
 # designs that share a name then get different folders, and the same design
 # finds its folder again.
-_MARKER_RE = re.compile(rb"<!-- fusion-to-github design: ([0-9a-f]{8,64}) -->")
-_MARKER_SEARCH_BYTES = 2048
+#
+# The marker only counts on its own line in its fixed place: the line after
+# the "# History: <design>" title (or the first line of a file without a
+# title). A design name or commit message containing marker text, which
+# appears in the title and the entries, can't claim the file (found in the
+# S5 security review).
+_MARKER_LINE_RE = re.compile(rb"<!-- fusion-to-github design: ([0-9a-f]{8,64}) -->")
+_MARKER_SEARCH_BYTES = 4096
+# Bounds on what a repository's contents can make a push read (S5 review):
+# HISTORY.md files bigger than this are not opened, and only this many
+# design folders are examined; the saved folder is used beyond that.
+_MAX_HISTORY_BYTES = 1024 * 1024
+_MAX_FOLDERS_EXAMINED = 300
 
 
 def design_key(design_id: str) -> str:
@@ -756,7 +767,9 @@ def history_owner(data: Optional[bytes]) -> Optional[str]:
     """The design key a HISTORY.md is marked with, or None (no file, or no marker)."""
     if not data:
         return None
-    match = _MARKER_RE.search(data[:_MARKER_SEARCH_BYTES])
+    lines = data[:_MARKER_SEARCH_BYTES].split(b"\n")
+    candidate = lines[1] if lines[0].startswith(b"# ") and len(lines) > 1 else lines[0]
+    match = _MARKER_LINE_RE.fullmatch(candidate.rstrip(b"\r"))
     return match.group(1).decode("ascii") if match else None
 
 
@@ -796,19 +809,36 @@ def _choose_design_folder(
         return folder
     at = len(parts) - 1 - parts[::-1].index(folder)
     prefix, suffix = parts[:at], parts[at + 1:]
-    listing = git_output(repo_path, "ls-tree", "-r", "--name-only", base, "--", "/".join(prefix) or ".")
+    # -z: names exactly as stored (no quoting of non-ASCII names); -l: sizes.
+    listing = git_run(repo_path, "ls-tree", "-r", "-l", "-z", base, "--", "/".join(prefix) or ".").stdout
     taken: Dict[str, str] = {}  # lower-case name -> name, for every entry at the folder level
-    histories: List[str] = []
-    for path in listing.splitlines():
+    histories: Dict[str, Tuple[str, int]] = {}  # folder -> (blob, size) of its HISTORY.md
+    for record in (listing or "").split("\0"):
+        meta, _, path = record.partition("\t")
+        fields = meta.split()
         segments = path.split("/")
-        if len(segments) <= len(prefix) or segments[:len(prefix)] != prefix:
+        if len(fields) < 4 or len(segments) <= len(prefix) or segments[:len(prefix)] != prefix:
             continue
         name = segments[len(prefix)]
         taken[name.lower()] = name
-        if segments[len(prefix) + 1:] == suffix:
-            histories.append(name)
-    owners = {name: history_owner(_read_blob(repo_path, base, "/".join(prefix + [name] + suffix)))
-              for name in histories}
+        if segments[len(prefix) + 1:] == suffix and fields[1] == "blob":
+            histories[name] = (fields[2], int(fields[3]) if fields[3].isdigit() else _MAX_HISTORY_BYTES + 1)
+    # Windows and macOS don't tell "Bracket" from "bracket": a folder that
+    # differs only in case is the same folder (code review of S5).
+    requested = folder
+    same = taken.get(folder.lower())
+    if same is not None and same != folder and folder not in taken.values():
+        folder = same
+    owners: Dict[str, Optional[str]] = {}
+    examined = [folder] + sorted(n for n in histories if n != folder)
+    for name in examined[:_MAX_FOLDERS_EXAMINED]:
+        if name not in histories:
+            continue
+        blob, size = histories[name]
+        if size > _MAX_HISTORY_BYTES:
+            owners[name] = None  # too big to read: owner unknown
+            continue
+        owners[name] = history_owner(_git_bytes(repo_path, "cat-file", "blob", blob))
     if owners.get(folder) == key:
         return folder
     mine = sorted(name for name, owner in owners.items() if owner == key)
@@ -816,7 +846,7 @@ def _choose_design_folder(
         return mine[0]
     if folder not in owners or owners[folder] is None:
         return folder
-    stem = re.sub(r" \(\d+\)$", "", folder)
+    stem = re.sub(r" \(\d+\)$", "", requested)
     n = 2
     while f"{stem} ({n})".lower() in taken:
         n += 1
@@ -1047,6 +1077,7 @@ def push_export(
     design_folder: Optional[str] = None,
     relocate: Optional[Callable[[str], Tuple[Sequence[Tuple[str, str]], str]]] = None,
     fusion_version: str = "",
+    commit_text: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Commit *exports* on top of GitHub's branch tip and push it, without touching the checkout.
 
@@ -1055,7 +1086,8 @@ def push_export(
     against the HISTORY.md markers on GitHub before the commit is built, and
     the backup moves to the right folder if needed (risk R-24); the result's
     ``design_folder`` says where it went. *fusion_version* is recorded in
-    the history entry.
+    the history entry. *commit_text* (what the user typed) fills ``{message}``
+    in the template after the other placeholders.
 
     *exports* is a list of ``(source file, path in the repository)``. The source
     files are read where they are (normally Fusion's temporary export folder);
@@ -1145,6 +1177,10 @@ def push_export(
             raise ValueError(f"The branch name template produced '{generated_name}', which git can't use.")
 
         key = design_key(design_id) if design_id else None
+        # A design that was never saved has a provisional, name-based id that
+        # changes when it is saved; it doesn't mark its history, so the saved
+        # design keeps the same folder (code review of S5).
+        mark = bool(key) and not (design_id or "").startswith("name:")
         # The design's folder and history file; the folder check may move them.
         folder_state: Dict[str, Any] = {"folder": design_folder, "history": history_file}
 
@@ -1235,6 +1271,8 @@ def push_export(
                     .replace("{filename}", design_name)
                     .replace("{branch}", branch)
                     .replace("{timestamp}", timestamp_str)
+                    # Last, so placeholders typed in the note stay as typed.
+                    .replace("{message}", single_line(commit_text or "") or "Design update")
                 )
                 extra: Dict[str, bytes] = {}
                 if history_path:
@@ -1255,7 +1293,7 @@ def push_export(
                             "root, written by versions before 0.5.0.\n\n"
                         )
                     updated = _updated_history(existing, entry, header)
-                    extra[rel_history] = _with_marker(updated, key) if key else updated
+                    extra[rel_history] = _with_marker(updated, key) if mark else updated
                 commit = _build_commit(repo_path, base, files, extra, message, identity)
 
                 step("Pushing to GitHub…")

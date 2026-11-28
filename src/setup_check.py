@@ -116,8 +116,10 @@ def check_sign_in(git=git_core, profile: Optional[Dict[str, Any]] = None, token_
                      "inside Fusion.",
                      f"Install Git Credential Manager ({GCM_URL}), then check again.")
     if helpers:
+        # Only the helper's name: a configured helper command could contain a secret.
+        name = git.redact_secrets(helpers.splitlines()[0].split()[0] if helpers.split() else "")[:60]
         return Check(INFO, "Git uses a sign-in helper this add-in doesn't recognise.",
-                     f"credential.helper = {helpers.splitlines()[0]}",
+                     f"credential.helper: {name}",
                      "If the connection test below succeeds, nothing needs doing.")
     if is_windows:
         return Check(WARN, "No GitHub sign-in helper is set up for Git.",

@@ -30,16 +30,29 @@ CI runs all of these on every pull request and uploads the built ZIP as a
 | `push_dialog.py` | The dialog: inputs, validation, events | yes |
 | `fusion_export.py` | Exports the design; its name and stable id | yes |
 | `addin_logging.py` | Log file, redaction, Clear Log | palette only |
+| `fusion_bridge.py` | Main-thread side of a background push: progress, questions, summary, links | yes |
+| `push_worker.py` | Runs a push (or Check My Setup's connection test) on a background thread | no |
 | `push_controller.py` | The push workflow and repository Edit/Remove | no |
 | `settings_store.py` | Versioned, atomic settings | no |
 | `credentials.py` | Stored tokens (Windows Credential Manager) | no |
-| `fusion_git_core.py` | Git: isolated commits, timeouts, credentials | no |
+| `fusion_git_core.py` | Git: isolated commits, timeouts, credentials, design folders | no |
+| `setup_check.py` | Check My Setup: local checks and the connection test | no |
+| `error_catalog.py` | Plain-language explanations of errors | no |
+| `github_links.py` | Links to a backup on GitHub; copying to the clipboard | no |
+| `export_checks.py`, `portable_names.py` | Export file checks; portable file names | no |
 | `dialog_helpers.py` | Small pure helpers | no |
 
-Keep Fusion API calls in the first four. A push is planned on Fusion's main
-thread (`PushController.plan`) and executed with Git only
-(`PushController.execute`); keep `execute` free of Fusion calls, because a
-later release runs it on a background thread.
+Keep Fusion API calls in the first five. A push is planned on Fusion's main
+thread (`PushController.plan`) and executed with Git only on a background
+thread (`PushController.execute`, run by `push_worker`); keep `execute` and
+everything it calls free of Fusion calls. Shipped modules import each other
+relatively (`from . import x`); `fusion_git_core.py` imports nothing from the
+package, because `push_cli.py` and `diagnostic.py` load it as a plain module.
+
+Every message the user sees goes through `error_catalog` when it can contain
+Git's or Python's own text, and no message box may show a traceback (the
+dialog tests check this). The icons are generated: edit
+`scripts/make_icons.py` and run it, never the PNGs (see `branding/README.md`).
 
 ### Testing rules
 

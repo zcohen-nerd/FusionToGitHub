@@ -235,6 +235,23 @@ OUTPUTS: Dict[str, Tuple[object, str]] = {
 }
 
 
+def _png_pixels(data: bytes) -> Tuple[bytes, bytes]:
+    """(IHDR, decompressed image data) of a PNG written by png()."""
+    pos, header, idat = 8, b"", b""
+    while pos + 8 <= len(data):
+        length = struct.unpack(">I", data[pos:pos + 4])[0]
+        kind, body = data[pos + 4:pos + 8], data[pos + 8:pos + 8 + length]
+        if kind == b"IHDR":
+            header = body
+        elif kind == b"IDAT":
+            idat += body
+        pos += 12 + length
+    try:
+        return header, zlib.decompress(idat)
+    except zlib.error:
+        return header, b""
+
+
 def build(path: str) -> bytes:
     size, variant = OUTPUTS[path]
     if size == "svg":
@@ -255,7 +272,13 @@ def main(argv: Sequence[str] = ()) -> int:
             current = target.read_bytes() if target.is_file() else None
             if current is not None and path.endswith(".svg"):
                 current = current.replace(b"\r\n", b"\n")  # a Windows checkout may convert text files
-            if current != data:
+            if current is not None and path.endswith(".png"):
+                # Compare pixels, not compressed bytes: zlib builds differ
+                # between platforms in how they compress the same data.
+                same = _png_pixels(current) == _png_pixels(data)
+            else:
+                same = current == data
+            if not same:
                 stale.append(path)
         else:
             target.parent.mkdir(parents=True, exist_ok=True)

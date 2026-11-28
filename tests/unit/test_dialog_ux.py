@@ -83,7 +83,7 @@ class HistoryModeTests(Base):
     def test_one_running_history_on_main_for_new_style_profiles(self):
         self.seed({"Designs": self.single_profile()}, meta={"lastSelectedRepo": "Designs"})
         self.design("Bracket")
-        for note in ("first version", "holes widened"):
+        for note in ("first version", "holes widened at {timestamp}"):
             command = self.open_dialog()
             self.assertFalse(item(command, "snapshotMode").value)
             self.assertFalse(item(command, "branchPreview").isVisible)
@@ -93,7 +93,7 @@ class HistoryModeTests(Base):
         self.assertEqual(self.remote_files("main"),
                          [".gitattributes", "designs/Bracket/Bracket.step", "designs/Bracket/HISTORY.md"])
         log = core.git_run(self.origin, "log", "--format=%s", "main").stdout.splitlines()
-        self.assertEqual(log[:2], ["Bracket: holes widened", "Bracket: first version"])
+        self.assertEqual(log[:2], ["Bracket: holes widened at {timestamp}", "Bracket: first version"])
         history = self.history("main", "designs/Bracket/HISTORY.md")
         self.assertEqual(history.count("## "), 2)
         self.assertIn("- **Fusion version:** v1", history)

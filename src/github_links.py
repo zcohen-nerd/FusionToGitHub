@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from typing import Optional
 from urllib.parse import quote, urlsplit
 
 GITHUB_HOST = "github.com"
+# A host name as it may appear in an scp-style address (git@host:owner/repo).
+_HOST_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$")
 
 
 def web_repository_url(remote_url: str) -> Optional[str]:
@@ -22,6 +25,8 @@ def web_repository_url(remote_url: str) -> Optional[str]:
         return None
     if "://" not in url and url.startswith("git@") and ":" in url:
         host, _, path = url[len("git@"):].partition(":")
+        if not _HOST_RE.match(host):
+            return None  # not a plain host name (S5 security review)
         scheme_host = f"https://{host.lower()}"
     else:
         try:
@@ -44,7 +49,17 @@ def web_repository_url(remote_url: str) -> Optional[str]:
     segments = [s for s in path.split("/") if s]
     if len(segments) < 2 or any(s in (".", "..") for s in segments):
         return None
-    return scheme_host + "/" + "/".join(quote(s, safe="") for s in segments)
+    web = scheme_host + "/" + "/".join(quote(s, safe="") for s in segments)
+    # The link must lead to the host Git uses, and nowhere else.
+    try:
+        built = urlsplit(web)
+        if built.scheme != "https" or built.username or built.password or not built.hostname:
+            return None
+        if built.netloc.lower() != scheme_host[len("https://"):].lower():
+            return None
+    except ValueError:
+        return None
+    return web
 
 
 def is_github(remote_url: str) -> bool:
@@ -63,10 +78,14 @@ def folder_url(remote_url: str, branch: str, folder: str = "") -> Optional[str]:
         return None
     if not is_github(remote_url) or not branch:
         return web
+    if any(part in (".", "..") for part in branch.split("/")):
+        return web
     link = f"{web}/tree/{quote(branch, safe='/')}"
-    folder = (folder or "").strip("/")
-    if folder:
-        link += "/" + "/".join(quote(part, safe="") for part in folder.split("/") if part)
+    parts = [part for part in (folder or "").split("/") if part]
+    if any(part in (".", "..") for part in parts):
+        return link
+    if parts:
+        link += "/" + "/".join(quote(part, safe="") for part in parts)
     return link
 
 
@@ -81,10 +100,12 @@ def copy_to_clipboard(text: str) -> bool:
     if os.name == "nt":
         # clip.exe recognises UTF-16LE input (checked on Windows 11); with a
         # byte-order mark it would copy the mark too.
-        command, data = ["clip"], text.encode("utf-16-le")
+        # The full path, so no clip.exe in the current folder is picked up.
+        system = os.environ.get("SystemRoot") or r"C:\Windows"
+        command, data = [os.path.join(system, "System32", "clip.exe")], text.encode("utf-16-le")
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     else:
-        command, data, flags = ["pbcopy"], text.encode("utf-8"), 0
+        command, data, flags = ["/usr/bin/pbcopy"], text.encode("utf-8"), 0
     try:
         proc = subprocess.run(command, input=data, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                               timeout=5, creationflags=flags)
