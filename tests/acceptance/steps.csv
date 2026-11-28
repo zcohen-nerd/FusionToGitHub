@@ -1,0 +1,21 @@
+﻿step,title,setup
+0,Prepare (before starting Fusion),"- A **private** test repository on GitHub with nothing you need in it (it receives test branches and commits), and a second one for step 5. `python scripts/live/make_test_repos.py` can create them (see its help).\n- A fine-grained token for **only** the first repository (Contents: Read and write), for step 10.\n- The previous release's ZIP (`Push_To_GitHub-0.4.0.zip`) and the candidate ZIP, unpacked into two separate folders outside Fusion's AddIns folder.\n- In Fusion: the test designs from `tests/live/FTG_TestDesigns` (an inch design with a 10 mm cube, a multi-body design with a hidden body, a design with characters Windows doesn't allow), and a second design you can insert into the first as a linked component.\n- Optional: a folder inside OneDrive or Dropbox (step 13), a second Windows account (step 16), a Mac and the Community Store (step 17).\n- Note the other add-ins you normally run (K7)."
+1,Start on the previous release,"1. Install 0.4.0 (unpack it into the AddIns folder), Run it, and tick **Run on Startup**.\n2. Set up the first test repository with 0.4.0 and push once. This creates the old settings file and the repository-root `CHANGELOG.md` that later steps check."
+2,Update in the same Fusion session (R-25),Do this **without restarting Fusion**.
+3,First backup with the candidate (existing repository),Back up the inch design to the repository from step 1 with Fusion design + STEP + STL.
+4,The dialog and the icon,For 0.7.0 and later. Assumptions 27–32 in `tests/fakes/README.md`.
+5,New repository and first-time setup,"Use the second private test repository, or the first with a new local folder."
+6,"History modes, links and Check My Setup",
+7,Exports and design folders,
+8,Linked components and restoring them (R-06),
+9,Background push and cancel,"Use a large export (several formats, high STL refinement) or a slow network so a push takes a while."
+10,Stored token and credential security,
+11,"Edit, Remove, failures and network loss",
+12,Lifecycle in one session,
+13,Synced folders,
+14,Restart Fusion,"1. With the duplicate copy from K6 still installed and **Run on Startup** ticked for both, **quit Fusion**.\n2. While Fusion is closed, copy `.fusion_git_repos.json` to a safe place, then replace its contents with `{not json`.\n3. Start Fusion."
+15,"Documentation by the book, and screenshots",
+16,"Clean installation, load time and uninstall","On a second Windows account (or after W4's uninstall), with no settings from earlier steps."
+17,Community Store and macOS,Only where available. macOS is Experimental; record the Fusion build.
+18,Usability sessions (separate),"Three or more people who have never used Git, one at a time, following [`docs/USABILITY_TEST.md`](../docs/USABILITY_TEST.md). Record each session's sheet as the evidence."
+19,The final release package,With the release candidate's ZIP from the Release workflow.
