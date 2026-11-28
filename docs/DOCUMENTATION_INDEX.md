@@ -2,7 +2,7 @@
 
 ## 📚 Complete Documentation Suite
 
-Welcome to FusionToGitHub 0.6.0! This comprehensive documentation will help you get started, master the features, and troubleshoot any issues.
+Welcome to FusionToGitHub 0.7.0! This comprehensive documentation will help you get started, master the features, and troubleshoot any issues.
 
 ---
 
@@ -281,7 +281,7 @@ the permanent record of the v1.0 readiness audit and the sprint reports.
 3. **Team Sharing**: Share workflows and best practices
 
 ### Information to Include When Asking for Help
-- **Version**: FusionToGitHub 0.6.0
+- **Version**: FusionToGitHub 0.7.0
 - **System**: OS, Fusion version, Git version
 - **Problem**: Specific error messages from logs
 - **Steps**: What you were trying to do
@@ -294,7 +294,7 @@ the permanent record of the v1.0 readiness audit and the sprint reports.
 
 This documentation is maintained alongside the FusionToGitHub add-in. 
 
-**Version**: 0.6.0
+**Version**: 0.7.0
 **Last Updated**: September 30, 2025
 **Next Review**: December 2025
 
