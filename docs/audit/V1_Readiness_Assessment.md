@@ -25,7 +25,7 @@ Nothing in this assessment, or in the code, has been verified in real Fusion. Si
 |---|---|---|
 | Release integrity | Tag on main; CI on that SHA; version surfaces agree | Ready in the tooling (`check_release.py`, release workflow); applies at tagging |
 | | Draft release with ZIP, `.sha256`, attestation; digest checked; human smoke test; immutable releases; tag ruleset | Draft, attestation and immutable releases in place; **tag ruleset missing** (maintainer); smoke test = live P1/P4 |
-| | Byte-identical builds; commit SHA in the ZIP comment | Done |
+| | Byte-identical builds; commit SHA in the ZIP comment | Done with one toolchain: two builds with the same zlib are byte-identical. A build with a different zlib (this maintainer's Python uses zlib-ng) has identical files, names, timestamps and permissions but different compression, so the published ZIP is always CI's |
 | | Validator rejects bad packages; exact contents; tools and tests absent | Done (now including `resources/`) |
 | | No binaries tracked | Done (icons are small PNGs by design; no ZIPs) |
 | Data integrity | I1 tree, index, stash, HEAD, local refs unchanged | Done (snapshot now also covers `.git/config`, HEAD, hooks); the dirty-tree and private-commit cases are tested, detached HEAD and mid-merge only by design (nothing is checked out) |
