@@ -18,7 +18,7 @@ The formal list of known risks to FusionToGitHub users and to the project
   **Resolved** (resolution criteria met), **Accepted** (maintainer agreed),
   **Acceptance proposed**.
 
-*Last reviewed: 2026-11-28, sprint S6 (development version 0.8.0, unpublished).*
+*Last reviewed: 2026-11-28, full review for the 1.0 release candidate (0.9.0, unpublished; S7). Every open risk names the live criteria in [the acceptance matrix](../tests/ACCEPTANCE_MATRIX.md) that would resolve it.*
 
 ## Summary
 
@@ -27,30 +27,31 @@ The formal list of known risks to FusionToGitHub users and to the project
 | R-01 | Remote work overwritten by force push | 1×5 = 5 Low | **Resolved** (0.3.3, 0.4.0) | — |
 | R-02 | Local uncommitted work misplaced by the push | 1×3 = 3 Low | **Resolved** (0.4.0) | — |
 | R-03 | Private local commits published | 1×4 = 4 Low | **Resolved** (0.4.0) | — |
-| R-04 | Fusion freezes during Git network work | 1×3 = 3 Low | Mitigated (S4: background thread) | Live responsiveness check (checklist I) |
+| R-04 | Fusion freezes during Git network work | 1×3 = 3 Low | Mitigated (S4: background thread) | Live I1, I2, F4 (residual: new-repository clone) |
 | R-05 | Broken or empty public release | 1×2 = 2 Low | **Resolved** (0.3.3) | — |
-| R-06 | Backups of designs with linked components can't be restored | 2×4 = 8 Medium | **Accepted, conditionally** (before 1.0 only, while communicated) | Live restore check required for 1.0 |
+| R-06 | Backups of designs with linked components can't be restored | 2×4 = 8 Medium | **Accepted, conditionally** (before 1.0 only, while communicated); `.f3z` export since 0.9.0 | Live J1, J2 (required for 1.0) |
 | R-07 | Token exposed through helpers, URLs or logs | 1×3 = 3 Low | **Resolved** (0.4.0, 0.6.0) | — |
 | R-08 | Proprietary design pushed to a public repository | 2×5 = 10 Medium | **Accepted** (2026-11-27) | Keep the mitigations |
-| R-09 | macOS users can't find Git or sign in | 2×2 = 4 Low | Mitigated (labelled Experimental) | S4 small fixes |
+| R-09 | macOS users can't find Git or sign in | 2×2 = 4 Low | Mitigated (labelled Experimental) | Live M1–M3, K8 (if a Mac is available) |
 | R-10 | GitHub size limits exceeded | 2×2 = 4 Low | **Accepted** (2026-11-27) | LFS after 1.0 |
 | R-11 | Autodesk App Store rejection | 2×2 = 4 Low | Open (separate track after 1.0) | Questions to Autodesk |
 | R-12 | Single maintainer's capacity | 3×2 = 6 Low | **Accepted** (2026-11-27) | — |
-| R-13 | Fusion API changes break the add-in | 2×3 = 6 Low | Mitigated | Manual check every release |
+| R-13 | Fusion API changes break the add-in | 2×3 = 6 Low | Mitigated | The live campaign every release, Fusion build recorded |
 | R-14 | Git is an external dependency | 3×1 = 3 Low | **Accepted** (2026-11-27) | — (S5: Check My Setup states the minimum version) |
-| R-15 | Two copies installed after an upgrade | 2×1 = 2 Low | Mitigated (S4: warning, no second button) | Live duplicate check (checklist K) |
+| R-15 | Two copies installed after an upgrade | 2×1 = 2 Low | Mitigated (S4: warning, no second button) | Live K6, H16 |
 | R-16 | Supply-chain compromise of a release | 1×3 = 3 Low | **Resolved** (0.3.3) | Keep actions pinned |
 | R-17 | Contributor attribution | 1×1 = 1 Low | **Resolved** (0.3.3) | — |
-| R-18 | Fusion test doubles diverge from real Fusion | 3×3 = 9 Medium | Open (new in S3; 25 assumptions in S4) | Manual checklist every release |
-| R-19 | Settings migration loses saved repositories | 1×3 = 3 Low | Mitigated (new in S3) | Confirm on a real 0.4.0 settings file |
+| R-18 | Fusion test doubles diverge from real Fusion | 3×3 = 9 Medium | Open (34 documented assumptions) | The live campaign (acceptance matrix) every release |
+| R-19 | Settings migration loses saved repositories | 1×3 = 3 Low | Mitigated (new in S3) | Live A3, A4, K3 |
 | R-20 | Per-design folders surprise existing users | 1×2 = 2 Low | **Resolved** (0.8.0: dialog, summary and user documentation) | — |
 | R-21 | A repository's own hooks or settings could expose the stored token | 1×3 = 3 Low | Mitigated, **not accepted** (maintainer, 2026-11-27); E4 mitigated in 0.7.0 | Live push with a token (R1, R2, D3) |
-| R-22 | Masked token field unsupported in some Fusion builds | 2×3 = 6 Low | Open (new in S3) | Manual check of the Token field |
+| R-22 | Masked token field unsupported in some Fusion builds | 2×3 = 6 Low | Open (new in S3) | Live D1, H5 |
 | R-23 | Stored token sent to a server it wasn't stored for | 1×4 = 4 Low | **Resolved** (0.6.0) | — |
 | R-24 | Two saved repositories for one GitHub repository allocate design folders independently | 1×2 = 2 Low | Mitigated (S5: folders checked against GitHub) | Live check U14 |
-| R-25 | An update in a running Fusion loads the previous version's modules | 1×3 = 3 Low | Mitigated (S4, reported by DiegoV71) | Live stop → update → run and Store update (checklist K) |
-| R-26 | A failed or partial export is pushed as if it were a complete backup | 2×4 = 8 Medium | Mitigated (S4: all or nothing) | Live failure check |
+| R-25 | An update in a running Fusion loads the previous version's modules | 1×3 = 3 Low | Mitigated (S4, reported by DiegoV71) | Live K1, K2, K3, K5, K8 |
+| R-26 | A failed or partial export is pushed as if it were a complete backup | 2×4 = 8 Medium | Mitigated (S4: all or nothing) | Live J6 |
 | R-27 | Backups added straight to a repository's main branch | 2×2 = 4 Low | Mitigated (new in S5) | Live checks U8, U9, U16 |
+| R-28 | An `.f3z` backup publishes the linked designs too | 2×3 = 6 Low | Mitigated (new in S7) | Live check J2 (what the archive contains) |
 
 ## Details
 
@@ -75,13 +76,19 @@ The formal list of known risks to FusionToGitHub users and to the project
 - **S4:** after the export and every question that can be asked up front (publication notice, identity, linked components, large files), the Git work runs on a background thread (`push_worker.py`) that never calls Fusion. Progress, the remaining question (reusing a branch), warnings and the result reach Fusion's main thread only through a custom event (`fusion_bridge.py`), as Autodesk's threading guide prescribes. A question waits at most 10 minutes and counts as No on timeout, cancel or shutdown, so the worker can't deadlock. Cancel kills the Git process tree and reports truthfully whether GitHub had already accepted the push. One push runs at a time; `stop()` cancels a running push.
 - **Evidence:** `tests/unit/test_push_worker.py`, `tests/unit/test_worker_bridge.py`, `tests/unit/test_core_cancel_hooks.py` (real threads; the stand-in queues custom events and refuses UI calls off the main thread).
 - **Resolved when:** the live checklist (section I) shows Fusion stays responsive during a slow push and during sign-in, and Cancel behaves as tested. The export itself still runs on the main thread (Fusion requires it).
+- **Known residual (S7 correctness review):** setting up a *new* repository clones it on Fusion's main thread, before the background push starts. A large repository, or a GitHub sign-in window during the clone, keeps Fusion busy until it finishes (at most the 10-minute network limit). Short local Git queries while planning a push also run on the main thread. Moving the clone to the background is a post-1.0 improvement; the installation guide recommends a new, empty repository.
 
 ### R-06 — Unrestorable backups of designs with linked components — Accepted conditionally (before 1.0)
-- **Cause:** the add-in exports `.f3d`; for designs with external references Fusion may need `.f3z` (audit BUG-02, unverified live).
+- **Cause:** the add-in exported `.f3d`; for designs with external references Fusion may need `.f3z` (audit BUG-02, unverified live).
 - **Impact:** a backup that looks fine but can't be opened on its own.
 - **Finding (S4):** Fusion's documented API has no `.f3z` export. `createFusionArchiveExportOptions` writes `.f3d`; the only route seen is the undocumented text command `data.fileExport f3z`, which has reported naming problems and isn't used.
 - **Mitigation (S4):** linked components are detected (`Occurrence.isReferencedComponent` across all occurrences) when F3D is exported. The add-in names them and asks before pushing ("this backup might not restore on its own"); declining pushes nothing. Accepting records a note in the design's `HISTORY.md`, so the backup is never presented as complete.
-- **Evidence:** `tests/unit/test_fusion_export.py`, `tests/unit/test_dialog_exports.py` (against simulated Fusion).
+- **S7 research and change (0.9.0):**
+  - **Research.** Autodesk's help says a design with external references can only be exported as `.f3z`, and documents no API for it. A community add-in (nofuturekid/fusion-export, read 2026-11-28) calls `createFusionArchiveExportOptions` with an `.f3z` name for designs with references and receives an archive that Fusion names `Name.f3z.f3d`. That add-in renames it (its issue #33). Older forum answers say true `.f3z` export isn't possible through the API. The evidence is mixed and nothing has been verified live.
+  - **Change.** When linked components are found, the archive is requested as `<design>.f3z`, and a `Name.f3z.f3d` result is renamed. If Fusion fails or writes nothing, the add-in falls back to `.f3d` with a warning. The basic ZIP check applies to `.f3z` too.
+  - **What stays the same.** The question before every such push, the `HISTORY.md` note, the README limitation and the CHANGELOG entry are unchanged in substance, so the conditional acceptance still holds. They now say the archive is `.f3z` but that restoring it hasn't been verified.
+  - **Assumption 33** in `tests/fakes/README.md` records the reported Fusion behaviour.
+- **Evidence:** `tests/unit/test_fusion_export.py` (f3z with the reported name quirk, exact name, fallback, broken archive), `tests/unit/test_dialog_exports.py` (the pushed `.f3z`, notes and the fallback), all against simulated Fusion.
 - **Residual:** a user who accepts still has an F3D that may not restore alone; the linked designs stay in Fusion's cloud.
 - **Decision (accepted by the maintainer on 2026-11-27):** accepted for distribution **before 1.0 only**, and only while incomplete recoverability is communicated explicitly. That means:
   - the confirmation question before every such push;
@@ -90,7 +97,7 @@ The formal list of known risks to FusionToGitHub users and to the project
   - the CHANGELOG.
 
   If any of these is removed, the acceptance lapses.
-- **Open requirement for 1.0:** a live restore check. A pushed `.f3d` with linked components is re-opened in Fusion and the result recorded (consolidated checklist, step 6). 1.0 can't ship until it is done and the warning text matches the result.
+- **Open requirement for 1.0:** a live restore check (J2). A pushed `.f3z` (or the fallback `.f3d`) with linked components is re-opened in Fusion, ideally where the linked design isn't available, and the result is recorded. 1.0 can't ship until it is done and the warning text matches the result. If J2 shows the `.f3z` restores the linked designs, R-06 can move to Mitigated or Resolved, and the wording can drop "may not restore".
 
 ### R-08 — Proprietary design pushed to a public repository — Accepted
 - **Cause:** the user chooses the repository; the add-in makes no GitHub API calls, so it can't see visibility.
@@ -124,6 +131,7 @@ The formal list of known risks to FusionToGitHub users and to the project
 - **Cause:** the dialog tests run against simplified stand-ins for Fusion's API (`tests/fakes/adsk`). They prove the add-in's logic, not Fusion's behaviour.
 - **Mitigation:** the stand-ins are kept small and document their assumptions; every release runs the manual Fusion checklist (`tests/MANUAL_CHECKLIST.md`), which targets those assumptions.
 - **S4:** the stand-ins became stricter: handlers are held weakly as in Fusion, UI calls from other threads fail, and custom events are queued and delivered only by a simulated message loop. They now also simulate assemblies and exports, so there are 25 documented assumptions (`tests/fakes/README.md`); checklist sections I–K target the new ones.
+- **S5–S7:** assumptions 27–34 cover dialog validation, the OK button text, live text updates, toolbar promotion, icon resources, browser and clipboard, the reported `.f3z` naming, and main-thread-only access to exports and the active design (now enforced by the fakes). Each is targeted by a criterion in the acceptance matrix.
 - **Resolved when:** never fully; this is managed, not removed. Review if a release finds a mismatch.
 
 ### R-19 — Settings migration loses saved repositories — Mitigated (new in S3)
@@ -219,6 +227,12 @@ The formal list of known risks to FusionToGitHub users and to the project
 - **Mitigation:** the dialog shows "Saves to: <branch> › <folder>" before every backup. Advanced → Backup branch sends backups to a branch of their own, which is created on the first backup. A refusal because of branch protection is explained ("…that branch is protected") with that suggestion. Commits are fast-forward only and touch only the design's folder, so nothing else on `main` is ever changed. Repositories saved by earlier versions keep their snapshot branches.
 - **Evidence:** `HistoryModeTests` in `tests/unit/test_dialog_ux.py`, `ErrorCatalogTests` in `tests/unit/test_ux_helpers.py`.
 - **Resolved when:** live checks U8, U9 and U16 pass.
+
+### R-28 — An `.f3z` backup publishes the linked designs too — Mitigated (new in S7)
+- **Cause:** from 0.9.0 a design with linked components is archived as `.f3z`, Fusion's format for a design together with the designs it links to (R-06). Those linked designs may belong to someone else, or be confidential.
+- **Impact:** publishing more than the user expects, especially to a public repository (compare R-08).
+- **Mitigation:** the question before every such backup names the linked components; the one-time publication notice says linked designs are published too; PRIVACY.md says so; `HISTORY.md` names them.
+- **Resolved when:** live check J2 shows what an `.f3z` actually contains, and the wording matches.
 
 ### R-26 — A failed or partial export pushed as a complete backup — Mitigated (S4)
 - **Was:** an export that raised was logged and skipped, so a push could contain only some of the requested formats (or none), and a file Fusion wrote empty or truncated was pushed as is.

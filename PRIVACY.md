@@ -30,7 +30,7 @@ repository address you configured (for example `github.com/you/designs`):
 
 | Data | Details |
 |------|---------|
-| **Your exported design files** | The formats you ticked: F3D (the complete Fusion design, including its timeline, sketches and history), STEP, STL, IGES, SAT. |
+| **Your exported design files** | The formats you ticked: F3D (the complete Fusion design, including its timeline, sketches and history), STEP, STL, IGES, SAT. For a design with linked components (components inserted from other designs), the Fusion file is an `.f3z` archive, which can include **the linked designs' content too**: check that you may publish them. `HISTORY.md` then also names the linked components. |
 | **Your commit note** | The message you type, plus the design name. |
 | **Your Git name and email** | Git records them as the author of every commit. Use GitHub's private "noreply" address if you don't want your email published: GitHub → *Settings → Emails → Keep my email addresses private*, then use the `…@users.noreply.github.com` address it shows. |
 | **Date, time and time zone** | Git stores when each commit was made, with your time zone offset. |
@@ -61,7 +61,7 @@ GitHub** opens the link in your browser.
 | Optional stored token (Windows only, if you use **Manage Token…**) | Windows Credential Manager, entry `FusionToGitHub::<repository name>` | You delete it (**Manage Token… → Delete**) |
 | Your Git name and email, if Git didn't have them yet | With that repository's saved settings (above); in your global Git configuration (`~/.gitconfig`) only if you chose "all repositories" | You change or remove it |
 | Exported files during a push | A temporary folder | Deleted automatically when the push ends |
-| The stored token, while one Git command that needs it runs | A file in `%LOCALAPPDATA%\PushToGitHub\credentials` (Windows) | Overwritten and deleted when that command ends (seconds); a leftover from a crash is deleted by a later push after an hour |
+| The stored token, while one Git command that needs it runs | A file in `%LOCALAPPDATA%\PushToGitHub\credentials` (Windows; if that folder can't be used, `.PushToGitHub_AddIn_Data\credentials` in your home folder) | Overwritten and deleted when that command ends (seconds); a leftover from a crash is deleted by a later push after an hour |
 | The local repository folder you chose during setup | That folder | You delete it. (Pushing never changes it.) |
 
 On macOS the settings file and logs are readable only by your user account. On

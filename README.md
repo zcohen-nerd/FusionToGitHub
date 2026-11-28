@@ -6,7 +6,7 @@ This free add-in for Autodesk Fusion adds a **Push to GitHub** button. Each time
 
 No programming or Git knowledge is needed.
 
-**Status:** version **`0.8.0`** is in development and not yet released. The current release is
+**Status:** version **`0.9.0`** (the 1.0 release candidate) is in development and not yet released. The current release is
 [0.4.0](https://github.com/zcohen-nerd/FusionToGitHub/releases/latest). Windows is supported; macOS is experimental (see [Platform support](#platform-support)).
 
 ---

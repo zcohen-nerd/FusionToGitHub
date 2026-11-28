@@ -12,10 +12,15 @@ Policy (S4):
   caller pushes nothing. A partial backup is never published.
 - File names are deterministic and portable (``portable_names``), and no two
   files can overwrite each other, even on case-insensitive file systems.
-- Fusion has no documented API for a self-contained ``.f3z`` archive, so
-  the backup is always ``.f3d``. Linked (externally referenced) components
-  are detected and reported, so the backup is never presented as complete
-  when it may not be.
+- Linked (externally referenced) components are detected before the
+  export. For such a design the Fusion archive is requested as ``.f3z``,
+  Fusion's format for a design with its references (risk R-06): Fusion's
+  archive export is documented only for ``.f3d``, but an add-in that asks
+  ``createFusionArchiveExportOptions`` for an ``.f3z`` name receives one, which
+  Fusion writes as ``Name.f3z.f3d`` (community report, fusion-export issue
+  #33), so the name is corrected. If that fails, the add-in falls back to
+  ``.f3d``. Either way the user is told the backup may not restore on its
+  own until restoring one has been verified in Fusion.
 """
 
 from __future__ import annotations
@@ -110,6 +115,9 @@ class ExportResult:
     warnings: List[str] = field(default_factory=list)
     # Display names of linked (externally referenced) components, deduped.
     linked_components: List[str] = field(default_factory=list)
+    # "f3z" when the Fusion archive of a design with linked components was
+    # written as .f3z (R-06); "f3d" otherwise.
+    archive_format: str = "f3d"
 
     @property
     def files(self) -> List[str]:
@@ -162,7 +170,9 @@ def get_fusion_design(app, logger: Optional[logging.Logger] = None):
 
 
 def _safe_base(name: str) -> str:
-    name = re.sub(r"\s+v[\dA-Za-z]+$", "", name).strip()  # drop trailing " v8" etc.
+    # Drop a trailing Fusion version such as " v8" (not words like " vase";
+    # S7 correctness review).
+    name = re.sub(r"\s+v\d+$", "", name).strip()
     # keep spaces; just neutralize illegal filesystem chars
     return re.sub(r'[<>:"/\\|?*]+', "_", name)
 
@@ -366,6 +376,34 @@ def _options_for(em, root, fmt: str, path: str, settings: Dict[str, str], logger
     return em.createSATExportOptions(path, root)
 
 
+def _archive_written_as(path: str) -> Optional[str]:
+    """Where Fusion put an archive requested as *path* (an .f3z), renamed to *path* if needed.
+
+    Fusion appends ".f3d" to archive file names, so "Name.f3z" can arrive
+    as "Name.f3z.f3d". None if neither exists.
+    """
+    if os.path.isfile(path):
+        return path
+    appended = path + ".f3d"
+    if os.path.isfile(appended):
+        os.replace(appended, path)
+        return path
+    return None
+
+
+def _export_f3z(em, root, path: str, logger) -> Tuple[bool, str]:
+    """Try the archive as .f3z (R-06): (True, "") or (False, why it didn't work)."""
+    try:
+        options = _options_for(em, root, "f3d", path, {}, logger)
+        if not em.execute(options):
+            return False, "Fusion reported that the .f3z export failed"
+    except Exception as exc:
+        return False, f"the .f3z export failed: {exc}"
+    if _archive_written_as(path) is None:
+        return False, "Fusion didn't write an .f3z file"
+    return True, ""
+
+
 def _run(em, options, fmt: str, path: str, result: ExportResult, logger) -> bool:
     """Execute one export; record a failure and return False if Fusion reports one."""
     name = os.path.basename(path)
@@ -422,11 +460,37 @@ def export_design(
         if (fmt, ext) not in requested:
             requested.append((fmt, ext))
 
+    if any(fmt == "f3d" for fmt, _ in requested):
+        linked, warnings = find_linked_components(design, logger)
+        result.linked_components = linked
+        result.warnings.extend(warnings)
+
     succeeded: List[str] = []
     for fmt, ext in requested:
         fmt_settings = settings.get(fmt) or settings.get(ext) or {}
         written: List[str] = []
         ok = True
+        if fmt == "f3d" and result.linked_components:
+            f3z_path = os.path.join(temp_dir, f"{base}.f3z")
+            done, why = _export_f3z(em, root, f3z_path, logger)
+            if done:
+                result.archive_format = "f3z"
+                result.files_by_format.setdefault("f3z", []).append(f3z_path)
+                succeeded.append("f3z")
+                if logger:
+                    logger.info("Exported the design with its linked components as %s", f3z_path)
+                continue
+            for leftover in (f3z_path, f3z_path + ".f3d"):
+                try:
+                    if os.path.isfile(leftover):
+                        os.remove(leftover)
+                except OSError:
+                    if logger:
+                        logger.warning("Couldn't remove %s", leftover)
+            result.warnings.append(
+                f"The design has linked components, but Fusion couldn't write an .f3z archive ({why}), "
+                "so the backup has an .f3d file instead."
+            )
         try:
             if fmt == "stl" and fmt_settings.get("files") == STL_PER_BODY:
                 bodies, hidden = stl_bodies(design)
@@ -458,28 +522,28 @@ def export_design(
             succeeded.append(fmt)
 
     result.failures.extend(check_exports(result.files_by_format, list(dict.fromkeys(succeeded))))
-
-    if any(fmt == "f3d" for fmt, _ in requested):
-        linked, warnings = find_linked_components(design, logger)
-        result.linked_components = linked
-        result.warnings.extend(warnings)
     return result
 
 
-def linked_components_question(names: List[str]) -> str:
+def linked_components_question(names: List[str], archive_format: str = "f3d") -> str:
     shown = ", ".join(names[:5]) + (f", and {len(names) - 5} more" if len(names) > 5 else "")
     count = len(names)
     noun = "linked component" if count == 1 else "linked components"
-    return (
-        f"This design uses {count} {noun} ({shown}).\n\n"
-        "Fusion's .f3d export may not include them, so this backup might not restore on its own. "
-        "Push anyway?"
-    )
+    if archive_format == "f3z":
+        how = ("The design was exported as an .f3z archive, Fusion's format for a design with linked "
+               "components, but restoring one hasn't been verified yet, so this backup might not restore "
+               "on its own. Keep the linked designs in Fusion too.")
+    else:
+        how = "Fusion's .f3d export may not include them, so this backup might not restore on its own."
+    return f"This design uses {count} {noun} ({shown}).\n\n{how} Push anyway?"
 
 
-def linked_components_note(names: List[str]) -> str:
+def linked_components_note(names: List[str], archive_format: str = "f3d") -> str:
     count = len(names)
     noun = "linked component" if count == 1 else "linked components"
+    if archive_format == "f3z":
+        return (f"Contains {count} {noun} ({', '.join(names)}); exported as .f3z, but restoring it hasn't "
+                "been verified, so this backup may not be self-contained.")
     return f"Contains {count} {noun} ({', '.join(names)}); this .f3d backup may not be self-contained."
 
 

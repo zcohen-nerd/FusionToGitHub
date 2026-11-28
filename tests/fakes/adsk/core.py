@@ -542,7 +542,7 @@ class ProgressDialog:
         self.maximumValue = 0
         self.cancelButtonText = "Cancel"
         self.isCancelButtonShown = True
-        self.isBackgroundTranslucencyEnabled = False
+        self.isBackgroundTranslucent = False  # the documented name (audit BUG-09)
         self.wasCancelled = False
         self.shown = []
         self.messages = []
@@ -668,10 +668,19 @@ class Application:
         _MAIN["thread"] = threading.get_ident()
         _MAIN["violations"] = []
         self.userInterface = UserInterface()
-        self.activeProduct = None
+        self._active_product = None
         self.logs = []
         self._custom_events = {}
         self._queue = queue.Queue()
+
+    @property
+    def activeProduct(self):  # noqa: N802
+        _on_main_thread("Application.activeProduct")
+        return self._active_product
+
+    @activeProduct.setter
+    def activeProduct(self, value):  # noqa: N802
+        self._active_product = value
 
     @classmethod
     def get(cls):

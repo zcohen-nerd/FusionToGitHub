@@ -128,12 +128,57 @@ class LinkedComponentTests(ExportCase):
         design.rootComponent.add_occurrence(adsk.fusion.Component("Bolt"), linked=True)
         self.assertEqual(self.export(design, ["step"]).linked_components, [])
 
+    def linked_design(self):
+        design = self.design("Assembly")
+        design.rootComponent.add_occurrence(adsk.fusion.Component("Bolt"), linked=True)
+        return design
+
+    def test_a_design_with_linked_components_is_archived_as_f3z(self):
+        # Fusion appends .f3d to an .f3z name (as reported); the name is corrected.
+        result = self.export(self.linked_design(), ["f3d", "step"])
+        self.assertTrue(result.ok, result.failures)
+        self.assertEqual(result.archive_format, "f3z")
+        self.assertEqual([os.path.basename(p) for p in result.files], ["Assembly.f3z", "Assembly.step"])
+        self.assertEqual(sorted(os.listdir(self.dir)), ["Assembly.f3z", "Assembly.step"])
+
+    def test_an_f3z_written_with_its_own_name_is_used_as_is(self):
+        design = self.linked_design()
+        design.exportManager.f3z_behaviour = "exact"
+        result = self.export(design, ["f3d"])
+        self.assertTrue(result.ok, result.failures)
+        self.assertEqual([os.path.basename(p) for p in result.files], ["Assembly.f3z"])
+
+    def test_without_an_f3z_the_archive_falls_back_to_f3d(self):
+        design = self.linked_design()
+        design.exportManager.f3z_behaviour = "fail"
+        result = self.export(design, ["f3d"])
+        self.assertTrue(result.ok, result.failures)
+        self.assertEqual(result.archive_format, "f3d")
+        self.assertEqual([os.path.basename(p) for p in result.files], ["Assembly.f3d"])
+        self.assertTrue(any("couldn't write an .f3z archive" in w for w in result.warnings), result.warnings)
+
+    def test_a_broken_f3z_is_a_failure_not_a_backup(self):
+        design = self.linked_design()
+        design.exportManager.failures["f3d"] = "corrupt"
+        result = self.export(design, ["f3d"])
+        self.assertFalse(result.ok)
+        self.assertTrue(any("Assembly.f3z is not a Fusion archive" in f for f in result.failures), result.failures)
+
+    def test_designs_without_linked_components_stay_f3d(self):
+        result = self.export(self.design("Plain"), ["f3d"])
+        self.assertEqual(result.archive_format, "f3d")
+        self.assertEqual([os.path.basename(p) for p in result.files], ["Plain.f3d"])
+
     def test_question_and_history_note_wording(self):
         question = fe.linked_components_question(["A", "B", "C", "D", "E", "F", "G"])
         self.assertIn("uses 7 linked components (A, B, C, D, E, and 2 more)", question)
         self.assertIn("might not restore on its own", question)
         self.assertEqual(fe.linked_components_note(["Bolt"]),
                          "Contains 1 linked component (Bolt); this .f3d backup may not be self-contained.")
+        f3z_question = fe.linked_components_question(["Bolt"], "f3z")
+        self.assertIn("exported as an .f3z archive", f3z_question)
+        self.assertIn("restoring one hasn't been verified yet", f3z_question)
+        self.assertIn("might not restore on its own", f3z_question)
 
 
 class StlTests(ExportCase):

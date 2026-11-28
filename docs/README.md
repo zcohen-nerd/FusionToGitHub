@@ -23,7 +23,9 @@ Each topic is covered in exactly one place.
 |---|---|
 | [Contributing](../CONTRIBUTING.md) | Development setup, checks, code layout, pull requests, releasing |
 | [Testing](../tests/TESTING.md) | The test suites, simulated Fusion, the release checklist |
-| [Manual Fusion checklist](../tests/MANUAL_CHECKLIST.md) | The checks only real Fusion can do; the release gate |
+| [Acceptance matrix](../tests/ACCEPTANCE_MATRIX.md) | Every live acceptance criterion by user workflow, with results; the record is `tests/acceptance/criteria.csv` |
+| [Live campaign (manual Fusion checklist)](../tests/MANUAL_CHECKLIST.md) | The order to run the live criteria in; the release gate |
+| [Usability test](USABILITY_TEST.md) | The protocol for testing with people new to Git |
 | [Simulated Fusion assumptions](../tests/fakes/README.md) | What the stand-ins assume about Fusion |
 | [Branding](../branding/README.md) | The icon: provenance, colours, sizes, regenerating |
 | [Screenshots](SCREENSHOTS.md) | The screenshots the documentation needs, and their status |

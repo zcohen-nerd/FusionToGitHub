@@ -95,12 +95,19 @@ program's own import command.
 ## Designs with linked components
 
 If the design contains components inserted from *other* Fusion designs (linked
-components, shown with a link icon in the browser), its `.f3d` backup **may not
-restore on its own**. Fusion's API documents only the `.f3d` archive; Fusion's
-own archive format for designs with references (`.f3z`) has no documented API
-for add-ins.
-Restoring such a backup hasn't been verified yet. The add-in asks before backing
-up such a design and records the limitation in `HISTORY.md`.
+components, shown with a link icon in the browser), the backup **may not
+restore on its own**.
+
+From version 0.9.0, the add-in asks Fusion for its `.f3z` archive for such a
+design: Fusion's format for a design together with the designs it links to.
+The backup then has `Bracket.f3z` instead of `Bracket.f3d`. If Fusion can't
+write one, the backup has the `.f3d`, which may not include the linked
+components, and the summary says so. Fusion's API documents only the `.f3d`
+archive, so the `.f3z` route relies on how Fusion is reported to behave, and
+**restoring such a backup hasn't been verified yet**. The add-in asks before
+backing up such a design and records the limitation in `HISTORY.md`.
+
+Open an `.f3z` the same way as an `.f3d` ([above](#open-it-in-fusion)).
 
 To be safe:
 - Keep the linked designs in Fusion. They are separate documents in your
@@ -108,7 +115,7 @@ To be safe:
 - Back up the linked designs too: open each one and click **Push to GitHub**.
 - Include **STEP**: it contains the complete geometry, including the linked
   components, as plain bodies.
-- When you restore, open the `.f3d` and check that every component is there.
+- When you restore, open the `.f3z` or `.f3d` and check that every component is there.
   If some are missing, insert them from the linked designs' own backups, or
   use the STEP file.
 

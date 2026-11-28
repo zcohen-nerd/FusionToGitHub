@@ -65,7 +65,8 @@ stores them:
     commands the add-in writes it to a file in a new folder, the helper reads
     it from there, and when that one command ends the file is overwritten and
     deleted. Only the file's location is in Git's environment. On Windows the
-    folder is in your own `%LOCALAPPDATA%\PushToGitHub\credentials` (by
+    folder is in your own `%LOCALAPPDATA%\PushToGitHub\credentials`, or, if
+    that can't be used, in `.PushToGitHub_AddIn_Data` in your home folder (by
     default only you, the system and administrators can open it, and it isn't
     synced), not in the temporary folder, which can be redirected to a shared
     place. On macOS and Linux it is an owner-only folder in the temporary
@@ -92,7 +93,11 @@ stores them:
   - **Nothing else a repository configures runs either.** Only the https
     transport is allowed (`GIT_ALLOW_PROTOCOL=https`), so an address
     rewritten to `ext::<command>`, `file://` or SSH can't start a program.
-    No askpass program is inherited, and submodules aren't fetched or pushed.
+    No askpass program is inherited, submodules aren't fetched or pushed, a
+    repository's own `core.alternateRefsCommand` doesn't run, and Git's
+    automatic background maintenance (`gc --auto`) is off for these commands.
+    A `GIT_SSL_NO_VERIFY` setting in your environment is ignored for them, so
+    the token is never sent over a connection whose certificate isn't checked.
   - **A repository's own proxy or certificate settings stop the push.** If
     the repository's `.git/config` (or a file it includes) sets a proxy
     (`http.proxy`, `http.<url>.proxy`, `remote.<name>.proxy`) or changes TLS

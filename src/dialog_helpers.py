@@ -404,7 +404,8 @@ def publication_notice(git_url: str) -> str:
     return (
         f"This pushes your design to {where}.\n\n"
         "If that repository is public, anyone can see and download every version you push, "
-        "including the full Fusion file with its history, and copies may remain in forks or "
+        "including the full Fusion file with its history (and, for a design with linked components, "
+        "the designs it links to), and copies may remain in forks or "
         "clones even after you delete them. Use a private repository for designs you don't "
         "want to publish.\n\n"
         "Your Git name and email are also recorded in each commit.\n\n"

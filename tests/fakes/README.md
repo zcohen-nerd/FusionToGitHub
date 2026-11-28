@@ -133,3 +133,22 @@ Assumptions about Fusion, to confirm in Fusion itself:
     `16x16.png`, `32x32.png` and their `@2x` versions from *folder*.
 32. `webbrowser.open(url)` opens the user's browser from Fusion's Python, and
     `clip.exe` (Windows) or `pbcopy` (macOS) can be run to copy a link.
+
+### Linked components (S7, risk R-06)
+
+33. `exportManager.createFusionArchiveExportOptions(path, root)` with a path
+    ending in `.f3z`, for a design with linked components, writes Fusion's
+    `.f3z` archive (the design with its references), but names it
+    `<path>.f3d`, that is `Name.f3z.f3d`. This is reported by a community
+    add-in (nofuturekid/fusion-export, issue #33), not documented by Autodesk.
+    The fake writes `Name.f3z.f3d` by default; `f3z_behaviour = "exact"`
+    writes `Name.f3z`, and `"fail"` makes the export fail (the add-in then
+    falls back to `.f3d`). Whether the archive really includes the linked
+    designs is checked by live check J2.
+
+### Main thread (S7)
+
+34. Every Fusion API call, not only UI calls, must happen on Fusion's main
+    thread. The fake now also refuses `exportManager.execute` and
+    `Application.activeProduct` from other threads, so a background push that
+    touched the design would fail the tests (S7 test-quality review).

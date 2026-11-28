@@ -41,7 +41,7 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Protocol, Sequence, Tuple
 from urllib.parse import urlsplit
 
-VERSION = "0.8.0"
+VERSION = "0.9.0"
 IS_WINDOWS = os.name == "nt"
 GIT_OVERRIDE_ENV = "FUSION_TO_GITHUB_GIT"
 
@@ -445,14 +445,19 @@ def _credentials_root() -> str:
     owner-only (0700) folders.
     """
     if IS_WINDOWS:
+        # %LOCALAPPDATA%, or the user's own profile folder if that isn't
+        # usable; never %TEMP% (S7 security review).
         local = os.environ.get("LOCALAPPDATA", "").strip()
-        if local and os.path.isdir(local):
-            root = os.path.join(local, "PushToGitHub", "credentials")
+        candidates = [os.path.join(local, "PushToGitHub", "credentials")] if local and os.path.isdir(local) else []
+        candidates.append(os.path.join(os.path.expanduser("~"), ".PushToGitHub_AddIn_Data", "credentials"))
+        for root in candidates:
             try:
                 os.makedirs(root, exist_ok=True)
                 return root
             except OSError:
-                pass
+                continue
+        raise GitError("The add-in couldn't create its private folder for the stored token, so it wasn't used. "
+                       "Check that your user folder can be written to.")
     return tempfile.gettempdir()
 
 
@@ -494,7 +499,7 @@ def _sweep_stale_credential_dirs() -> None:
     if now - _last_sweep < _SWEEP_INTERVAL_SECONDS:
         return
     _last_sweep = now
-    for root in dict.fromkeys((_credentials_root(), tempfile.gettempdir())):
+    for root in (_credentials_root(),):
         try:
             names = [n for n in os.listdir(root) if n.startswith(_CREDENTIALS_DIR_PREFIX)]
         except OSError:
@@ -502,7 +507,9 @@ def _sweep_stale_credential_dirs() -> None:
         for name in names:
             path = os.path.join(root, name)
             try:
-                if _is_plain_dir(path) and now - os.lstat(path).st_mtime > _STALE_CREDENTIALS_SECONDS:
+                info = os.lstat(path)
+                mine = not hasattr(os, "getuid") or info.st_uid == os.getuid()
+                if mine and _is_plain_dir(path) and now - info.st_mtime > _STALE_CREDENTIALS_SECONDS:
                     _remove_credentials(path)
             except OSError:
                 pass
@@ -538,7 +545,10 @@ def _credentials_file(auth: "GitAuth"):
 # Folders that couldn't be deleted at once (normally empty); kept for tests and diagnostics.
 _credential_cleanup_failures: List[str] = []
 
-_URL_USERINFO_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)([^/@\s]+)@")
+# Up to the last "@" before the path, so a password containing "@" is hidden whole.
+_URL_USERINFO_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)([^/\s]+)@")
+# A classic personal access token from before GitHub's prefixed formats.
+_LEGACY_TOKEN_RE = re.compile(r"[0-9a-f]{40}")
 _TOKEN_RES = (
     re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"),
@@ -581,6 +591,9 @@ class GitAuth:
             "GIT_TRACE_REDACT": "1",
             "GIT_TRACE_CURL": None,
             "GIT_CURL_VERBOSE": None,
+            # Never send the token over a connection whose certificate isn't
+            # checked, even if the user's environment says so (S7 review).
+            "GIT_SSL_NO_VERIFY": None,
         }
         return values
 
@@ -607,6 +620,13 @@ class GitAuth:
             "fetch.recurseSubmodules=false",
             "push.recurseSubmodules=no",
             "submodule.recurse=false",
+            # A repository's own core.alternateRefsCommand runs during fetch
+            # with the environment, including the credential file's path;
+            # and fetch may start "gc --auto" or maintenance in the background
+            # (S7 security review). Neither runs while the token is in use.
+            "core.alternateRefsCommand=true",
+            "gc.auto=0",
+            "maintenance.auto=false",
         ]
         if not self.hooks_dir:
             # Never hand git the token with repository hooks enabled (R-21);
@@ -745,7 +765,7 @@ def url_has_embedded_secret(url: str) -> bool:
     if parsed.password:
         return True
     user = parsed.username or ""
-    return any(pattern.fullmatch(user) for pattern in _TOKEN_RES)
+    return any(pattern.fullmatch(user) for pattern in _TOKEN_RES) or bool(_LEGACY_TOKEN_RE.fullmatch(user))
 
 
 # ---------------------------------------------------------------------------
@@ -788,8 +808,10 @@ def remote_branches(
                 default = target[len("refs/heads/") :]
             continue
         sha, _, ref = line.partition("\t")
-        if ref.startswith("refs/heads/"):
-            heads[ref[len("refs/heads/") :]] = sha.strip()
+        sha = sha.strip()
+        # Only well-formed object ids are used in later git commands (S7 review).
+        if ref.startswith("refs/heads/") and re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", sha):
+            heads[ref[len("refs/heads/") :]] = sha
     if default not in heads:
         default = next((b for b in ("main", "master") if b in heads), None) or (
             sorted(heads)[0] if heads else None
@@ -903,6 +925,9 @@ def _with_marker(data: bytes, key: str) -> bytes:
     return marker + data
 
 
+_UNSAFE_FOLDER = re.compile(r'[\x00-\x1f\x7f<>:"\\|?*]')
+
+
 def _choose_design_folder(
     repo_path: str,
     base: Optional[str],
@@ -938,6 +963,8 @@ def _choose_design_folder(
             continue
         name = segments[len(prefix)]
         taken[name.lower()] = name
+        if _UNSAFE_FOLDER.search(name) or name in (".", ".."):
+            continue  # never chosen: control characters or path tricks from the remote tree
         if segments[len(prefix) + 1:] == suffix and fields[1] == "blob":
             histories[name] = (fields[2], int(fields[3]) if fields[3].isdigit() else _MAX_HISTORY_BYTES + 1)
     # Windows and macOS don't tell "Bracket" from "bracket": a folder that
@@ -968,6 +995,28 @@ def _choose_design_folder(
     while f"{stem} ({n})".lower() in taken:
         n += 1
     return f"{stem} ({n})"
+
+
+def _existing_spelling(
+    repo_path: str, base: Optional[str], files: Sequence[Tuple[str, str]]
+) -> List[Tuple[str, str]]:
+    """*files* with each path spelled as on GitHub when it differs only in letter case.
+
+    Windows and macOS can't hold "Bracket.f3d" and "bracket.f3d" in one
+    folder, so a design renamed only in case keeps updating the existing
+    file instead of adding a second one (S7 correctness review).
+    """
+    if not base or not files:
+        return list(files)
+    folders = sorted({posixpath.dirname(rel) for _, rel in files})
+    proc = git_run(repo_path, "ls-tree", "--name-only", "-z", base, "--", *[f"{f}/" if f else "." for f in folders],
+                   check=False)
+    existing = {path.lower(): path for path in (proc.stdout or "").split("\0") if path}
+    result = []
+    for source, rel in files:
+        same = existing.get(rel.lower())
+        result.append((source, same if same and same != rel else rel))
+    return result
 
 
 def _build_commit(
@@ -1088,6 +1137,11 @@ def _cancelled_result(
         )
         tip = listing.split("\t", 1)[0].strip() if listing else ""
         reached = tip == state["commit"]
+        if phase == "pushing" and tip and not reached and tip != (state.get("base") or ""):
+            # The branch moved to something else: perhaps someone pushed on
+            # top of this export, perhaps not. Don't claim either way.
+            result["uncertain"] = True
+            return result
         if phase == "bootstrapping":
             # Only the empty repository's first commit was being sent; the
             # export itself was not.
@@ -1357,7 +1411,7 @@ def push_export(
                                     "Add this export as a new commit on that branch?"
                                 )
                             if not ui.confirm(question):
-                                return {"cancelled": True}
+                                return {"cancelled": True, "repository_initialized": bootstrapped}
                             confirmed_reuse = True
                     else:
                         branch = generated_name
@@ -1411,19 +1465,34 @@ def push_export(
                         )
                     updated = _updated_history(existing, entry, header)
                     extra[rel_history] = _with_marker(updated, key) if mark else updated
+                files[:] = _existing_spelling(repo_path, base, files)
                 commit = _build_commit(repo_path, base, files, extra, message, identity)
 
                 step("Pushing to GitHub…")
-                state.update(phase="pushing", branch=branch, commit=commit)
-                proc = git_run(
-                    repo_path,
-                    "push",
-                    "origin",
-                    f"{commit}:refs/heads/{branch}",
-                    check=False,
-                    auth=auth,
-                    network=True,
-                )
+                state.update(phase="pushing", branch=branch, commit=commit, base=base)
+                try:
+                    proc = git_run(
+                        repo_path,
+                        "push",
+                        "origin",
+                        f"{commit}:refs/heads/{branch}",
+                        check=False,
+                        auth=auth,
+                        network=True,
+                    )
+                except GitTimeoutError as timeout:
+                    # The push may or may not have reached GitHub: ask it.
+                    outcome = _cancelled_result(repo_path, state, auth, logger)
+                    if outcome.get("published"):
+                        proc = subprocess.CompletedProcess([GIT_EXE, "push"], 0, "", "")
+                    elif outcome.get("uncertain"):
+                        raise GitError(
+                            f"{timeout}\n\nIt couldn't be confirmed whether this backup arrived. Look at "
+                            "the repository on GitHub before backing up again."
+                        ) from timeout
+                    else:
+                        raise GitError(f"{timeout}\n\nGitHub didn't receive this backup; nothing on GitHub "
+                                       "was changed.") from timeout
                 if proc.returncode == 0:
                     state["phase"] = "done"
                     return {
@@ -1461,7 +1530,13 @@ def push_export(
             except GitCancelled:
                 return _cancelled_result(repo_path, state, auth, logger)
             finally:
-                git_run(repo_path, "update-ref", "-d", _BASE_REF, check=False)
+                # Tidying up must never turn a finished push into a reported
+                # failure (S7 correctness review).
+                try:
+                    git_run(repo_path, "update-ref", "-d", _BASE_REF, check=False)
+                except (GitError, OSError) as exc:
+                    if logger:
+                        logger.warning("Couldn't remove the temporary reference %s: %s", _BASE_REF, exc)
     except (GitError, ValueError, OSError) as exc:
         secrets = (token_secrets(pat_credentials.get("token", ""), pat_credentials.get("username", ""))
                    if pat_credentials else [])

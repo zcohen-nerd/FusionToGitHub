@@ -70,7 +70,7 @@ class ProgressAndSummaryTests(BridgeTestCase):
         self.assertIn("Pushing to GitHub…", progress.shown)
         self.assertTrue(len(progress.messages) >= 2, progress.messages)  # git steps arrived
         self.assertIn("Saved to: fusion-export/Bracket-", self.last_message())
-        self.assertIn("Nothing in your local repository folder was changed.", self.last_message())
+        self.assertIn("Your files and branches in the local repository folder weren't changed.", self.last_message())
         self.assertFalse(addin.bridge.busy)
         self.assertFalse(push_worker.is_busy())
 
