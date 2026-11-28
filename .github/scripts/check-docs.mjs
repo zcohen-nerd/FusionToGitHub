@@ -109,6 +109,41 @@ for (const file of mdFiles) {
   }
 }
 
+// Content guards (audit S6: DOC-01/02/07, COMP-11). History documents (the
+// changelog and the audit record) are exempt: they describe the past.
+const EXEMPT_FROM_GUARDS = (rel) => rel === 'CHANGELOG.md' || rel.startsWith('docs/audit/');
+const GUARDS = [
+  {
+    // Destructive advice must never appear in user documentation.
+    re: /reset\s+--hard/i,
+    why: 'destructive command "reset --hard"',
+  },
+  {
+    // The add-in's folder is Push_To_GitHub; FusionToGitHub was a pre-0.3.3 mistake.
+    re: /AddIns[\\/]+FusionToGitHub/i,
+    why: 'wrong install folder (the add-in folder is Push_To_GitHub)',
+  },
+  {
+    // The product is "Autodesk Fusion"; "Fusion 360" only inside the real AddIns path.
+    re: /Fusion 360(?![\\/]API)/,
+    why: '"Fusion 360" outside a file path (the product is Autodesk Fusion)',
+  },
+  {
+    // Counts go stale; describe the suites instead.
+    re: /\b\d+\s+(?:unit |integration |automated |end-to-end )?tests\b/i,
+    why: 'hard-coded test count',
+  },
+];
+for (const file of mdFiles) {
+  const rel = relative(repoRoot, file).replace(/\\/g, '/');
+  if (EXEMPT_FROM_GUARDS(rel)) continue;
+  readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
+    for (const guard of GUARDS) {
+      if (guard.re.test(line)) failures.push(`${rel}:${i + 1}: ${guard.why}: ${line.trim().slice(0, 100)}`);
+    }
+  });
+}
+
 async function checkUrl(url) {
   const host = (() => {
     try {

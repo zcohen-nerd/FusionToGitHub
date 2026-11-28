@@ -286,7 +286,7 @@ class PushController:
         Everything is checked before anything changes. The local repository's
         ``origin`` is rewritten only if *update_origin* (repo_path, old_url,
         new_url) agrees, and only after the settings were saved. Moving to a
-        different folder or server turns off "Use Stored Token", so a token is
+        different folder or server turns off "Use stored token", so a token is
         never sent somewhere it wasn't stored for. Returns (final name, notes).
         """
         self._require_writable()
@@ -307,7 +307,7 @@ class PushController:
             if profile.get("useStoredPat"):
                 changes["useStoredPat"] = False
                 notes.append(
-                    "'Use Stored Token' was turned off because the repository now uses a different "
+                    "'Use stored token' was turned off because the repository now uses a different "
                     "folder. Turn it on again once you've checked the token is right for it."
                 )
 
@@ -321,7 +321,7 @@ class PushController:
             if profile.get("useStoredPat") and server_of(old_url) != server_of(url):
                 changes["useStoredPat"] = False
                 notes.append(
-                    "'Use Stored Token' was turned off because the repository moved to another "
+                    "'Use stored token' was turned off because the repository moved to another "
                     "server. Turn it on again once the stored token is right for the new one."
                 )
             changes["url"] = url
@@ -412,7 +412,7 @@ class PushController:
     def _token_for(self, name: str, repo_path: str) -> Dict[str, str]:
         """The stored token, after checking it was stored for this repository's server."""
         if not self.credentials.available:
-            raise PushRefused("Stored tokens aren't supported on this computer; untick 'Use Stored Token'.")
+            raise PushRefused("Stored tokens aren't supported on this computer; untick 'Use stored token'.")
         try:
             pat = self.credentials.get(name)
         except CredentialError as exc:

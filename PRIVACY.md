@@ -25,7 +25,7 @@ The only other connection is your web browser opening this page when you click
 
 ## What is sent, and to whom
 
-When you click **OK** in the **Push to GitHub** dialog, `git` sends these to the
+When you click **Back up now** in the **Push to GitHub** dialog, `git` sends these to the
 repository address you configured (for example `github.com/you/designs`):
 
 | Data | Details |
@@ -71,7 +71,7 @@ Windows they are in your user profile, which is private to you by default.
 
 On your computer:
 
-1. **Logs:** in the dialog, **Logging & Privacy → Clear Log**, or delete the
+1. **Logs:** in the dialog, **Help & Privacy → Clear Log**, or delete the
    `.PushToGitHub_AddIn_Data` folder in your home folder.
 2. **Stored token:** **Advanced → Manage Token… → No (Delete it)**. Then revoke
    the token on GitHub (*Settings → Developer settings → Personal access
@@ -92,4 +92,4 @@ Changes to this policy are listed in the [CHANGELOG](CHANGELOG.md). Questions:
 open an [issue](https://github.com/zcohen-nerd/FusionToGitHub/issues), or see
 [SECURITY.md](SECURITY.md) for anything sensitive.
 
-*Last updated: 2026-11-27 (version 0.4.0).*
+*Last updated: 2026-11-28 (version 0.8.0, in development; the current release is 0.4.0, which doesn't have the design marker, Check My Setup or the per-command credential file).*

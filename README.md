@@ -1,368 +1,132 @@
-# Fusion to GitHub — Automatic Design Backups
+# Fusion to GitHub
 
-**Back up your Fusion 360 designs to GitHub with one click, keeping a full version history in Git.**
+**Back up your Autodesk® Fusion designs to a GitHub repository you own, one click at a time, with a dated, annotated history of every version.**
 
-This is a free add-in for Autodesk Fusion 360. Every time you click its button, it saves your design to [GitHub](https://github.com) as a new commit. As long as the repository stays intact, you can go back to any earlier version — if you break a design, lose a file, or just want to see what a part looked like three weeks ago. (Git history is durable but not immutable; see [Known limits](#status-supported-versions-and-known-limits).)
+This free add-in for Autodesk Fusion adds a **Push to GitHub** button. Each time you click it, it exports the open design (as a Fusion file, STEP, STL, IGES or SAT: you choose) and adds it, with a note about what changed, to a repository on [GitHub](https://github.com). You can get any earlier version back from GitHub later.
 
-No programming knowledge required. If you can install Fusion 360, you can use this.
+No programming or Git knowledge is needed.
 
----
-
-## What it does
-
-- 💾 **One-click backup** — click a button in Fusion, type a short note, done
-- 🕐 **Full version history** — each backup is its own commit; the add-in never overwrites or deletes an earlier one
-- 📦 **Multiple file formats** — saves your design as F3D, STEP, STL, IGES, or SAT (you pick)
-- 📓 **Automatic logbook** — each design's folder has a `HISTORY.md` listing every backup: when, your note, and which Fusion version
-- 👥 **Easy sharing** — send anyone a link to view or download your designs
-- 🔒 **Private if you want** — GitHub lets you keep your designs completely private, for free
-
-### A quick word about the jargon
-
-GitHub was built for programmers, so it uses a few odd words. Here's all you need to know:
-
-| Word | What it actually means |
-|------|------------------------|
-| **Repository** (or "repo") | A project folder on GitHub that remembers every version of its contents |
-| **Commit** | One saved snapshot, with a note about what changed |
-| **Branch** | A line of history; your backups go on the repository's main one unless you choose otherwise |
-| **Push** | Uploading your snapshot to GitHub |
-
-The add-in handles all of this for you. You just click the button.
+**Status:** version **`0.8.0`** is in development and not yet released. The current release is
+[0.4.0](https://github.com/zcohen-nerd/FusionToGitHub/releases/latest). Windows is supported; macOS is experimental (see [Platform support](#platform-support)).
 
 ---
 
-## What you need before installing
+## What it does, and what it doesn't
 
-1. **Autodesk Fusion 360** on Windows. (macOS is **experimental**: the add-in loads there, but it has not been tested on a Mac.)
-2. **A free GitHub account** — sign up at [github.com](https://github.com/signup) (the free plan is all you need, and your designs can be private)
-3. **Git** — the free program that talks to GitHub:
-   - Download from [git-scm.com/downloads](https://git-scm.com/downloads)
-   - Run the installer and **just keep clicking "Next"** — the default options are correct
-   - Restart your computer afterwards
+**It does:**
+- Export the open design and send it to your GitHub repository when you click the button, with your note.
+- Keep each design in its own folder (`designs/<design name>/`) with a `HISTORY.md` that lists every backup: when, your note, and which Fusion version of the design it was.
+- Keep every earlier version available on GitHub. The add-in never deletes or overwrites a backup, and never "force-pushes" (replaces what is on GitHub).
+- Check that every export worked before anything is sent: if one fails, nothing is sent.
 
-That's it. You do not need to learn to use Git — the add-in uses it behind the scenes.
-
----
-
-## Installing the add-in (5 minutes)
-
-1. **Download the add-in**: open the [latest release](https://github.com/zcohen-nerd/FusionToGitHub/releases/latest) and, under **Assets**, download **`Push_To_GitHub-<version>.zip`** (for example `Push_To_GitHub-0.3.3.zip`).
-   Don't use the green **Code → Download ZIP** button: that is the source code, not the add-in.
-
-2. **Open your Fusion add-ins folder:**
-   - **Windows**: press `Windows key + R`, paste this, and press Enter:
-     `%APPDATA%\Autodesk\Autodesk Fusion 360\API\AddIns`
-   - **Mac**: in Finder press `Cmd + Shift + G`, paste this, and press Enter:
-     `~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns`
-
-3. **Unzip the file into that folder.**
-   - **Windows**: right-click the ZIP → **Extract All…**, set the destination to the `AddIns` folder from step 2 (remove the `Push_To_GitHub-<version>` part Windows adds to the end), and click **Extract**.
-   - **Mac**: double-click the ZIP, then drag the `Push_To_GitHub` folder it creates into the `AddIns` folder.
-
-   You should end up with exactly this:
-
-   ```
-   AddIns/
-   └── Push_To_GitHub/
-       ├── Push_To_GitHub.manifest
-       ├── Push_To_GitHub.py
-       └── (4 more files)
-   ```
-
-   The folder must be called exactly `Push_To_GitHub`, matching the files inside it, and must sit directly in `AddIns`, not in an extra folder.
-
-4. **Restart Fusion 360.**
-
-5. **Turn the add-in on:** in Fusion, open the **UTILITIES** tab, click **ADD-INS**, find **Push to GitHub** in the Add-Ins list, and click **Run**. (Tick "Run on Startup" so it's always available.)
-
-You should now see a **Push to GitHub** button in your toolbar.
-
-> **Button not showing up?** Check the folder layout in step 3, restart Fusion completely, and see the [Troubleshooting Guide](docs/TROUBLESHOOTING.md).
-
-### Upgrading from an earlier version
-
-Versions before 0.3.3 were installed by copying files by hand, often into a folder called `FusionToGitHub`. To switch to the release ZIP:
-
-1. In Fusion, open **UTILITIES → ADD-INS**, select the old add-in, click **Stop**, and untick **Run on Startup**.
-2. Quit Fusion.
-3. Delete the old add-in folder from the `AddIns` folder. Your saved repositories and settings are kept: they are stored in `.fusion_git_repos.json` in your home folder, not in the add-in folder. A token stored with **Manage Token…** stays in Windows Credential Manager.
-4. Install the new version as described above.
-
-Don't keep two copies installed. Since 0.6.0 a second copy shows a warning and adds no second button, but remove it anyway. From 0.6.0 on, a Community Store update (or Stop → replace the folder → Run) works without restarting Fusion.
+**It doesn't:**
+- Back up on its own. You click the button when you want a backup.
+- Replace Fusion's own version history. It's an independent copy, outside Autodesk's cloud, in formats other programs can open. Keep both.
+- Merge, compare or lock designs between people. See [Teams](docs/TEAMS.md) for what works when several people share a repository.
+- Create the GitHub repository for you, or change files in the local folder it uses.
 
 ---
 
-## First-time setup (5 minutes)
+## Before you start
 
-You only do this once per project.
+1. **Autodesk Fusion** on **Windows**. macOS is experimental.
+2. **A GitHub account.** The free plan is enough, and your designs can stay private: [github.com/signup](https://github.com/signup).
+3. **Git**, the free program the add-in uses to talk to GitHub: download it from [git-scm.com/downloads](https://git-scm.com/downloads) and install it with the default options. On Windows, those include Git Credential Manager, which handles signing in to GitHub. On a Mac, see [Install → macOS](docs/INSTALL.md#macos-experimental).
 
-### Step 1 — Create a home for your designs on GitHub
-
-1. Go to [github.com/new](https://github.com/new) (sign in if asked)
-2. Give the repository a name, e.g. `my-fusion-designs`
-3. Choose **Private** unless you want everyone to see your designs.
-
-   > ⚠️ **A public repository is public.** Anyone can see and download every version you back up, including the full Fusion file, and copies can stay in other people's forks after you delete them. The add-in reminds you before the first push to each repository.
-4. Click **Create repository**
-5. **Copy the page's web address** from your browser's address bar — it looks like
-   `https://github.com/yourname/my-fusion-designs`
-
-### Step 2 — Connect Fusion to it
-
-1. In Fusion, click the **Push to GitHub** button
-2. The Repository list is already set to **"Set up a new GitHub repository…"** — leave it.
-   (Not sure everything is installed? Click **Check My Setup…** first: it checks Git and your GitHub sign-in.)
-3. **Paste the web address** you copied into the **GitHub address** box
-   (the add-in tidies it up automatically — you can leave "Name in this list" blank and it will figure it out)
-4. Click **Choose folder…** to pick a folder on your computer for Git's copy, or accept the suggested one
-5. Type a note in **What changed?** — for a first backup, *"first version"* is fine
-6. Click **Back up now** (it stays greyed out until everything needed is filled in)
-
-The add-in sets everything up **and pushes your first backup right away**. From now on, your project appears in the dropdown, ready to use.
-
-> **Two one-time questions may pop up on your first push — both are normal:**
-> 1. The add-in may ask for **your name and email**. Git stamps every snapshot with them, like signing your work. Type them once and you're done.
-> 2. A window may ask you to **sign in to GitHub**. Follow the prompts once and it remembers you.
+> ⚠️ **Use a private repository for designs you don't want to publish.** In a public repository, anyone can see and download every version you back up, including the full Fusion file, and copies can remain in other people's forks even after you delete them. The add-in reminds you before the first backup to each repository.
 
 ---
+
+## Install (5 minutes)
+
+1. Open the [latest release](https://github.com/zcohen-nerd/FusionToGitHub/releases/latest) and, under **Assets**, download **`Push_To_GitHub-<version>.zip`**. (Not the green **Code → Download ZIP** button: that is the source code.)
+2. Unzip it into Fusion's `AddIns` folder, so that you have `AddIns/Push_To_GitHub/Push_To_GitHub.manifest`. The [installation guide](docs/INSTALL.md#install-from-the-release-zip) shows where that folder is and how to unzip without an extra folder level.
+3. In Fusion, turn it on and tick **Run on Startup** ([installation guide, step 4](docs/INSTALL.md#install-from-the-release-zip)).
+
+The **Push to GitHub** button (a blue cube with an orange branch) appears in the **ADD-INS** panel. If you use the [Fusion Community Store](https://github.com/4FusionLab/CommunityStore), you can install and update it from there instead.
+
+Updating, going back to an earlier version and uninstalling are in the **[installation guide](docs/INSTALL.md)**.
+
+---
+
+## Your first backup (5 minutes)
+
+1. On GitHub, [create a new repository](https://github.com/new) (choose **Private**), and copy its address from the browser, for example `https://github.com/you/my-designs`.
+2. In Fusion, open the design and click **Push to GitHub**.
+3. The Repository list shows **Set up a new GitHub repository…**. Paste the address into **GitHub address**. Leave the suggested local folder as it is.
+   *Not sure everything is installed? Click **Check My Setup…** first: it checks Git, your GitHub sign-in and the repository, and says what to fix.*
+4. Type a short note in **What changed?**, for example *first version*.
+5. Click **Back up now**. (It stays greyed out until everything it needs is filled in; the line under the files says what's missing.)
+
+The first time, the add-in may ask for your name and email (Git labels every backup with them; a [GitHub "noreply" address](https://docs.github.com/en/account-and-profile/setting-up-and-managing-your-personal-account-on-github/managing-email-preferences/setting-your-commit-email-address) works), and a GitHub sign-in window may open in your browser. Both happen once.
+
+When the backup is done, the add-in says where it went and offers to **open it on GitHub** or **copy the link**.
 
 ## Everyday use (30 seconds)
 
-1. Open your design in Fusion
-2. Click **Push to GitHub**
-3. Type a short note in **What changed?** — e.g. *"made the bracket holes 5mm"*
-4. Click **Back up now**
+1. Click **Push to GitHub**.
+2. Type what changed, for example *holes widened to 5 mm*.
+3. Click **Back up now**.
 
-A message tells you what was backed up and where, and offers to **open it on GitHub** (Yes) or **copy the link** (No). That's the whole workflow.
-
-### Where do my files go on GitHub?
-
-Each design has its own folder in the repository, `designs/<design name>/`, holding the latest exported files and a `HISTORY.md` that lists every backup. Every backup is added to one running history on the repository's main branch, so the folder always shows the newest version and GitHub's **History** button on any file lists every earlier one. The dialog's **Saves to** line shows the branch and folder before you click.
-
-Two options in the dialog's **Advanced** section change this:
-
-- **Backup branch**: keep backups on a branch of their own (for example `fusion-backups`) instead of the main one. It is created on the first backup.
-- **Separate branch per backup**: every backup gets a new branch such as `fusion-export/Bracket-20260708-143022`, as versions before 0.7.0 did. Repositories set up with those versions keep working this way until you untick it.
-
-The add-in never overwrites or deletes an earlier backup and never force-pushes: each backup is a new commit, available as long as the repository is.
-
-The add-in **doesn't change the local folder** you picked during setup: it builds each backup directly from the exported files and sends it to GitHub. So the exports won't appear in that folder, and anything you were doing there (unsaved edits, other branches) is left exactly as it was.
-
-### Size limits
-
-GitHub rejects files of 100 MB or more, and warns about files over 50 MB. The add-in checks before pushing: it refuses an export of 100 MB or more and asks before pushing one over 50 MB. Every version is kept, so a repository grows with each backup. To keep exports small, untick formats you don't need, or lower the STL mesh refinement.
+Fusion stays usable while the backup is sent, and **Cancel** in the progress window stops it. The message at the end says truthfully whether anything reached GitHub.
 
 ---
 
-## Choosing file formats
+## Getting an old version back
 
-In the dialog's **Files to include** list you can pick any combination:
+Every backup is kept. On GitHub, open the repository, then `designs/<your design>/`:
+- `HISTORY.md` lists every backup with its date, note and Fusion version.
+- Click a file, then **History**, to see all its versions. Open one and choose **Download raw file**.
+- Open the downloaded `.f3d` in Fusion.
 
-| Format | Choose it when… |
-|--------|-----------------|
-| **F3D** | You want the *complete* Fusion file — sketches, timeline, everything (recommended: always keep this on) |
-| **STEP** | You share parts with people using other CAD software |
-| **STL** | You 3D-print your parts |
-| **IGES** | Someone asks for it (older CAD software) |
-| **SAT** | Someone asks for it (ACIS-based CAD software) |
-
-The default (F3D + STEP + STL) is a good all-round choice.
-
-- **All or nothing.** Every format you pick must export and pass basic checks
-  (the file exists, isn't empty, is the right kind of file, is under 100 MB).
-  If one fails, nothing is pushed. These checks don't prove a file opens in
-  other CAD software.
-- **Linked components: known limitation.** Fusion can only export `.f3d`,
-  which may not include components linked from other designs, so **a backup
-  of such a design may not restore on its own**. Restoring one hasn't been
-  verified yet. If your design has linked components, the add-in names them
-  and asks before pushing, and notes the limitation in the design's
-  `HISTORY.md`. Keep the linked designs in Fusion too.
-- **STL** files are written in millimetres on recent Fusion builds; on older
-  ones they use the design's units, and the add-in says so. **Format Settings
-  → STL files → One file per body** writes each body to its own file
-  (`Bracket - Arm 1 - Pin.stl`).
-- File and folder names are made safe for Windows, macOS and GitHub:
-  characters Windows doesn't allow become `_`, and names that differ only in
-  upper/lower case get " (2)".
-
-While the push runs, Fusion stays usable, and **Cancel** in the progress
-window stops it. The result message says whether anything reached GitHub.
+The **[backup and restore guide](docs/RESTORE.md)** walks through each step, including STEP and STL files, backups made with older versions, and designs with linked components.
 
 ---
 
-## If something goes wrong
+## Good to know
 
-The add-in explains problems in plain messages and keeps your work safe: it never deletes or overwrites an earlier backup, and it never force-pushes, so it can't overwrite anyone else's work on GitHub either. The three most common hiccups:
+- **Where backups go.** New repositories keep one running history on the repository's main branch, in `designs/<design name>/`. The dialog's **Saves to** line shows the branch and folder before you click. **Advanced** lets you keep backups on a branch of their own, or use a separate branch per backup (as versions before 0.7.0 did; repositories set up with those versions keep doing that).
+- **Your files in the local folder are never changed.** The add-in builds each backup straight from the exported files, so the local folder doesn't show them, and your files and branches there are left alone (only Git's own records of what is on GitHub are updated).
+- **Size limits.** GitHub refuses files of 100 MB or more, so the add-in refuses them too, and asks before sending one over 50 MB. Every version is kept, so the repository grows with each backup. Untick formats you don't need, or lower the STL mesh refinement.
+- **Linked components: known limitation.** A backup of a design that contains components linked from other designs **may not restore on its own**; restoring one hasn't been verified yet. The add-in asks before backing up such a design. See [restore → linked components](docs/RESTORE.md#designs-with-linked-components).
+- **History is durable, not permanent.** The add-in never rewrites or deletes history, but anyone with write access to the repository can, and GitHub can have outages or close an account. Keep an independent copy of anything you can't afford to lose.
+- **Other Git servers.** The add-in is made and tested for GitHub. Other servers that speak Git over https may work, but aren't tested. Links in the summary then go to the repository's main page.
 
-| Problem | Fix |
-|---------|-----|
-| **No button in the toolbar** | Restart Fusion completely; check the files are in the right folder (see Installing above) |
-| **"Git executable not found"** | Install Git from [git-scm.com](https://git-scm.com/downloads) with default options, then restart your computer |
-| **Sign-in / permission errors** | Make sure you can open your repository's page on github.com while signed in; then try again |
+### Platform support
 
-- **Check everything**: click **Check My Setup…** in the dialog. It checks Git, your GitHub sign-in and the repository, and says what to fix
-- **See what happened**: expand **Help & Privacy** in the dialog and click **Open Log File…**
-- **More help**: the [Troubleshooting Guide](docs/TROUBLESHOOTING.md) covers everything else
-
----
-
-## Security & your GitHub credentials
-
-Short version:
-
-- **By default**, the add-in doesn't touch your credentials at all — it runs
-  `git`, and Git's own Credential Manager handles the one-time browser sign-in.
-- **Optionally (Windows)**, you can store a Personal Access Token via
-  **Manage Token…**, in a field that hides what you type. It goes into Windows
-  Credential Manager. On each push it is offered only to your repository's
-  server, only over https, and Git's other credential helpers can't keep a
-  copy.
-- Prefer a **fine-grained token** limited to the one repository, with
-  **Contents: Read and write** and nothing else.
-- **Never** put a token in a repo file, a remote URL, a commit message, a
-  screenshot, or a bug report. If one leaks, revoke it on GitHub right away.
-
-Full details — exactly what is stored where, how to delete vs. revoke a token,
-and how to report a security problem — are in **[SECURITY.md](SECURITY.md)**.
-What the add-in stores and sends in general (no telemetry; your exports, note
-and Git name/email go to your repository and nowhere else) is in
-**[PRIVACY.md](PRIVACY.md)**, also linked from the dialog's **Help &
-Privacy** section.
+| | Status |
+|---|---|
+| Windows 10/11 | Supported |
+| macOS | **Experimental**: automated tests run on macOS, but the add-in hasn't been tested inside Fusion on a Mac. Sign-in needs Git Credential Manager; stored tokens are Windows-only. Reports are welcome. |
+| Git | 2.30 or newer recommended; **Check My Setup** shows your version |
+| Fusion | Uses Fusion's standard export API. The Fusion versions tested will be listed here once the release has been checked in Fusion |
 
 ---
 
-## Status, supported versions, and known limits
+## Help
 
-- **Version:** **`0.7.0`** (in development; the current release is 0.4.0). The version is set once, in the add-in manifest;
-  the runtime constant, the CLI `--version`, the log banner, the README and the
-  top `CHANGELOG.md` entry must match it. CI tests (`T_VERSION`, `T_RELEASE`)
-  fail if they drift, and the release workflow refuses a Git tag that doesn't
-  match. See [`CHANGELOG.md`](CHANGELOG.md).
-- **Operating system:** **Windows** is supported. **macOS is experimental**:
-  the add-in is declared for Mac and its automated Git tests run on macOS, but
-  nobody has tested it inside Fusion on a Mac yet. If you try it, please report
-  what happens in an issue. The optional **stored-token** feature is
-  **Windows-only**; on macOS you rely on Git Credential Manager's browser
-  sign-in, which is not included with every macOS Git install.
-- **Autodesk Fusion:** current Fusion, any recent version — it uses the stable
-  design-export API (F3D / STEP / STL / IGES / SAT). DWG/DXF are intentionally
-  not offered; Fusion's export API does not produce them.
-- **Git:** a recent Git (2.20+) with **Git Credential Manager** enabled — the
-  default in modern Git for Windows / macOS installers. `git` must be on `PATH`
-  (or at the Windows fallback `C:\Program Files\Git\bin\git.exe`).
-- **You create the GitHub repository yourself** on github.com; the add-in never
-  creates one via the API.
-- **Repositories set up with 0.7.0 or later keep one running history** on
-  the repository's main branch (or the Backup branch you choose), in
-  `designs/<design>/`. Each backup only adds or replaces that design's files
-  and `HISTORY.md`; nothing else on the branch changes. Repositories set up
-  with earlier versions keep making a new branch per push
-  (`fusion-export/<design>-<timestamp>`) until you untick **Separate branch per
-  backup**. If the GitHub repository is completely empty, the first backup
-  also adds a small first commit to `main` (a `.gitattributes` file that stops
-  Git from altering CAD files).
-- **Your local folder is never changed.** Backups are built straight from the
-  exported files, so uncommitted work, other branches and stashes in the local
-  repository are untouched, whether a push succeeds or fails.
-- **Nothing can hang forever.** Every Git step has a time limit (10 minutes for
-  network steps, which includes a GitHub sign-in window, and 1 minute for local
-  ones). If one is reached, the push stops and nothing on GitHub changes.
-- **Backups:** this backs up *exported* CAD files to a Git branch. It is a
-  complement to, not a replacement for, Fusion's own cloud version history.
-  Keep both.
-- **History is durable, not immutable.** A successful push creates Git history,
-  and this add-in never rewrites or deletes it. But Git history *can* be
-  altered: anyone with write access can force-push over a branch, delete a
-  branch, or delete the whole repository, and GitHub itself can have outages or
-  close an account. Treat this as a strong safety net, not a permanent archive —
-  keep an independent backup of anything you cannot afford to lose.
-- **History grows:** every export is kept as its own commit, and CAD
-  files are binary — a long-lived backup repo can get large (there is no Git
-  LFS integration).
-- **Automated tests:** a Git regression suite (`python tests/test_runner.py`)
-  and unit tests (`python -m unittest discover -s tests/unit`), run in CI on
-  Ubuntu and Windows across Python 3.10–3.12 plus macOS, again under an
-  unusual Git configuration, and with per-module coverage minimums. The dialog
-  is tested against simulated Fusion objects; behaviour inside real Fusion is
-  checked by hand with [`tests/MANUAL_CHECKLIST.md`](tests/MANUAL_CHECKLIST.md)
-  before each release.
+- **Check My Setup…** in the dialog finds most problems and says what to do.
+- The **[troubleshooting guide](docs/TROUBLESHOOTING.md)** lists every message the add-in shows, with the fix.
+- The log file: **Help & Privacy → Open Log File…** in the dialog.
+- Questions and bug reports: see **[SUPPORT.md](SUPPORT.md)**. Security problems: **[SECURITY.md](SECURITY.md)** (please don't open a public issue).
 
-### First success, end to end
+## Documentation
 
-1. Create an (empty) repo on [github.com/new](https://github.com/new) — Private
-   is fine — and copy its URL.
-2. Install the add-in (above) and click **Push to GitHub** in Fusion.
-3. Leave the dropdown on **"Set up new GitHub repository…"**, paste the URL,
-   pick a local folder, click **OK**.
-4. Answer the two one-time prompts if they appear (your Git name/email, then a
-   GitHub sign-in window).
-5. The first backup pushes automatically. After that: open a design → click the
-   button → type a note → **OK**.
+| Document | For |
+|---|---|
+| [Installation guide](docs/INSTALL.md) | Installing, updating, going back to an earlier version, uninstalling |
+| [User guide](docs/USER_GUIDE.md) | Every option in the dialog, explained |
+| [Backup and restore guide](docs/RESTORE.md) | What a backup contains, and getting a version back |
+| [Troubleshooting](docs/TROUBLESHOOTING.md) | Messages and problems, with fixes |
+| [Teams](docs/TEAMS.md) | Several people and one repository |
+| [Privacy](PRIVACY.md) · [Security](SECURITY.md) | What is stored and sent; stored tokens |
+| [Changelog](CHANGELOG.md) | What changed in each version |
+| [Contributing](CONTRIBUTING.md) | Developing, testing and releasing |
+
+## Credits and licence
+
+Created by Zac Cohen. Contributors are credited in the [changelog](CHANGELOG.md); thanks to [DiegoV71](https://github.com/DiegoV71) for reporting the missing installable release and the same-session update problem (#11), the stable add-in ID and release ZIP layout (#12), and the 0.3.3 packaging alignment (#14). Released under the [MIT licence](LICENSE).
 
 ---
 
-## More documentation
-
-| Guide | What's in it |
-|-------|--------------|
-| [Getting Started](docs/GETTING_STARTED.md) | The full first-time walkthrough with more detail |
-| [User Guide](docs/USER_GUIDE.md) | Every feature explained — formats, templates, subfolders, tokens |
-| [Quick Reference](docs/QUICK_REFERENCE.md) | One-page cheat sheet |
-| [Installation Guide](docs/INSTALLATION.md) | Detailed install instructions for both platforms |
-| [Team Guide](docs/TEAM_GUIDE.md) | Working with multiple people on shared designs |
-| [Troubleshooting](docs/TROUBLESHOOTING.md) | Fixes for every known problem |
-
----
-
-## For advanced users
-
-<details>
-<summary><b>Extra features in the dialog (click to expand)</b></summary>
-
-- **Backup branch** — keep backups on a branch of their own instead of the repository's main branch
-- **Separate branch per backup** — a new branch for every backup (named by the **Branch name template**), as versions before 0.7.0 did; **Use this branch instead** sends one backup to a branch you name, asking first if it already exists
-- **Commit message format** — how each commit is titled, with `{message}` (what you typed), `{filename}` and `{timestamp}`
-- **Design folders go in** — the folder that holds one folder per design (`designs` by default; blank for the top level)
-- **Use Stored Token** (Windows only) — store a GitHub Personal Access Token in Windows Credential Manager so you're never asked to sign in; set it up via **Manage Token…** in the Advanced section. Prefer a **fine-grained** token scoped to just this repo with **Contents: Read and write** — see [SECURITY.md](SECURITY.md).
-- **Log detail** (Help & Privacy) — turn on DEBUG logging when investigating a problem
-
-</details>
-
-<details>
-<summary><b>For developers (click to expand)</b></summary>
-
-**Project layout**: the add-in lives in [`src/`](src). `Push_To_GitHub.py` is the Fusion entry point; `push_dialog.py`, `fusion_export.py` and `addin_logging.py` talk to Fusion; `push_controller.py`, `settings_store.py`, `credentials.py`, `fusion_git_core.py` and `dialog_helpers.py` don't depend on Fusion. Docs are in [`docs/`](docs), tests in [`tests/`](tests). See [CONTRIBUTING.md](CONTRIBUTING.md).
-
-**Testing** — end-to-end Git tests against local repositories, plus unit tests for every module, including the dialog against simulated Fusion objects:
-
-```
-python tests/test_runner.py
-python -m unittest discover -s tests/unit
-```
-
-**CLI harness** — run the whole git pipeline without Fusion (useful for CI):
-
-```
-python src/push_cli.py --repo C:\path\to\repo --files exports/model.step --design-name BracketV4
-```
-
-**How a push works**: ask GitHub for its branches (`ls-remote`) → fetch the tip to build on → build a commit in a temporary index (`read-tree`, `hash-object --no-filters`, `update-index`, `write-tree`, `commit-tree`) whose parent is that tip → plain push, rebuilding on the new tip if GitHub moved meanwhile (up to 3 attempts). The user's working tree, index, stash, HEAD and local branches are never touched, and nothing is force-pushed. Commit hooks don't run for these commits; a `pre-push` hook does. `push_cli.py --mode single` adds exports to one branch instead of creating snapshot branches.
-
-**Contributing**: bug reports and pull requests welcome — please include your OS, Fusion version, and the log file (`~/.PushToGitHub_AddIn_Data/PushToGitHub.log`) with any bug report, and add tests for new functionality.
-
-</details>
-
----
-
-## License
-
-Free and open source under the [MIT License](LICENSE).
-
-## Building and releasing
-
-Developers: `python scripts/package.py build` builds and checks the add-in ZIP
-from the current commit. Releases are made by pushing a version tag; CI builds
-the ZIP and creates a draft release for review. See
-[CONTRIBUTING.md](CONTRIBUTING.md#releasing).
+*Autodesk and Fusion are registered trademarks or trademarks of Autodesk, Inc., and/or its subsidiaries and/or affiliates in the USA and/or other countries. GitHub is a trademark of GitHub, Inc. This add-in is an independent project; it is not affiliated with, endorsed by or sponsored by Autodesk or GitHub.*

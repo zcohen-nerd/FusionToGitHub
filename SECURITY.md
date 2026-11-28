@@ -10,16 +10,29 @@ to report a problem. What it stores and sends in general is in
 If anything here does not match what the code does, that is a bug. Please
 report it (see [Reporting](#reporting-a-problem)).
 
+**In short:**
+- Normally the add-in never sees your GitHub password or token: Git and Git
+  Credential Manager sign you in through your browser.
+- If you choose to store a token (Windows only), it is kept in Windows
+  Credential Manager and only ever sent to the one repository you stored it
+  for, over https. The add-in refuses to use it when a repository's settings
+  could send it anywhere else.
+- Tokens and passwords never appear in the add-in's settings, log, messages or
+  your repository.
+- Use a fine-grained token limited to one repository with *Contents: Read and
+  write*, and revoke it on GitHub if it might have leaked.
+- The rest of this page is the detail, for people who want to check it.
+
 ---
 
 ## How authentication works
 
-There are two paths. You choose with **Use Stored Token** in the dialog's
+There are two paths. You choose with **Use stored token** in the dialog's
 **Advanced** section.
 
 ### 1. Default: Git signs you in (Git Credential Manager)
 
-With **Use Stored Token** off, the add-in runs `git` with no credential handling
+With **Use stored token** off, the add-in runs `git` with no credential handling
 of its own. Git authenticates the way it always does, usually through **Git
 Credential Manager (GCM)**:
 
@@ -36,14 +49,14 @@ That credential is created and owned by Git (or GCM), not by this add-in.
 ### 2. Optional (Windows only): a token you store yourself
 
 **Manage Token…** shows a **Token** field that hides what you type (dots
-instead of characters), plus an optional **Token Username**. **Save Token**
+instead of characters), plus an optional **Token username**. **Save Token**
 stores them:
 
 - The token is written to **Windows Credential Manager** as a *Generic*
   credential named `FusionToGitHub::<repository name>`, one per configured
-  repository (`store_pat` in `src/Push_To_GitHub.py`). The dialog clears the
+  repository (`PushController.store_token`, `src/credentials.py`). The dialog clears the
   field right after saving.
-- On each push, the add-in reads it (`read_stored_pat`) and gives it to Git
+- On each push, the add-in reads and checks it (`PushController._token_for`) and gives it to Git
   through a **temporary credential helper** (`token_auth` in
   `src/fusion_git_core.py`):
   - The token is passed only to the commands that talk to GitHub
@@ -195,7 +208,7 @@ local copies.
 | File | Contains | Protection |
 |------|----------|------------|
 | `~/.fusion_git_repos.json` | Saved repositories: folder, address, formats, templates, options | Owner-only (`600`) on macOS. On Windows, your user profile folder is private to you. |
-| `~/.PushToGitHub_AddIn_Data/PushToGitHub.log` (+ up to 3 older copies, 1 MB each) | What the add-in did, with folder paths, addresses and Git messages; secrets redacted | Owner-only on macOS. **Logging & Privacy → Clear Log** deletes them. |
+| `~/.PushToGitHub_AddIn_Data/PushToGitHub.log` (+ up to 3 older copies, 1 MB each) | What the add-in did, with folder paths, addresses and Git messages; secrets redacted | Owner-only on macOS. **Help & Privacy → Clear Log** deletes them. |
 
 Git hooks, filters and `core.fsmonitor` configured *in a repository* run when
 the add-in runs Git there, as they do for any Git command (except hooks during

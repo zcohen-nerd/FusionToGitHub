@@ -1,412 +1,339 @@
-# FusionToGitHub User Guide
+# User guide
 
-## Table of Contents
-- [Overview](#overview)
-- [Basic Operations](#basic-operations)
-- [Advanced Features](#advanced-features)
-- [Repository Management](#repository-management)
-- [Export Formats](#export-formats)
-- [Branch & Version Control](#branch--version-control)
-- [Collaboration Features](#collaboration-features)
-- [Troubleshooting](#troubleshooting)
+Everything in the **Push to GitHub** dialog, and what happens when you click
+**Back up now**. To install the add-in, see the [installation guide](INSTALL.md);
+to get a version back, the [backup and restore guide](RESTORE.md).
 
----
+- [The dialog at a glance](#the-dialog-at-a-glance)
+- [Design](#design)
+- [Repository](#repository)
+- [What changed?](#what-changed)
+- [Files to include](#files-to-include)
+- [Advanced](#advanced)
+- [Help & Privacy](#help--privacy)
+- [What happens when you click Back up now](#what-happens-when-you-click-back-up-now)
+- [Where backups go](#where-backups-go)
+- [Stored tokens (Windows)](#stored-tokens-windows)
+- [Several repositories, several computers](#several-repositories-several-computers)
+- [Glossary](#glossary)
 
-## Overview
+## The dialog at a glance
 
-FusionToGitHub integrates Autodesk Fusion 360 with GitHub to provide professional version control for your designs. This guide covers all features and workflows.
+| Part | Shown | What it's for |
+|---|---|---|
+| Design | Always | Which design is backed up, and its Fusion version |
+| Repository | Always | Where on GitHub it goes; set up, edit or remove repositories; Check My Setup |
+| What changed? | Always | Your note for this backup (required) |
+| Files to include | Always | Which file types to export |
+| Advanced | Collapsed | How backups are recorded in Git, folder layout, stored token |
+| Help & Privacy | Collapsed | Privacy policy, log file |
 
-### Key Benefits
-- **Automatic Backups**: Never lose design work again
-- **Version History**: Track every change with timestamps
-- **Team Collaboration**: Share designs and manage contributions
-- **Multiple Formats**: Export to F3D, STEP, STL, IGES, and SAT
-- **Professional Workflow**: Branch-based development like software teams
+**Back up now** stays greyed out until everything a backup needs is filled in.
+The line under *Files to include* says what is missing, for example *"Before
+backing up: Describe what changed (What changed?)."*
 
----
+## Design
 
-## Basic Operations
+Shows the open design's name and its Fusion version, for example *Bracket
+(Fusion version: v12)*. If it has unsaved changes, it says so: the backup
+includes them, but Fusion's own version history only does once you save. A
+design that was never saved shows *not saved yet*. The version is recorded in
+the design's `HISTORY.md`.
 
-### Opening the Add-in
+If no design is open (for example a drawing or the Manufacture workspace),
+open the design you want to back up and click the button again.
 
-1. **Toolbar Method**: Click the "Push to GitHub" button in your Fusion 360 toolbar
-2. **Menu Method**: UTILITIES tab → ADD-INS → Scripts and Add-Ins → Run **Push to GitHub**
-3. **Keyboard**: The add-in appears in your recent commands for quick access
+## Repository
 
-### The Main Dialog
+**Repository** lists your saved repositories, with **Set up a new GitHub
+repository…** at the end. The add-in starts on the one you used last.
 
-The add-in dialog has these sections:
+### Setting up a new repository
 
-#### Repository
-- **Select Repository** dropdown: choose a saved repo or **"🆕 Set up new GitHub repository..."**
-- For new repos: **Repository Name**, **GitHub URL**, **Local Folder**, and validation status
-- For existing repos: setup-only fields are hidden for a cleaner flow
+1. Create the repository on github.com first (see the [README](../README.md#your-first-backup-5-minutes)).
+2. **GitHub address:** paste its address from the browser. Any of these work:
+   `https://github.com/you/designs`, `github.com/you/designs`,
+   `https://github.com/you/designs.git`, `git@github.com:you/designs.git`. The
+   line below shows the address that will be used. An address with a password
+   or token in it is refused; store a token with [Manage Token…](#stored-tokens-windows) instead.
+3. **Name in this list:** optional. It's only how the repository is listed in
+   this add-in. Left blank, it's taken from the address.
+4. **Local folder:** where Git keeps its copy of the repository on this
+   computer. The suggested folder is `FusionGitRepos/<name>` in your home
+   folder; **Choose folder…** picks another. An existing empty folder, or a
+   folder that already holds a copy of that repository, is fine. A folder
+   inside OneDrive, Dropbox, iCloud Drive or Google Drive works, but gets a
+   note: sync apps can lock or duplicate Git's files.
 
-#### Commit Message (Top-Level)
-- **Commit Message** is always visible for fast daily use
+The repository is set up when you click **Back up now**, and the first backup
+follows straight away. New repositories keep [one running history](#where-backups-go).
 
-#### Export Formats
-- **Export Formats** group contains selectable formats and per-format settings
-- Group defaults to collapsed for returning users and expanded for new repo setup
+### Saves to
 
-#### Templates / Advanced / Logging
-- **Templates**: Commit and branch naming templates (collapsed by default)
-- **Advanced**: Export Subfolder, Branch Name Override, token controls
-- **Logging**: Log level selector and **Open Log File…**
+Shows where this backup will go, as *branch › folder*: for example *the
+repository's main branch › designs/Bracket/*.
 
----
+### Edit Repository…
 
-## Advanced Features
+Change a saved repository's name in this list, its GitHub address or its local
+folder; click **Save Changes**. Pressing **Edit Repository…** again cancels.
 
-### Branch Templates
+- When you change the address, the add-in asks whether to point the local
+  folder's Git settings at the new address too. **No** keeps the folder
+  connected to its current address.
+- Changing to a folder or a server the stored token wasn't saved for turns
+  **Use stored token** off, so a token is never sent somewhere it wasn't
+  stored for.
+- A changed address shows the publication notice again before the next backup.
 
-Control how branches are named using templates with placeholders:
+### Remove Repository…
 
-**Default Template**: `fusion-export/{filename}-{timestamp}`
-- `{filename}`: Current design name
-- `{timestamp}`: Current date/time (YYYYMMDD-HHMMSS)
+Forgets a saved repository in this add-in. The local folder, the repository on
+GitHub and every backup in it are **not touched**; you can add it again later.
+If a token is stored for it, you're asked separately whether to delete it too.
 
-**Example Templates**:
-- `features/{filename}-{timestamp}` → `features/Bracket_V2-20250930-143022`
-- `releases/v{timestamp}` → `releases/v20250930-143022`
-- `work-in-progress/{filename}` → `work-in-progress/Bracket_V2`
-- `{filename}/iteration-{timestamp}` → `Bracket_V2/iteration-20250930-143022`
+### Check My Setup…
 
-### Branch Name Override
+Checks everything a backup needs, without backing anything up:
 
-Use **Branch Name Override** in the **Advanced** group when you want an explicit branch name for the current push.
+- Git: whether it's installed, where, and its version (2.30 or newer is
+  recommended).
+- Your name and email for backups.
+- How Git signs in to GitHub: Git Credential Manager, a stored token, or
+  nothing.
+- With a saved repository selected: its local folder, its connection to the
+  address you saved, whether the folder is inside a sync app, and the stored
+  token's conditions.
+- Then a **connection test**: Git asks GitHub which branches the repository
+  has, with the same sign-in a backup uses. A GitHub sign-in window may open.
+  Nothing is sent or changed. Fusion stays usable meanwhile.
 
-1. Enter a branch name in **Branch Name Override**
-2. Click **OK**
-3. The add-in sanitizes unsupported characters automatically
+Each result is marked **[OK]**, **[Check]**, **[Problem]** or **[Note]**, with
+what to do next. The first time you open the dialog, before any repository is
+saved, anything that would stop a first backup (such as Git missing) is shown
+straight away.
 
-Leave the field blank to auto-generate a branch name from the branch
-template. If the override names a branch that already exists, the add-in
-asks for confirmation and then adds the export as a new commit on that
-branch.
+## What changed?
 
-### Log Level Controls
+Required, and empty every time: a few words about this version, such as
+*holes widened to 5 mm*. It becomes the commit's title on GitHub (as
+*Bracket: holes widened to 5 mm* for repositories set up with 0.7.0 or later;
+see [Commit message format](#commit-message-format)) and appears in the
+design's `HISTORY.md`.
 
-Adjust logging detail for troubleshooting:
+## Files to include
 
-- **INFO**: Basic operation messages (default)
-- **DEBUG**: Detailed operation logs
-- **WARNING**: Only important warnings
-- **ERROR**: Only error conditions
+Pick one or more:
 
-Access via the "Logging" section in the dialog.
+| File | Use it for |
+|---|---|
+| **Fusion design (.f3d)** | Restoring in Fusion: the full editable design with its timeline. **The one to restore from.** |
+| **STEP (.step)** | Opening in other CAD programs (SolidWorks, Inventor, FreeCAD, …) |
+| **IGES (.igs)** | Older CAD programs that don't read STEP |
+| **SAT (.sat)** | Programs based on the ACIS modelling kernel |
+| **STL (.stl, millimetres)** | 3D printing and mesh tools |
 
-### Changelog Generation
+The default is Fusion design + STEP + STL.
 
-Every push updates a `CHANGELOG.md` file at the repository root, newest
-entry first:
+**Format settings** (shown for STL):
+- **STL** (mesh refinement): *High (refined mesh)* for smooth, larger files, *Medium*, or *Low (fast)* for smaller ones.
+- **STL files:** *One file* for the whole design, or *One file per body*, named
+  like `Bracket - Arm 1 - Pin.stl`. Hidden bodies are left out, with a note.
 
-```markdown
-# Changelog
+STL files are written in millimetres on recent Fusion versions; on older ones
+they use the design's units, and the summary says so.
 
-## 2025-09-30 14:30:22 - Bracket_V2
-- **Branch:** `features/Bracket_V2-20250930-143022`
-- **Commit Message:** "Updated bracket with reinforcement ribs"
-- **Files Updated:**
-  - `Bracket_V2.f3d`
-  - `Bracket_V2.step`
+**All or nothing:** every file you pick must export and pass basic checks (it
+exists, isn't empty, is the right kind of file, is under 100 MB). If one fails,
+nothing is sent and the history isn't changed. These checks don't prove a file
+opens in other software.
+
+## Advanced
+
+### Separate branch per backup
+
+**Off** (recommended, and the default for repositories set up with 0.7.0 or
+later): every backup is added to one running history. **On**: each backup goes
+to a new branch of its own, named by the **Branch name template** (as versions
+before 0.7.0 did; repositories set up with those versions have it ticked). See
+[Where backups go](#where-backups-go).
+
+### Backup branch
+
+With one running history: blank adds backups to the repository's main branch.
+A name such as `fusion-backups` keeps them on a branch of their own instead; it
+is created, from the main branch, on the first backup. Useful when other work
+lives on `main`, or `main` is protected.
+
+### Branch name template and Use this branch instead
+
+With separate branches only. The template names each new branch (default
+`fusion-export/{filename}-{timestamp}`). **Use this branch instead** sends this
+one backup to a branch you name; if it already exists, the add-in asks before
+adding to it (and warns specially if it's the repository's main branch).
+
+### Design folders go in
+
+The folder that holds one folder per design. Default `designs`, giving
+`designs/Bracket/`. Blank puts the design folders at the top level of the
+repository. `{filename}` (the design's name) and `{timestamp}` may be used for
+unusual layouts.
+
+### Commit message format
+
+How each commit is titled. New repositories use `{filename}: {message}`.
+
+| Placeholder | Becomes |
+|---|---|
+| `{message}` | What you typed in *What changed?* |
+| `{filename}` | The design's name |
+| `{timestamp}` | Date and time, `YYYYMMDD-HHMMSS` |
+| `{branch}` | The branch the backup goes to |
+
+A format without `{message}` (saved by a version before 0.7.0) uses what you
+typed as the whole message.
+
+### Use stored token and Manage Token…
+
+Windows only. See [Stored tokens](#stored-tokens-windows).
+
+## Help & Privacy
+
+- **Privacy Policy…** opens [PRIVACY.md](../PRIVACY.md) on GitHub.
+- **Open Log File…** opens the add-in's log, in `.PushToGitHub_AddIn_Data/` in
+  your home folder. Passwords and tokens are removed before anything is written.
+- **Clear Log** deletes the log files.
+- **Log detail:** ERROR, WARNING, INFO (normal) or DEBUG (for investigating a
+  problem).
+
+## What happens when you click Back up now
+
+1. **Setup**, for a new repository: the local folder is cloned or connected to
+   the address.
+2. **Export**, with a progress window. If any file fails its checks, nothing is
+   sent.
+3. **Questions**, only when they apply:
+   - **Linked components:** if the design contains components linked from
+     other designs, the add-in names them and asks whether to back up anyway.
+     The `.f3d` may not include them (see [restore](RESTORE.md#designs-with-linked-components)).
+   - **Publication notice**, once per repository: the backup is published to
+     that repository, and a public repository is visible to everyone.
+   - **Name and email**, once, if Git doesn't have them. They are saved for
+     that repository in this add-in. Your global Git settings are changed only
+     if you choose "all repositories".
+   - **Large files:** files over 50 MB need a Yes. Files of 100 MB or more are
+     refused (GitHub's limit).
+4. **The dialog closes and the backup is sent in the background.** Fusion stays
+   usable. The progress window shows each step, and **Cancel** stops it.
+5. **Summary:**
+   - **Success:** the repository, *branch › folder*, the commit, the Fusion
+     version and the files. Then: **Yes** opens the design's folder on GitHub in
+     your browser, **No** copies the link, **Cancel** closes.
+   - **Cancelled:** the message says which of these happened: nothing was
+     sent; GitHub had already received the backup (no need to back up again);
+     only an empty repository's first commit was sent; or it couldn't tell
+     (look at the repository before backing up again).
+   - **Failed:** a plain first line, what to do next, and Git's own message
+     under *Technical details*. A failed backup normally leaves GitHub
+     unchanged; if the message asks you to check the repository, do so before
+     backing up again.
+
+The add-in never changes your files or branches in the local folder, never
+deletes or overwrites a backup, and never force-pushes (replaces what is on
+GitHub). If someone else added to the branch meanwhile, the backup is rebuilt
+on top of their changes.
+
+## Where backups go
+
+**One running history (default for new repositories).** Every backup is a new
+commit on one branch (the repository's main branch, or your *Backup branch*),
+in the design's folder:
+
+```
+designs/
+  Bracket/
+    Bracket.f3d
+    Bracket.step
+    Bracket.stl
+    HISTORY.md
+  Gearbox/
+    …
 ```
 
----
-
-## Repository Management
-
-### Adding New Repositories
-
-1. **Select "🆕 Set up new GitHub repository..."** from the dropdown
-2. **Fill in details**:
-   - **GitHub URL**: Full repository URL (HTTPS or SSH)
-   - **Repository Name**: Local config name (can auto-fill from URL)
-   - **Local Folder**: Where to store files locally
-
-#### GitHub URL Formats
-- **HTTPS**: `https://github.com/username/repository-name`
-- **SSH**: `git@github.com:username/repository-name.git`
-
-#### Local Folder Guidelines
-- Use absolute paths: `C:\Projects\MyDesigns`
-- Avoid spaces in paths when possible
-- Ensure write permissions
-- Path will be created if it doesn't exist
-
-### Repository Validation
-
-The add-in validates repositories in real-time:
-
-- ✅ **Green**: Repository is valid and accessible
-- ⚠️ **Yellow**: Warning (e.g., dirty working directory)
-- ❌ **Red**: Error (e.g., invalid path, no git repository)
-
-### Stored Credentials
-
-**Windows Credential Manager Integration**:
-- Credentials stored securely by Windows
-- Per-repository credential management
-- Automatic authentication for HTTPS repositories
-- Manage via "Manage Token…" in **Advanced**
-
-**Setting up PAT storage**:
-1. In **Advanced**, click "Manage Token…" and answer **Yes** to add a token
-2. Paste the token into the **Token** field (it shows dots, not the token).
-   **Token Username** is optional
-3. Click **Save Token**. The token is stored in Windows Credential Manager and
-   the field is cleared; "Use Stored Token" is ticked for you
-4. To replace or delete it later, click "Manage Token…" again
-
-The token is only sent to this repository's server, over https. See
-[SECURITY.md](../SECURITY.md) for details.
-
----
-
-## Export Formats
-
-### File Formats
-
-#### Fusion Archive (.f3d)
-- **Best for**: Complete design preservation
-- **Contains**: Full feature history, parameters, timeline
-- **Use when**: Sharing with other Fusion users
-- **File size**: Usually largest, but most complete
-
-#### STEP (.step, .stp)
-- **Best for**: CAD interoperability
-- **Contains**: 3D geometry, surfaces
-- **Use when**: Working with other CAD software
-- **Standard**: Industry standard for CAD exchange
-
-#### STL (.stl)
-- **Best for**: 3D printing
-- **Contains**: Triangle mesh geometry
-- **Use when**: Preparing for 3D printing
-- **Note**: No feature history or parameters
-- **Units**: written in millimetres on Fusion builds that support it (2025
-  onward); older builds use the design's units and the add-in says so
-- **Files**: one file for the whole design, or **Format Settings → STL files →
-  One file per body** (`<design> - <component> - <body>.stl`)
-
-#### IGES (.iges, .igs)
-- **Best for**: Legacy CAD systems
-- **Contains**: 3D geometry, curves, surfaces
-- **Use when**: Older CAD software compatibility
-
-#### SAT (.sat)
-- **Best for**: ACIS-based CAD systems
-- **Contains**: 3D solid geometry
-- **Use when**: Exchanging solids with ACIS-kernel tools
-
-> **Note**: DWG/DXF export is not available — Fusion's design export API
-> does not support those formats. 2D drawing export is on the roadmap.
-
-### Export Subfolders
-
-Organize your exports using subfolder patterns:
-
-**Static Folders**:
-- `exports/` - All exports in one folder
-- `step-files/` - Format-specific organization
-- `versions/v1.0/` - Version-based organization
-
-**Dynamic Folders** (using placeholders — `{filename}` and `{timestamp}`
-are filled in at export time):
-- `{filename}/` - Separate folder per design
-- `exports/{timestamp}/` - Time-based organization
-
-**Nested Organization**:
-- `projects/{filename}/exports/`
-- `releases/v{timestamp}/`
-- `work/{filename}/iterations/`
-
----
-
-## Branch & Version Control
-
-### Understanding Git Workflow
-
-What happens when you click OK:
-
-1. **Export**: Fusion writes the design files to a temporary folder
-2. **Check GitHub**: The add-in asks GitHub for its latest version of the branch
-3. **Commit**: It builds a commit containing your exports and your message,
-   on top of GitHub's latest version
-4. **Push**: It sends the commit to GitHub. If someone else pushed meanwhile,
-   it rebuilds on their latest version and tries again
-
-Your local repository folder is never changed: no stashing, no switching
-branches, no copies of the exports. Anything you were doing there is left as it
-was.
-
-### Branch Naming Best Practices
-
-**Feature Branches**:
-- `feature/{filename}-{timestamp}` - New features
-- `feature/bracket-reinforcement` - Descriptive names
-
-**Release Branches**:
-- `release/v{timestamp}` - Version releases
-- `release/production-ready` - Release candidates
-
-**Experiment Branches**:
-- `experiment/{filename}-{timestamp}` - Testing ideas
-- `experiment/alternative-design` - Design alternatives
-
-**Personal Branches**:
-- `{username}/{filename}-{timestamp}` - Personal work
-- `zac/bracket-improvements` - Individual contributions
-
-### Working with Existing Branches
-
-If you want to continue work on an existing branch:
-
-1. **Use Branch Override**: Enter the exact branch name
-2. **Confirm**: If the branch already exists on GitHub, the add-in asks before
-   adding to it (and warns specially if it is the repository's main branch)
-3. **Append Changes**: Your export is added as a new commit on top of the
-   branch's latest version on GitHub, so commits made from other computers are kept
-
-The add-in never force-pushes, so it can't overwrite anyone's commits.
-
----
-
-## Collaboration Features
-
-### Team Repository Setup
-
-**For Repository Owners**:
-1. Create GitHub repository
-2. Add team members as collaborators
-3. Share repository configuration details
-4. Establish branch naming conventions
-
-**For Team Members**:
-1. Clone repository locally
-2. Configure add-in with repository details
-3. Use consistent branch templates
-4. Follow team commit message guidelines
-
-### Sharing Designs
-
-**Method 1: Direct Repository Access**
-- Add collaborators to GitHub repository
-- Everyone uses same repository configuration
-- All exports go to shared repository
-
-**Method 2: Fork & Pull Request**
-- Team members fork main repository
-- Work in personal forks
-- Submit pull requests for review
-
-**Method 3: Branch-based Collaboration**
-- Use descriptive branch names
-- Create pull requests for major changes
-- Review changes before merging
-
-### Version Coordination
-
-**Avoiding Conflicts**:
-- Use different branch templates per team member
-- Coordinate on major design changes
-- Communicate before major exports
-
-**Review Process**:
-1. Export to personal branch
-2. Create pull request on GitHub
-3. Team reviews changes
-4. Merge after approval
-
----
-
-## Troubleshooting
-
-### Common Issues and Solutions
-
-#### "Git executable not found"
-**Problem**: Add-in can't find Git
-**Solutions**:
-- Install Git from git-scm.com
-- Restart Fusion 360 after Git installation
-- Check that `git --version` works in command prompt
-
-#### "Authentication failed"
-**Problem**: Can't push to GitHub
-**Solutions**:
-- Verify your Personal Access Token is valid
-- Check PAT has `repo` scope permissions
-- Re-enter credentials via "Manage Token…"
-- Ensure GitHub URL is correct
-
-#### "Repository not found"
-**Problem**: Local repository doesn't exist or isn't valid
-**Solutions**:
-- Verify local folder exists and is writable
-- Check if `.git` folder exists in the local folder
-- Initialize repository manually: `git init` in local folder
-- Clone repository if it exists remotely
-
-#### "Export failed"
-**Problem**: Fusion export doesn't complete
-**Solutions**:
-- Ensure design is saved and active
-- Check export format is supported
-- Verify sufficient disk space
-- Try different export format
-
-#### "Merge conflicts"
-**Problem**: Local and remote changes conflict
-**Solutions**:
-- Use fresh branch names
-- Pull latest changes before exporting
-- Resolve conflicts manually in Git
-- Use branch override only when you need a fixed branch name
-
-### Getting Help
-
-**Built-in Diagnostics**:
-1. **Open Log File…**: Click in the Logging group
-2. **Run Tests**: Execute `python tests/test_runner.py` from the project folder
-3. **Check Git Status**: Verify repository state
-
-**Log File Locations**:
-- **Windows**: `%USERPROFILE%\.PushToGitHub_AddIn_Data\PushToGitHub.log`
-- **macOS**: `~/.PushToGitHub_AddIn_Data/PushToGitHub.log`
-
-**Community Support**:
-- Review documentation files
-- Check GitHub repository issues
-- Follow troubleshooting guides
-
----
-
-## Best Practices
-
-### Repository Organization
-- Use descriptive repository names
-- Organize with consistent subfolder structure
-- Keep repositories focused on related designs
-- Document your naming conventions
-
-### Export Workflow
-- Save designs before exporting
-- Use meaningful commit messages
-- Export regularly to maintain history
-- Use branch override for complex repeat runs that need a fixed branch
-
-### Team Collaboration
-- Establish branch naming conventions
-- Use descriptive commit messages
-- Review changes before merging
-- Communicate major design decisions
-
-### Security
-- Keep Personal Access Tokens secure
-- Use repository-specific PATs when possible
-- Regularly review GitHub access permissions
-- Don't share credentials in commit messages
-
----
-
-*This user guide covers the complete FusionToGitHub workflow. For quick reference, see `QUICK_REFERENCE.md`. For installation help, see `GETTING_STARTED.md`.*
+The folder always holds the newest version; GitHub's **History** shows every
+earlier one.
+
+**Separate branch per backup.** Each backup is a new branch such as
+`fusion-export/Bracket-20261128-143022`, starting from the main branch, with the
+design's folder inside it. To see one, pick it in GitHub's branch list.
+
+**Design folders.** A design gets its folder the first time it's backed up,
+named after it, and keeps that folder when you rename the design in Fusion. A
+different design with the same name gets `Bracket (2)`. Names are made safe for
+Windows, macOS and GitHub (characters Windows doesn't allow become `_`).
+
+**HISTORY.md** lists every backup of the design, newest first:
+
+```
+## 2026-11-28 14:30:22 - Bracket
+- **Branch:** `main`
+- **Commit Message:** "Bracket: holes widened to 5 mm"
+- **Fusion version:** v12
+- **Files Updated:**
+  - `designs/Bracket/Bracket.f3d`
+  - `designs/Bracket/Bracket.step`
+```
+
+It also carries a hidden marker line, so the add-in can tell designs with the
+same name apart (see [PRIVACY.md](../PRIVACY.md)). Repositories used with
+versions before 0.6.0 also have one `CHANGELOG.md` at the top level; it is left
+as it was, and each design's `HISTORY.md` points to it.
+
+**Empty repositories.** If the repository on GitHub is completely empty, the
+first backup also adds a small first commit to `main` with a `.gitattributes`
+file, which stops Git from altering CAD files.
+
+## Stored tokens (Windows)
+
+You normally don't need one: Git Credential Manager opens a GitHub sign-in
+window the first time and remembers you. A stored token is for when that
+doesn't suit, for example an account with single sign-on that GCM can't use.
+
+1. On GitHub: **Settings → Developer settings → Personal access tokens →
+   Fine-grained tokens → Generate new token**. Choose **Only select
+   repositories** (just this one), **Contents: Read and write**, nothing else,
+   and the shortest practical expiry.
+2. In the dialog, select the repository, open **Advanced**, click **Manage
+   Token…** and answer **Yes** to add one.
+3. Paste the token into **Token** (it shows dots), optionally a **Token
+   username**, and click **Save Token**. **Use stored token** is then ticked.
+
+The token is kept in Windows Credential Manager, bound to the repository's
+server, and only ever sent to that repository over https.
+[SECURITY.md](../SECURITY.md) describes every protection and its limits.
+**Manage Token…** on a repository that has one lets you replace or delete it.
+Deleting it here doesn't revoke it on GitHub; do that in GitHub's settings.
+
+## Several repositories, several computers
+
+You can save as many repositories as you like and pick one each time. Two
+saved entries for the same GitHub repository, or the same repository used on
+two computers, work: each design keeps its own folder, because the add-in checks
+the folders already on GitHub before each backup. For several people sharing
+one repository, see [Teams](TEAMS.md).
+
+## Glossary
+
+| Word | Meaning |
+|---|---|
+| **Repository** | A project on GitHub that keeps every version of its files |
+| **Commit** | One saved version, with a note about what changed. Each backup is one commit. |
+| **Branch** | A line of commits. Backups go on the repository's main branch unless you choose otherwise. |
+| **Push** | Sending commits to GitHub. The add-in does this when you click Back up now. |
+| **Local folder** | Git's copy of the repository on your computer. The add-in uses it but never changes your files in it. |
+| **Token** | A password-like key from GitHub that lets a program write to a repository |
+| **Git Credential Manager (GCM)** | The program, installed with Git, that signs Git in to GitHub through your browser |
+| **Force-push** | Replacing what is on GitHub with something else, which can lose work. The add-in never does it. |
+| **Clone** | Git's copy of a repository on your computer (the local folder) |
+| **origin/main** | In the local folder, Git's record of the `main` branch on GitHub as of the last backup or download |
+| **Pull request** | A GitHub request to bring the changes on one branch into another, for someone to review first |

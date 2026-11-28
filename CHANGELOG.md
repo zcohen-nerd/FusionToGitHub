@@ -1,19 +1,79 @@
 # Changelog
 
-All notable changes to the FusionToGitHub add-in. Versions follow
+All notable changes to the FusionToGitHub add-in, in the spirit of
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/): newest first, grouped
+by kind of change, with contributors credited. Versions follow
 [semantic versioning](https://semver.org/). The version is defined once, in
 `src/Push_To_GitHub.manifest` (the file Fusion and the Community Store read).
 `VERSION` in `src/fusion_git_core.py`, the README and the top heading of this
 file must match it; `scripts/check_release.py` and the `T_VERSION` test enforce
 this, and the release workflow refuses a tag that differs.
 
+## 0.8.0 — Unreleased
+
+**Documentation rewritten and consolidated, community files, and the
+Community Store listing icon.**
+
+Development version; not published. 0.4.0 remains the current release;
+these notes add to 0.6.0's and 0.7.0's.
+
+### Added
+
+- **A backup and restore guide** ([docs/RESTORE.md](docs/RESTORE.md)):
+  what a backup contains, finding a version with `HISTORY.md` or a file's
+  History, downloading it, opening it in Fusion, designs with linked
+  components, and getting backups from the local folder if GitHub isn't
+  available.
+- **One installation guide** ([docs/INSTALL.md](docs/INSTALL.md)):
+  requirements, the release ZIP and the Community Store, macOS, updating in a
+  running Fusion, going back to an earlier version (including how to bring
+  back settings for 0.4.0 and earlier), two copies, and a complete uninstall
+  list.
+- **Community files:** [SUPPORT.md](SUPPORT.md), a
+  [Code of Conduct](CODE_OF_CONDUCT.md) (Contributor Covenant 2.1), issue
+  forms for bug reports and feature requests, and a pull request template.
+- **`community-store.json`**, so the Fusion Community Store shows the
+  add-in's icon. [docs/SCREENSHOTS.md](docs/SCREENSHOTS.md) lists the
+  screenshots still to be taken in real Fusion.
+- **Documentation checks:** CI now fails on destructive commands, the old
+  `FusionToGitHub` install folder, "Fusion 360" outside a file path, and
+  hard-coded test counts.
+
+### Changed
+
+- **README rewritten**: what the add-in does and doesn't do, before you
+  start, install, first backup, everyday use, getting an old version back,
+  limits, platform support, help, and a trademark notice. "Automatic" is
+  gone from the tagline: backups happen when you click.
+- **User guide and troubleshooting rewritten** for 0.7.0's dialog: every
+  option, what happens on a backup, where backups go, and every message the
+  add-in shows with its fix. Every fix is safe; none discards work.
+- **[Teams](docs/TEAMS.md)** replaces the team guide: an honest account of
+  what works with several people and one repository, and what doesn't.
+- "Autodesk Fusion" throughout (not "Fusion 360", except in folder paths).
+  Labels in messages match the dialog ("Use stored token", "Help & Privacy").
+- [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md) updated for
+  0.7.0: per-repository name and email, the per-command credential file, the
+  design marker, current function names.
+
+### Removed
+
+- Superseded documents: `INSTALL_QUICK.md`, `docs/INSTALLATION.md`,
+  `docs/GETTING_STARTED.md`, `docs/QUICK_REFERENCE.md`,
+  `docs/DOCUMENTATION_INDEX.md` (replaced by [docs/README.md](docs/README.md)),
+  `docs/TEAM_GUIDE.md`, `docs/RELEASE_NOTES_DRAFT.md`,
+  `TROUBLESHOOTING_CRASHES.md`, `REFACTORING_SUMMARY.md`, `milestones.md`,
+  `tests/MANUAL_TESTS.md` and `tests/TEST_FRAMEWORK_SUMMARY.md`. Their
+  current content is in the documents above; the old versions are in Git
+  history. `tests/TESTING.md` now describes the current test suites.
+
 ## 0.7.0 — Unreleased
 
 **One running history by default, a simpler dialog that explains itself,
 Check My Setup, links to the backup on GitHub, and the add-in's own icon.**
 
-Development release (sprint S5); not published. 0.6.0 is also unpublished,
-so 0.4.0 remains the current release, and these notes add to 0.6.0's.
+Development version; not published. 0.6.0 is also unpublished, so 0.4.0
+remains the current release, and these notes add to 0.6.0's.
 
 ### Added
 

@@ -182,7 +182,7 @@ class ProfileTests(ControllerTestCase):
         self.assertFalse(profile["useStoredPat"])
         self.assertFalse(profile["publicationNoticeAccepted"])
         self.assertEqual(core.git_run(self.work, "remote", "get-url", "origin").stdout, origin_before)
-        self.assertTrue(any("Use Stored Token" in n for n in notes))
+        self.assertTrue(any("Use stored token" in n for n in notes))
 
     def test_address_change_updates_origin_only_when_confirmed(self):
         self.controller.edit_profile("Designs", url="https://github.com/acme/renamed.git", update_origin=lambda *a: True)
