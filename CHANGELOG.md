@@ -9,6 +9,76 @@ by kind of change, with contributors credited. Versions follow
 file must match it; `scripts/check_release.py` and the `T_VERSION` test enforce
 this, and the release workflow refuses a tag that differs.
 
+## 0.9.0 — Unreleased (1.0.0 release candidate 1)
+
+**Feature-complete release candidate for 1.0.** Not published: it is for the
+live verification campaign. Release candidates use plain version numbers
+because the Fusion Community Store can't install versions such as
+`1.0.0-rc.1`. Features are frozen; from here on only defects found in
+verification are fixed. 0.4.0 remains the current release; these notes add to
+0.6.0's, 0.7.0's and 0.8.0's.
+
+### Added
+
+- **Designs with linked components are archived as `.f3z`**, Fusion's
+  format for a design together with the designs it links to (risk R-06),
+  instead of `.f3d`. Fusion writes it under an odd name, which the add-in
+  corrects. If Fusion can't write one, the backup falls back to `.f3d`, with
+  a note. Restoring such a backup hasn't been verified in Fusion yet, so the
+  question before backing up and the `HISTORY.md` note still say it may not
+  restore on its own. The publication notice mentions that linked designs
+  are published too.
+
+### Security
+
+- Git commands that carry the stored token no longer run a repository's own
+  `core.alternateRefsCommand`, Git's background maintenance, or a
+  `GIT_SSL_NO_VERIFY` setting from your environment.
+- On Windows the temporary credential file is never placed in the temporary
+  folder: it goes to `%LOCALAPPDATA%`, or the add-in's folder in your home
+  folder, or the token isn't used.
+- Passwords containing `@` are hidden completely in messages and logs, and
+  addresses containing an old-style 40-character token are refused.
+- Branch tips and folder names received from the server are checked before
+  they are used in Git commands or as folders.
+- An edited repository address must look like one (`https://…`, `git@…`,
+  `ssh://…`).
+
+### Fixed
+
+- A backup that reached GitHub could be reported as failed if a clean-up
+  step afterwards failed, inviting a duplicate backup.
+- Renaming a design only in letter case (`bracket` → `Bracket`) added a
+  second file that Windows and macOS can't hold next to the first; the
+  existing file is now updated.
+- Design names ending in a word starting with "v" lost that word ("Flower
+  vase" became "Flower"); only a trailing version number such as " v2" is
+  dropped now.
+- When sending timed out, the add-in now asks GitHub whether the backup
+  arrived instead of reporting a plain failure; after a cancel, a branch
+  that moved on for another reason is reported as uncertain, not as
+  "nothing was pushed".
+- Declining a question just after an empty repository was given its first
+  commit now says so.
+- The summary says your files and branches in the local folder weren't
+  changed (Git's own records of what is on GitHub are updated).
+
+### Quality
+
+- One consolidated live acceptance matrix
+  ([tests/ACCEPTANCE_MATRIX.md](tests/ACCEPTANCE_MATRIX.md)), organised by
+  user workflow, with every criterion's requirement, procedure, expected
+  result and a place for the actual result and evidence; the manual
+  checklist is generated from it as the efficient run order.
+- Fixtures for the campaign (a Fusion script for the test designs, a helper
+  for disposable test repositories) and a
+  [usability test protocol](docs/USABILITY_TEST.md).
+- Tests for every fix above; the simulated Fusion now refuses exports and
+  design access from background threads; the "local folder unchanged" check
+  also compares the repository's `.git/config`, `HEAD` and hooks; an
+  end-to-end check that a stored token appears in no log, settings or Git
+  configuration file.
+
 ## 0.8.0 — Unreleased
 
 **Documentation rewritten and consolidated, community files, and the

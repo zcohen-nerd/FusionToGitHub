@@ -105,7 +105,7 @@ def success_text(repo_name: str, git_result: Dict[str, Any], exported_names, war
         lines += [""] + notes
     if warnings:
         lines += ["", "Please note:"] + [f" • {w}" for w in warnings]
-    lines += ["", "Nothing in your local repository folder was changed."]
+    lines += ["", "Your files and branches in the local repository folder weren't changed."]
     if link:
         lines += ["", LINK_QUESTION]
     return "\n".join(lines)

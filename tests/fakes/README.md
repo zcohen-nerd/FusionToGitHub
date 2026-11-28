@@ -145,3 +145,10 @@ Assumptions about Fusion, to confirm in Fusion itself:
     writes `Name.f3z`, and `"fail"` makes the export fail (the add-in then
     falls back to `.f3d`). Whether the archive really includes the linked
     designs is checked by live check J2.
+
+### Main thread (S7)
+
+34. Every Fusion API call, not only UI calls, must happen on Fusion's main
+    thread. The fake now also refuses `exportManager.execute` and
+    `Application.activeProduct` from other threads, so a background push that
+    touched the design would fail the tests (S7 test-quality review).

@@ -25,6 +25,7 @@ from __future__ import annotations
 import copy
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from urllib.parse import urlsplit
@@ -317,6 +318,10 @@ class PushController:
         if url is not None and url != old_url:
             if git_core.url_has_embedded_secret(url):
                 raise SettingsError("The address contains a password or token; use the plain address.")
+            # The same form the setup accepts (S7 security review).
+            if url.startswith("-") or not re.match(r"^(https://|git@|ssh://)\S+$", url):
+                raise SettingsError("That doesn't look like a repository address. Paste it from GitHub, for "
+                                    "example https://github.com/you/designs.")
             repoint = bool(update_origin and update_origin(repo_path, old_url, url))
             if profile.get("useStoredPat") and server_of(old_url) != server_of(url):
                 changes["useStoredPat"] = False

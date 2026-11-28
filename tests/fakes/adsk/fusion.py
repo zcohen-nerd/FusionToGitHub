@@ -16,6 +16,8 @@ same as ``"false"``.
 import struct
 import zipfile
 
+from .core import _on_main_thread
+
 
 class MeshRefinementSettings:
     MeshRefinementHigh = 0
@@ -216,6 +218,7 @@ class ExportManager:
         return cls(path, geometry)
 
     def execute(self, options):
+        _on_main_thread("exportManager.execute")  # exports run on Fusion's main thread only
         self.executed.append(options)
         mode = self.failures.get(options.format)
         if options.format in self.fail_formats or mode == "false":

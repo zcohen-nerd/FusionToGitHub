@@ -623,14 +623,22 @@ class TestRunner:
                 path = os.path.join(root, name)
                 with open(path, "rb") as fh:
                     files[os.path.relpath(path, work)] = hashlib.sha256(fh.read()).hexdigest()
-        index_path = os.path.join(work, ".git", "index")
-        index = None
-        if os.path.exists(index_path):
-            with open(index_path, "rb") as fh:
-                index = hashlib.sha256(fh.read()).hexdigest()
+        def digest(*parts):
+            path = os.path.join(work, ".git", *parts)
+            if not os.path.exists(path):
+                return None
+            with open(path, "rb") as fh:
+                return hashlib.sha256(fh.read()).hexdigest()
+
+        hooks_dir = os.path.join(work, ".git", "hooks")
         return {
             "files": files,
-            "index": index,
+            "index": digest("index"),
+            # The repository's own settings and hooks: a push adds no remote,
+            # credential helper or hook (S7 test-quality review).
+            "config": digest("config"),
+            "HEAD_file": digest("HEAD"),
+            "hooks": sorted(os.listdir(hooks_dir)) if os.path.isdir(hooks_dir) else [],
             "head": git_run(work, "symbolic-ref", "-q", "HEAD", check=False).stdout.strip(),
             "head_sha": git_run(work, "rev-parse", "-q", "--verify", "HEAD", check=False).stdout.strip(),
             "local_refs": git_run(

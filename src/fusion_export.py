@@ -170,7 +170,9 @@ def get_fusion_design(app, logger: Optional[logging.Logger] = None):
 
 
 def _safe_base(name: str) -> str:
-    name = re.sub(r"\s+v[\dA-Za-z]+$", "", name).strip()  # drop trailing " v8" etc.
+    # Drop a trailing Fusion version such as " v8" (not words like " vase";
+    # S7 correctness review).
+    name = re.sub(r"\s+v\d+$", "", name).strip()
     # keep spaces; just neutralize illegal filesystem chars
     return re.sub(r'[<>:"/\\|?*]+', "_", name)
 
@@ -479,8 +481,12 @@ def export_design(
                     logger.info("Exported the design with its linked components as %s", f3z_path)
                 continue
             for leftover in (f3z_path, f3z_path + ".f3d"):
-                if os.path.isfile(leftover):
-                    os.remove(leftover)
+                try:
+                    if os.path.isfile(leftover):
+                        os.remove(leftover)
+                except OSError:
+                    if logger:
+                        logger.warning("Couldn't remove %s", leftover)
             result.warnings.append(
                 f"The design has linked components, but Fusion couldn't write an .f3z archive ({why}), "
                 "so the backup has an .f3d file instead."
