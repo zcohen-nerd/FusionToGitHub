@@ -78,7 +78,7 @@ class PushOutcomeTests(GitSandbox):
         self.assertIsNotNone(result, ui.errors)  # confirmed on GitHub: reported as a success
         self.assertIn("designs/Bracket/second.step", self.tree())
 
-    def test_a_push_timeout_that_did_not_arrive_is_reported_as_uncertain(self):
+    def test_a_push_timeout_that_did_not_arrive_says_so(self):
         real = core.git_run
 
         def lost_push(repo, *args, **kwargs):
@@ -90,7 +90,8 @@ class PushOutcomeTests(GitSandbox):
         with mock.patch.object(core, "git_run", side_effect=lost_push):
             result, ui = self.push("designs/Bracket/second.step")
         self.assertIsNone(result)
-        self.assertIn("couldn't be confirmed whether this backup arrived", ui.errors[0])
+        self.assertIn("took longer than", ui.errors[0])  # Git's own words are kept
+        self.assertIn("GitHub didn't receive this backup", ui.errors[0])  # checked: the branch didn't move
 
     def test_declining_after_an_empty_repository_was_set_up_says_so(self):
         ui = ConfirmingUI(answer=False)

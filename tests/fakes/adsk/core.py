@@ -542,7 +542,7 @@ class ProgressDialog:
         self.maximumValue = 0
         self.cancelButtonText = "Cancel"
         self.isCancelButtonShown = True
-        self.isBackgroundTranslucencyEnabled = False
+        self.isBackgroundTranslucent = False  # the documented name (audit BUG-09)
         self.wasCancelled = False
         self.shown = []
         self.messages = []

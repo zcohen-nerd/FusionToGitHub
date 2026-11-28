@@ -1480,16 +1480,19 @@ def push_export(
                         auth=auth,
                         network=True,
                     )
-                except GitTimeoutError:
+                except GitTimeoutError as timeout:
                     # The push may or may not have reached GitHub: ask it.
                     outcome = _cancelled_result(repo_path, state, auth, logger)
                     if outcome.get("published"):
                         proc = subprocess.CompletedProcess([GIT_EXE, "push"], 0, "", "")
-                    else:
+                    elif outcome.get("uncertain"):
                         raise GitError(
-                            "GitHub didn't respond in time, and it couldn't be confirmed whether this "
-                            "backup arrived. Look at the repository on GitHub before backing up again."
-                        )
+                            f"{timeout}\n\nIt couldn't be confirmed whether this backup arrived. Look at "
+                            "the repository on GitHub before backing up again."
+                        ) from timeout
+                    else:
+                        raise GitError(f"{timeout}\n\nGitHub didn't receive this backup; nothing on GitHub "
+                                       "was changed.") from timeout
                 if proc.returncode == 0:
                     state["phase"] = "done"
                     return {

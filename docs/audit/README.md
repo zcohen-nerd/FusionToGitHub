@@ -14,6 +14,9 @@ are not updated afterwards.
 | [S4_Implementation_Report.md](S4_Implementation_Report.md) | Sprint S4: Fusion integration and export reliability (0.6.0) |
 | [S5_Implementation_Report.md](S5_Implementation_Report.md) | Sprint S5: user experience and branding (0.7.0), with its independent reviews; the R-21 E4 follow-up is recorded in the risk register |
 | [S6_Implementation_Report.md](S6_Implementation_Report.md) | Sprint S6: documentation and community (0.8.0) |
+| [S7_Implementation_Report.md](S7_Implementation_Report.md) | Sprint S7: release candidate preparation (0.9.0 = 1.0.0 release candidate 1), with the pre-release reviews |
+| [V1_Readiness_Assessment.md](V1_Readiness_Assessment.md) | v1.0 readiness assessment: Definition of Done, risks, what remains |
+| [V1_Traceability_Matrix.md](V1_Traceability_Matrix.md) | Every audit backlog finding traced to implementation, tests and live criteria |
 | [workpapers/r21_ext_transport_probe.py](workpapers/r21_ext_transport_probe.py) | Reproduction for risk R-21: repository config starting a program (`ext::`) in a token-carrying Git process |
 | [workpapers/r21_probe.py](workpapers/r21_probe.py) | Reproduction for risk R-21: tracing, redirects, another repository on the same host, and the process environment |
 

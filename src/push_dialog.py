@@ -1340,7 +1340,7 @@ class PushDialog:
         with contextlib.ExitStack() as export_files:
             temp_dir = export_files.enter_context(temporary_export_dir())
             self._progress = progress = self.ui.createProgressDialog()
-            progress.isBackgroundTranslucencyEnabled = True
+            progress.isBackgroundTranslucent = True
             progress.cancelButtonText = ""
             progress.show("Fusion → GitHub", "Exporting the design…", 0, 2, 0)
             valid_formats, warnings = determine_valid_export_formats(design, formats)
