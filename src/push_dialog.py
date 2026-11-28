@@ -1365,10 +1365,10 @@ class PushDialog:
             exported = export.files
             history_notes: List[str] = []
             if export.linked_components:
-                if not self.ask_yes_no(linked_components_question(export.linked_components)):
+                if not self.ask_yes_no(linked_components_question(export.linked_components, export.archive_format)):
                     self.message(NOTHING_PUSHED)
                     return False
-                history_notes.append(linked_components_note(export.linked_components))
+                history_notes.append(linked_components_note(export.linked_components, export.archive_format))
 
             # Questions (publication notice, identity) come with the progress
             # dialog hidden, so they can't end up behind it.

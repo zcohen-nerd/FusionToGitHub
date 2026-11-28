@@ -77,11 +77,16 @@ The formal list of known risks to FusionToGitHub users and to the project
 - **Resolved when:** the live checklist (section I) shows Fusion stays responsive during a slow push and during sign-in, and Cancel behaves as tested. The export itself still runs on the main thread (Fusion requires it).
 
 ### R-06 — Unrestorable backups of designs with linked components — Accepted conditionally (before 1.0)
-- **Cause:** the add-in exports `.f3d`; for designs with external references Fusion may need `.f3z` (audit BUG-02, unverified live).
+- **Cause:** the add-in exported `.f3d`; for designs with external references Fusion may need `.f3z` (audit BUG-02, unverified live).
 - **Impact:** a backup that looks fine but can't be opened on its own.
 - **Finding (S4):** Fusion's documented API has no `.f3z` export. `createFusionArchiveExportOptions` writes `.f3d`; the only route seen is the undocumented text command `data.fileExport f3z`, which has reported naming problems and isn't used.
 - **Mitigation (S4):** linked components are detected (`Occurrence.isReferencedComponent` across all occurrences) when F3D is exported. The add-in names them and asks before pushing ("this backup might not restore on its own"); declining pushes nothing. Accepting records a note in the design's `HISTORY.md`, so the backup is never presented as complete.
-- **Evidence:** `tests/unit/test_fusion_export.py`, `tests/unit/test_dialog_exports.py` (against simulated Fusion).
+- **S7 research and change (0.9.0):**
+  - **Research.** Autodesk's help says a design with external references can only be exported as `.f3z`, and documents no API for it. A community add-in (nofuturekid/fusion-export, read 2026-11-28) calls `createFusionArchiveExportOptions` with an `.f3z` name for designs with references and receives an archive that Fusion names `Name.f3z.f3d`. That add-in renames it (its issue #33). Older forum answers say true `.f3z` export isn't possible through the API. The evidence is mixed and nothing has been verified live.
+  - **Change.** When linked components are found, the archive is requested as `<design>.f3z`, and a `Name.f3z.f3d` result is renamed. If Fusion fails or writes nothing, the add-in falls back to `.f3d` with a warning. The basic ZIP check applies to `.f3z` too.
+  - **What stays the same.** The question before every such push, the `HISTORY.md` note, the README limitation and the CHANGELOG entry are unchanged in substance, so the conditional acceptance still holds. They now say the archive is `.f3z` but that restoring it hasn't been verified.
+  - **Assumption 33** in `tests/fakes/README.md` records the reported Fusion behaviour.
+- **Evidence:** `tests/unit/test_fusion_export.py` (f3z with the reported name quirk, exact name, fallback, broken archive), `tests/unit/test_dialog_exports.py` (the pushed `.f3z`, notes and the fallback), all against simulated Fusion.
 - **Residual:** a user who accepts still has an F3D that may not restore alone; the linked designs stay in Fusion's cloud.
 - **Decision (accepted by the maintainer on 2026-11-27):** accepted for distribution **before 1.0 only**, and only while incomplete recoverability is communicated explicitly. That means:
   - the confirmation question before every such push;
@@ -90,7 +95,7 @@ The formal list of known risks to FusionToGitHub users and to the project
   - the CHANGELOG.
 
   If any of these is removed, the acceptance lapses.
-- **Open requirement for 1.0:** a live restore check. A pushed `.f3d` with linked components is re-opened in Fusion and the result recorded (consolidated checklist, step 6). 1.0 can't ship until it is done and the warning text matches the result.
+- **Open requirement for 1.0:** a live restore check (J2). A pushed `.f3z` (or the fallback `.f3d`) with linked components is re-opened in Fusion, ideally where the linked design isn't available, and the result is recorded. 1.0 can't ship until it is done and the warning text matches the result. If J2 shows the `.f3z` restores the linked designs, R-06 can move to Mitigated or Resolved, and the wording can drop "may not restore".
 
 ### R-08 — Proprietary design pushed to a public repository — Accepted
 - **Cause:** the user chooses the repository; the add-in makes no GitHub API calls, so it can't see visibility.

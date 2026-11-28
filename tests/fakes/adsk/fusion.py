@@ -195,6 +195,9 @@ class ExportManager:
         self.failures = {}
         self.executed = []
         self.stl_unit_type_supported = True  # False: simulate an older Fusion
+        # How an archive requested with an .f3z name is written (assumption 33):
+        # "append_f3d" (Name.f3z.f3d, as reported for Fusion), "exact", or "fail".
+        self.f3z_behaviour = "append_f3d"
 
     def createFusionArchiveExportOptions(self, path, geometry=None):  # noqa: N802
         return ExportOptions("f3d", path, geometry)
@@ -225,7 +228,13 @@ class ExportManager:
         data = b"" if mode == "empty" else _content(options.format, label)
         if mode == "corrupt":
             data = b"not a real file\n"
-        with open(options.filename, "wb") as fh:
+        filename = options.filename
+        if options.format == "f3d" and filename.lower().endswith(".f3z"):
+            if self.f3z_behaviour == "fail":
+                return False
+            if self.f3z_behaviour == "append_f3d":
+                filename += ".f3d"
+        with open(filename, "wb") as fh:
             fh.write(data)
         return True
 

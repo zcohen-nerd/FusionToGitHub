@@ -206,14 +206,20 @@ folder.
 - [ ] **J1** **Linked components:** insert the second design as a linked
       component, choose F3D and push: the add-in names the linked component
       and asks. **No** pushes nothing; **Yes** pushes and `HISTORY.md` has a
-      "Note" line about linked components.
+      "Note" line about linked components. From 0.9.0: the pushed archive is
+      `<design>.f3z` (not `.f3z.f3d`), and the question says it was exported
+      as `.f3z` (assumption 33). If the summary instead says Fusion couldn't
+      write an `.f3z`, record its technical details.
 - [ ] **H17** Linked components are detected (`isReferencedComponent` across
       `allOccurrences`, including nested ones), and a broken link (for
       example a linked design you moved or deleted) doesn't crash the push.
 - [ ] **J2** **Restore check (required for 1.0; risk R-06):** download that
-      `.f3d` from GitHub and open it in Fusion (File → Open → Open from my
-      computer). **Record whether the linked component's geometry is
-      present.** This decides whether the warning's wording is right.
+      `.f3z` (or `.f3d`) from GitHub and open it in Fusion (File → Open →
+      Open from my computer, or Upload in the Data Panel), **ideally in a
+      different project or account that doesn't have the linked design.**
+      **Record whether the linked component's geometry is present, and
+      whether the linked design came with it.** This decides whether the
+      warning's wording is right and whether R-06 can be resolved.
 
 ## 7. Background push and cancel
 

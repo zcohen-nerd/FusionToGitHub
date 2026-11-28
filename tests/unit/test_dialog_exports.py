@@ -73,14 +73,28 @@ class LinkedComponentDialogTests(DialogExportCase):
         self.assertIn("Push cancelled", self.last_message())
         self.assertEqual(self.remote_branches(), [])
 
-    def test_accepting_pushes_and_records_a_history_note(self):
+    def test_accepting_pushes_an_f3z_and_records_a_history_note(self):
+        # R-06: the design with its linked components is exported as .f3z.
         self.answer(YES, YES)  # linked components, then the publication notice
         self.push_dialog()
-        history = self.history(self.pushed_branch())
+        self.assertIn("exported as an .f3z archive", self.ui.questions[0])
+        branch = self.pushed_branch()
+        self.assertIn("Bracket/Bracket.f3z", self.remote_files(branch))
+        self.assertNotIn("Bracket/Bracket.f3d", self.remote_files(branch))
         self.assertIn(
-            "- **Note:** Contains 1 linked component (Bolt M5); this .f3d backup may not be self-contained.",
-            history,
+            "- **Note:** Contains 1 linked component (Bolt M5); exported as .f3z, but restoring it hasn't been "
+            "verified, so this backup may not be self-contained.",
+            self.history(branch),
         )
+
+    def test_when_fusion_cannot_write_an_f3z_the_backup_falls_back_to_f3d(self):
+        self.app.activeProduct.exportManager.f3z_behaviour = "fail"
+        self.answer(YES, YES)
+        self.push_dialog()
+        self.assertIn("Fusion's .f3d export may not include them", self.ui.questions[0])
+        self.assertIn("Bracket/Bracket.f3d", self.remote_files(self.pushed_branch()))
+        self.assertIn("couldn't write an .f3z archive", self.last_message())
+        self.assertIn("this .f3d backup may not be self-contained", self.history(self.pushed_branch()))
 
 
 class StlSettingTests(DialogExportCase):
