@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>Push to GitHub</title>
+  <rect width="512" height="512" fill="#071B41"/>
+  <polygon points="256.6,40.7 433,138.2 247.4,235.6 71,138.2" fill="#5BC9F2"/>
+  <polygon points="71,138.2 247.4,235.6 247.4,465.3 71,367.8" fill="#1F8BC2"/>
+  <polygon points="247.4,235.6 433,138.2 433,367.8 247.4,465.3" fill="#023F65"/>
+  <path d="M312.3 247.2 L312.3 388.7" fill="none" stroke="#FD9815" stroke-width="27.8" stroke-linecap="round"/>
+  <path d="M395.8 286.6 C393.5 330.7 314.6 321.4 312.3 360.9" fill="none" stroke="#FD9815" stroke-width="27.8" stroke-linecap="round"/>
+  <circle cx="312.3" cy="247.2" r="33.6" fill="#FD9815"/>
+  <circle cx="395.8" cy="286.6" r="33.6" fill="#FD9815"/>
+  <circle cx="312.3" cy="388.7" r="33.6" fill="#FD9815"/>
+</svg>
